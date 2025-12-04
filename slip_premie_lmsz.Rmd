@@ -4,27 +4,274 @@ author: "Eren Kafadar"
 date: "2025-11-18"
 output: html_document
 ---
-
+#SETUP
+##controls
+```{r}
+set.seed(42)
+#set command
+save_tables <- TRUE
+plot <- TRUE
+save_figs <- TRUE
+```
+##Define Paths and Load Packages
 ```{r, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#define paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
+csv_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/results_csv/"
+
+betas_folder <- paste0(csv_save_path, "full_betas/")
+if (!dir.exists(betas_folder)) dir.create(betas_folder)
+dkt_folder <- paste0(csv_save_path, "dkt_betas/")
+if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
+
+source(paste0(code_path,"sliding_window.R"))
+#Load libraries
+library(dplyr)
+library(glue)
+library(magrittr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(gamlssTools) #Margaret's package
+#For figures/plotting
+library(ggplot2)
+library(gridExtra)
+library(ggseg)
+#library(ggpubr)
+library(ggcorrplot)
+library(cowplot)
+library(egg)
+library(interactions)
+library(growthstandards)
+library(gtsummary)
+library(svglite)
+```
+##Phenotypes - from Ben's 22q analysis folder
+```{r}
+#features <- read.csv("/mnt/isilon/bgdlab_processing/Ben/projects/22q_analysis_pub/data/CHOP/pheno_dict.csv")
+```
+#LOAD CLEAN DATA
+```{r}
+df_filename <- paste0(csv_save_path, "median_distinct_clean_2025-11-24.csv")
+df <- read.csv(df_filename)
+```
+#Phenotype Variable Names
+```{r}
+vol_vars <- c(names(df)[grepl("aparc_GrayVol", names(df))], names(df)[grepl("aseg", names(df))])
+vol_vars <- vol_vars[!vol_vars %in% c("aseg_Left_Cerebral_Cortex", "aseg_Left_Cerebral_White_Matter", "aseg_Right_Cerebral_Cortex", "aseg_Right_Cerebral_White_Matter", "aseg_CSF" )]
+sa_vars <- c(names(df)[grepl("aparc_SurfArea", names(df))])
+th_vars <- c(names(df)[grepl("aparc_ThickAvg", names(df))])
+global_vars <- c(names(df)[grepl("global", names(df))])
+all_vars <- c(vol_vars, sa_vars, th_vars, global_vars)
+```
+#Z-score Centiles, remove Inf Cells
+##zscore centiles (new df)
+```{r}
+#zscore centiles and other variables of interest
+df <- df %>%
+  mutate(across(all_of(c(all_vars, "bweight_percentile")), qnorm,
+                         .names = "{.col}.zscore")) %>%
+  mutate(across(all_of(c("gestational_age", "birth_weight_kg", "age_days", "age_years", "adjusted_age_in_days")), scale,
+                .names = "{.col}.zscore"))
+#set sex and preterm as factor
+df$sex <- as.factor(df$sex)
+df$preterm <- as.factor(df$preterm)
+zscore_vars_names <- paste0(c(all_vars, "bweight_percentile", "gestational_age", "birth_weight_kg", "age_days", "age_years", "adjusted_age_in_days"), ".zscore")
+```
+##find Inf cells, make a table of N per phenotype, then convert to NaN
+```{r}
+inf_nan_table <- as.data.frame(t(sapply(df[c(paste0(c(all_vars, "bweight_percentile"), ".zscore"))], function(x){
+  c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
+})))
+max(inf_nan_table$inf)
+max(inf_nan_table$nan)
+
+inf_nan_table %>% filter(inf > 0)
+```
+##set Inf cells to NaN
+```{r}
+df.zscore <- df.zscore %>% 
+  mutate(across(all_of(c(all_vars, "bweight_percentile")), ~ replace(., is.infinite(.), NaN)))
+```
+#LMSz Growth Charts
+##Define LMSz models
+```{r}
+# Define LMSz models to process
+# Mean (mu) models
+m_models = c('~ adjusted_age_days_log + sex + adjusted_age_days_log*sex',
+             '~ adjusted_age_days_log + sex',
+             '~ adjusted_age_days_log',
+             '~ sex',
+             '~ 1',
+             '~ 0')
+
+# Variance (sigma) models
+s_models = c('~ adjusted_age_days_log + sex',
+             '~ adjusted_age_days_log',
+             '~ sex',
+             '~ 0')
+```
+##Generate LMSz growth charts and save output
+```{r}
+dir.create(paste0(code_path,"lmsz/lmsz_models"), recursive = T)
+
+worm_plots <- list()
+# Create tibble to hold best model
+models <- tibble(feature = all_vars,
+                 m_model = "",
+                 s_model = "",
+                 AIC = NA,
+                 BIC = 999999999999,
+                 age_coef = NA,
+                 sex_coef = NA,
+                 intercept_coef = NA,
+                 interaction_coef = NA,
+                 age_sigma_coef = NA,
+                 sex_sigma_coef = NA,
+                 intercept_sigma_coef = NA,
+                 interaction_sigma_coef = NA)
+
+# Build the growth chart model
+p <- "zscore" # specify the phenotype
+for (pheno in all_vars) {
+  # Define phenotype
+  print(pheno)
+  pheno_name <- glue("{pheno}Transformed")
+  zscore_name <- glue("{pheno}.zscore")
+  orig_fit <- readRDS(glue("/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/median-{pheno_name}/FIT.EXTRACT.rds"))
+ 
+  ###### LEFT HERE
+  # Make subset
+  df_tmp <- df %>%
+              select(participant_id, adjusted_age_days_log, sex, 
+                     age_years, preterm,
+                     !!pheno, !!zscore_name) %>%
+              rename(pheno = !!pheno,
+                     zscore = !!zscore_name) %>%
+              na.omit()
+  
+  # Loop through each mu and sigma model
+  mod <- models$feature == pheno
+  for (m in m_models) {
+    for (s in s_models) {
+      print(m)
+      print(s)
+      
+      # Run preliminary model - all subjects
+      growthChartModel <- gamlss(formula = as.formula(glue("zscore {m}")),
+                                     sigma.formula = as.formula(glue("zscore {s}")),
+                                     family = NO,
+                                     data = df_tmp,
+                                     control = gamlss.control(n.cyc = 200),  # See (2)
+                                     trace = F)
+      
+      # # Re-weight observations to exclude individuals with large residuals (> 3.5)
+      # df_tmp$weight_tmp <- df_tmp$weight
+      # df_tmp$weight_tmp[which(abs(resid(growthChartModel_all)) > 3.5)] <- 0
+      # 
+      # # Run refined model
+      # growthChartModel <- gamlss(formula = as.formula(glue("zscore {m}")),
+      #                                sigma.formula = as.formula(glue("zscore {s}")),
+      #                                family = NO,
+      #                                data = df_tmp,
+      #                                weights = df_tmp$weight_tmp,
+      #                                control = gamlss.control(n.cyc = 500),
+      #                                trace = F)
+      
+      # Check if the model has the lowest BIC and record it
+      if (growthChartModel$sbc <= models$BIC[mod]) {
+        fin_model <- growthChartModel
+        models$m_model[mod] <- m
+        models$s_model[mod] <- s
+        models$BIC[mod] <- growthChartModel$sbc
+      }
+      print("--------------")
+    }
+  }
+  
+  # Refine formatting of final models
+  models$m_model[mod] <- format(fin_model$mu.formula)
+  models$s_model[mod] <- format(fin_model$sigma.formula)
+  
+  # Extract model coefficients - mu
+  models$intercept_coef[mod]   <- fin_model$mu.coefficients["(Intercept)"]
+  models$age_coef[mod]         <- fin_model$mu.coefficients["adjusted_age_days_log"]
+  models$sex_coef[mod]         <- fin_model$mu.coefficients["sexMale"]
+  models$interaction_coef[mod] <- fin_model$mu.coefficients["adjusted_age_days_log:sexMale"]
+  # Extract model coefficients - sigma
+  models$intercept_sigma_coef[mod]   <- fin_model$sigma.coefficients["(Intercept)"]
+  models$age_sigma_coef[mod]         <- fin_model$sigma.coefficients["adjusted_age_days_log"]
+  models$sex_sigma_coef[mod]         <- fin_model$sigma.coefficients["sexMale"]
+  models$interaction_sigma_coef[mod] <- fin_model$sigma.coefficients["adjusted_age_days_log:sexMale"]
+
+  # Extract final AIC/BIC
+  models$AIC[mod] <- fin_model$aic
+  models$BIC[mod] <- fin_model$sbc
+  
+  # Save final model
+  saveRDS(fin_model,glue("{code_path}lmsz/lmsz_models_slip/SLIP_lmsz_{pheno}Transformed.rds"))
+
+  # Update LMSz quantiles
+  df_tmp <- df_tmp %>%
+        add_column(!!glue("{pheno}Transformed.q.lmsz") := pred_og_centiles(growthChartModel,
+                                                                          df_tmp)) %>%
+        select(-c(pheno, zscore, age_years, Deletion_Type, weight))
+  
+  # Add LMSz centile to final dataframe
+  df <- df %>% left_join(df_tmp, by = join_by(participant, sex, adjusted_age_days_log))
+  
+  # Save worm plot
+  slip_worm_plots[[pheno]] <- wp.taki(fin_model) +
+                                  ggtitle("LMSz Worm Plot") +
+                                  theme_pubr() +
+                                  theme(plot.title = element_text(size = 12),
+                                        axis.title = element_text(size = 12))
+
+  
+  print("-------------------------")
+}
 
 ```
 
-## R Markdown
+### Save Models and Centiles
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r}
+write_csv(models, "tables/supplementary_table_lmsz_models.csv")
+write_csv(df,"additional_tables/CHOP_lmsz_adjusted_idps.csv")
 ```
 
-## Including Plots
+## Backtransform Centiles
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+#| results: false
+for (pheno in features) {
+  print(pheno)
+  tmp <-  backtransform_centile_fans(pheno)
+  if (pheno == features[1]) {
+    out_fans_slip <- tmp
+  } else {
+    out_fans_slip <- bind_rows(out_fans_slip, tmp)
+  }
+}
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# CT scale is off and eTIV fans are doubled. Provide manual correction
+out_fans_slip <- out_fans_slip %>% 
+                          mutate(SLIP_input_fans = ifelse(grepl("CT",pheno),
+                                                          SLIP_input_fans*10000,
+                                                          SLIP_input_fans),
+                                 LMSz_fans = ifelse(grepl("CT",pheno),
+                                                          LMSz_fans*10000,
+                                                          LMSz_fans)) %>% 
+                          mutate(SLIP_input_fans = ifelse(pheno == "eTIV",
+                                                          SLIP_input_fans/2,
+                                                          SLIP_input_fans),
+                                 LMSz_fans = ifelse(pheno == "eTIV",
+                                                          LMSz_fans/2,
+                                                          LMSz_fans))
+```
+

@@ -5,26 +5,181 @@ date: "2025-11-18"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+#Load Data
+```{r}
+```
+#Age Distribution
+```{r}
+hist(median_cent_distinct$age_years)
+IQR(median_cent_distinct$age_years)
+median(median_cent_distinct$age_years)
+```
+#Vars of Interest Distribution
+##Check numbers of GA and birthweight
+number of overall rows, and unique participants
+```{r, echo = FALSE}
+#participants.tsv
+##overall including repeat participant IDs
+sum(!is.na(participants$gestational_age))
+sum(!is.na(participants$birth_weight_kg))
+sum(!is.na(participants$birth_length_cm))
+##unique participant IDs
+length(unique(participants$participant_id))#11492
+dim(participants %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
+dim(participants %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
+dim(participants %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
+##within repeated participant IDs
+dim(repeat_participants <- participants %>% 
+      filter(participant_id %in% participants$participant_id[duplicated(participants$participant_id)]))#3056
+sum(!is.na(repeat_participants$gestational_age))
+sum(!is.na(repeat_participants$birth_weight_kg))
+sum(!is.na(repeat_participants$birth_length_cm))
+
+#mpr2cent
+sum(!is.na(mpr2_cent$gestational_age))
+sum(!is.na(mpr2_cent$birth_weight_kg))
+sum(!is.na(mpr2_cent$birth_length_cm))
+##unique participant IDs
+length(unique(mpr2_cent$participant_id))
+dim(mpr2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
+dim(mpr2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
+dim(mpr2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
+##within repeated participant IDs
+dim(repeat_mpr2_cent <- mpr2_cent %>% 
+      filter(participant_id %in% mpr2_cent$participant_id[duplicated(mpr2_cent$participant_id)]))#88
+sum(!is.na(repeat_mpr2_cent$gestational_age))
+sum(!is.na(repeat_mpr2_cent$birth_weight_kg))
+sum(!is.na(repeat_mpr2_cent$birth_length_cm))
+
+#mprcent
+sum(!is.na(mpr_cent$gestational_age))
+sum(!is.na(mpr_cent$birth_weight_kg))
+sum(!is.na(mpr_cent$birth_length_cm))
+##unique participant IDs
+length(unique(mpr_cent$participant_id))#
+dim(mpr_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
+dim(mpr_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
+dim(mpr_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
+##within repeated participant IDs
+dim(repeat_mpr_cent <- mpr_cent %>% 
+      filter(participant_id %in% mpr_cent$participant_id[duplicated(mpr_cent$participant_id)]))#88
+sum(!is.na(repeat_mpr_cent$gestational_age))
+sum(!is.na(repeat_mpr_cent$birth_weight_kg))
+sum(!is.na(repeat_mpr_cent$birth_length_cm))
+
+#median2cent
+sum(!is.na(median2_cent$gestational_age))
+sum(!is.na(median2_cent$birth_weight_kg))
+sum(!is.na(median2_cent$birth_length_cm))
+##unique participant IDs
+length(unique(median2_cent$participant_id))#
+dim(median2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
+dim(median2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
+dim(median2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
+##within repeated participant IDs
+dim(repeat_median2_cent <- median2_cent %>% 
+      filter(participant_id %in% median2_cent$participant_id[duplicated(median2_cent$participant_id)]))#88
+sum(!is.na(repeat_median2_cent$gestational_age))
+sum(!is.na(repeat_median2_cent$birth_weight_kg))
+sum(!is.na(repeat_median2_cent$birth_length_cm))
+
+#mediancent
+sum(!is.na(median_cent$gestational_age))
+sum(!is.na(median_cent$birth_weight_kg))
+sum(!is.na(median_cent$birth_length_cm))
+##unique participant IDs
+length(unique(median_cent$participant_id))#
+dim(median_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
+dim(median_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
+dim(median_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
+##within repeated participant IDs
+dim(repeat_median_cent <- median_cent %>% 
+      filter(participant_id %in% median_cent$participant_id[duplicated(median_cent$participant_id)]))#88
+sum(!is.na(repeat_median_cent$gestational_age))
+sum(!is.na(repeat_median_cent$birth_weight_kg))
+sum(!is.na(repeat_median_cent$birth_length_cm))
+
+```
+##Plot GA and Age - QC numbers
+- for median centiles (the largest dataset)
+- later repeat any significant results in other datasets
+```{r}
+#birth weight
+range(median_cent$birth_weight_kg, na.rm = TRUE)
+##plot dist in all
+ggplot(median_cent, aes(x = birth_weight_kg)) +
+  geom_histogram() +
+  labs(x = "Birth Weight (kg)", title = paste0("N = ",dim(median_cent %>% filter(!is.na(birth_weight_kg)))[1])) +
+  theme_minimal()
+##plot dist keeping one row per participant ID
+ggplot(median_cent_distinct, aes(x = birth_weight_kg)) +
+  geom_histogram() +
+  labs(x = "Birth Weight (kg), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(birth_weight_kg)))[1])) +
+  theme_minimal()
+##plot dist for repeated participant IDs
+ggplot(repeat_median_cent, aes(x = birth_weight_kg)) +
+  geom_histogram() +
+  labs(x = "Birth Weight (kg), Repeats", title = paste0("N = ",dim(repeat_median_cent %>% filter(!is.na(birth_weight_kg)))[1])) +
+  theme_minimal()
+
+#Gestational Age
+range(median_cent$gestational_age, na.rm = TRUE)
+##plot dist in all
+ggplot(median_cent, aes(x = gestational_age)) +
+  geom_histogram() +
+  labs(x = "Gestational Age (weeks)", title = paste0("N = ",dim(median_cent %>% filter(!is.na(gestational_age)))[1])) +
+  theme_minimal()
+##plot dist keeping one row per participant ID
+ggplot(median_cent_distinct, aes(x = gestational_age)) +
+  geom_histogram() +
+  labs(x = "Gestational Age (weeks), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(gestational_age)))[1])) +
+  theme_minimal()
+##plot dist for repeated participant IDs
+ggplot(repeat_median_cent, aes(x = gestational_age)) +
+  geom_histogram() +
+  labs(x = "Gestational Age (weeks), Repeats", title = paste0("N = ",dim(repeat_median_cent %>% filter(!is.na(gestational_age)))[1])) +theme_minimal()
+
+#Gestational Age x Age
+range(median_cent$age_at_scan)
+median_cent$age_in_years <- median_cent$age_at_scan/365
+ggplot(median_cent, aes(x = age_in_years, y = gestational_age)) +
+  geom_bin2d(bins = 100) +
+  scale_fill_viridis_c(option = "viridis") +
+  labs(x = "Age at Scan (years)", y = "Gestational Age (weeks)", title = "Median Scans") +
+  theme_minimal()
+```
+##Numbers for median cent distinct
+```{r}
+table(median_cent_distinct$preterm)
+
+sum(!is.na(median_cent_distinct$birth_weight_kg))
+##plot dist keeping one row per participant ID
+ggplot(median_cent_distinct, aes(x = birth_weight_kg)) +
+  geom_histogram() +
+  labs(x = "Birth Weight (kg), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(birth_weight_kg)))[1])) +
+  theme_minimal()
+sum(!is.na(median_cent_distinct$gestational_age))
+##plot dist keeping one row per participant ID
+ggplot(median_cent_distinct, aes(x = gestational_age)) +
+  geom_histogram() +
+  labs(x = "Gestational Age (weeks), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(gestational_age)))[1])) +
+  theme_minimal()
 ```
 
-## R Markdown
+#Ages of repeat measurements
+```{r}
+length(unique(repeat_median_cent$participant_id))
+repeat_median_cent$age_years <- repeat_median_cent$age_days/365
+ggplot(repeat_median_cent, aes(x = age_years, y = global_MeanThickness, group = participant_id, color = participant_id)) + 
+  geom_point() +
+  geom_line() +
+  theme_minimal() +
+  theme(legend.position = "none")
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+length(unique(repeat_median2_cent$participant_id))
+repeat_median2_cent$age_years <- repeat_median2_cent$age_days/365
+ggplot(repeat_median2_cent %>% filter(!is.na(gestational_age)), aes(x = age_years, y = global_MeanThickness, group = participant_id, color = gestational_age)) + 
+  geom_point() +
+  geom_line() +
+  theme_minimal()
 ```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -20,7 +20,7 @@ if (length(args) < 1) {
 
 input_rmd <- args[1]
 
-message("Rendering: ", rmd_file)
+message("Rendering: ", input_rmd)
 
 # default output directory
 output_dir <- if (length(args) >= 2) args[2] else "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/markdown_output/"

@@ -16,6 +16,9 @@ INPUT_RMD="slipga_prelim.Rmd"
 OUTPUT_DIR=""
 OUTPUT_BASE=""
 
+conda init
+conda activate slip_premie
+
 # --- Build command depending on which args are supplied ---
 if [ -n "$OUTPUT_DIR" ] && [ -n "$OUTPUT_BASE" ]; then
 Rscript render.R "$INPUT_RMD" "$OUTPUT_DIR" "$OUTPUT_BASE"

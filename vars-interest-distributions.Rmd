@@ -3,169 +3,642 @@ title: "vars-interest-distributions"
 author: "Eren Kafadar"
 date: "2025-11-18"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
-#Load Data
+#Controls
 ```{r}
+#set command
+save_tables <- TRUE
+plot <- TRUE
+save_figs <- TRUE
 ```
-#Age Distribution
-```{r}
-hist(median_cent_distinct$age_years)
-IQR(median_cent_distinct$age_years)
-median(median_cent_distinct$age_years)
-```
-#Vars of Interest Distribution
-##Check numbers of GA and birthweight
-number of overall rows, and unique participants
+#Define Paths and Load Packages
 ```{r, echo = FALSE}
-#participants.tsv
-##overall including repeat participant IDs
-sum(!is.na(participants$gestational_age))
-sum(!is.na(participants$birth_weight_kg))
-sum(!is.na(participants$birth_length_cm))
-##unique participant IDs
-length(unique(participants$participant_id))#11492
-dim(participants %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
-dim(participants %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
-dim(participants %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
-##within repeated participant IDs
-dim(repeat_participants <- participants %>% 
-      filter(participant_id %in% participants$participant_id[duplicated(participants$participant_id)]))#3056
-sum(!is.na(repeat_participants$gestational_age))
-sum(!is.na(repeat_participants$birth_weight_kg))
-sum(!is.na(repeat_participants$birth_length_cm))
+knitr::opts_chunk$set(echo = TRUE)
 
-#mpr2cent
-sum(!is.na(mpr2_cent$gestational_age))
-sum(!is.na(mpr2_cent$birth_weight_kg))
-sum(!is.na(mpr2_cent$birth_length_cm))
-##unique participant IDs
-length(unique(mpr2_cent$participant_id))
-dim(mpr2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
-dim(mpr2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
-dim(mpr2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
-##within repeated participant IDs
-dim(repeat_mpr2_cent <- mpr2_cent %>% 
-      filter(participant_id %in% mpr2_cent$participant_id[duplicated(mpr2_cent$participant_id)]))#88
-sum(!is.na(repeat_mpr2_cent$gestational_age))
-sum(!is.na(repeat_mpr2_cent$birth_weight_kg))
-sum(!is.na(repeat_mpr2_cent$birth_length_cm))
+#define paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
+qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
+gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/median/DATA.rds"
+csv_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/results_csv/"
+plot_save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/plots/"
 
-#mprcent
-sum(!is.na(mpr_cent$gestational_age))
-sum(!is.na(mpr_cent$birth_weight_kg))
-sum(!is.na(mpr_cent$birth_length_cm))
-##unique participant IDs
-length(unique(mpr_cent$participant_id))#
-dim(mpr_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
-dim(mpr_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
-dim(mpr_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
-##within repeated participant IDs
-dim(repeat_mpr_cent <- mpr_cent %>% 
-      filter(participant_id %in% mpr_cent$participant_id[duplicated(mpr_cent$participant_id)]))#88
-sum(!is.na(repeat_mpr_cent$gestational_age))
-sum(!is.na(repeat_mpr_cent$birth_weight_kg))
-sum(!is.na(repeat_mpr_cent$birth_length_cm))
+betas_folder <- paste0(csv_save_path, "full_betas/")
+if (!dir.exists(betas_folder)) dir.create(betas_folder)
+dkt_folder <- paste0(csv_save_path, "dkt_betas/")
+if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
 
-#median2cent
-sum(!is.na(median2_cent$gestational_age))
-sum(!is.na(median2_cent$birth_weight_kg))
-sum(!is.na(median2_cent$birth_length_cm))
-##unique participant IDs
-length(unique(median2_cent$participant_id))#
-dim(median2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
-dim(median2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
-dim(median2_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
-##within repeated participant IDs
-dim(repeat_median2_cent <- median2_cent %>% 
-      filter(participant_id %in% median2_cent$participant_id[duplicated(median2_cent$participant_id)]))#88
-sum(!is.na(repeat_median2_cent$gestational_age))
-sum(!is.na(repeat_median2_cent$birth_weight_kg))
-sum(!is.na(repeat_median2_cent$birth_length_cm))
+source(paste0(code_path,"sliding_window.R"))
+#Load libraries
+require(dplyr)
+require(magrittr)
+require(readr)
+require(stringr)
+require(tidyr)
+require(gamlssTools) #Margaret's package
+#For figures/plotting
+require(ggplot2)
+require(gridExtra)
+require(ggsegDKT)
+require(ggseg)
+#require(ggpubr)
+require(ggcorrplot)
+require(cowplot)
+require(egg)
+require(interactions)
+require(growthstandards)
+require(gtsummary)
+require(svglite)
 
-#mediancent
-sum(!is.na(median_cent$gestational_age))
-sum(!is.na(median_cent$birth_weight_kg))
-sum(!is.na(median_cent$birth_length_cm))
-##unique participant IDs
-length(unique(median_cent$participant_id))#
-dim(median_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(gestational_age)))
-dim(median_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_weight_kg)))
-dim(median_cent %>% distinct(participant_id, .keep_all = TRUE) %>% filter(!is.na(birth_length_cm)))
-##within repeated participant IDs
-dim(repeat_median_cent <- median_cent %>% 
-      filter(participant_id %in% median_cent$participant_id[duplicated(median_cent$participant_id)]))#88
-sum(!is.na(repeat_median_cent$gestational_age))
-sum(!is.na(repeat_median_cent$birth_weight_kg))
-sum(!is.na(repeat_median_cent$birth_length_cm))
-
+panel_save <- function(plot, filename, extension, folder){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300)
+}
 ```
-##Plot GA and Age - QC numbers
-- for median centiles (the largest dataset)
-- later repeat any significant results in other datasets
+#Plots specifications
 ```{r}
-#birth weight
-range(median_cent$birth_weight_kg, na.rm = TRUE)
-##plot dist in all
-ggplot(median_cent, aes(x = birth_weight_kg)) +
-  geom_histogram() +
-  labs(x = "Birth Weight (kg)", title = paste0("N = ",dim(median_cent %>% filter(!is.na(birth_weight_kg)))[1])) +
-  theme_minimal()
-##plot dist keeping one row per participant ID
-ggplot(median_cent_distinct, aes(x = birth_weight_kg)) +
-  geom_histogram() +
-  labs(x = "Birth Weight (kg), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(birth_weight_kg)))[1])) +
-  theme_minimal()
-##plot dist for repeated participant IDs
-ggplot(repeat_median_cent, aes(x = birth_weight_kg)) +
-  geom_histogram() +
-  labs(x = "Birth Weight (kg), Repeats", title = paste0("N = ",dim(repeat_median_cent %>% filter(!is.na(birth_weight_kg)))[1])) +
-  theme_minimal()
-
-#Gestational Age
-range(median_cent$gestational_age, na.rm = TRUE)
-##plot dist in all
-ggplot(median_cent, aes(x = gestational_age)) +
-  geom_histogram() +
-  labs(x = "Gestational Age (weeks)", title = paste0("N = ",dim(median_cent %>% filter(!is.na(gestational_age)))[1])) +
-  theme_minimal()
-##plot dist keeping one row per participant ID
-ggplot(median_cent_distinct, aes(x = gestational_age)) +
-  geom_histogram() +
-  labs(x = "Gestational Age (weeks), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(gestational_age)))[1])) +
-  theme_minimal()
-##plot dist for repeated participant IDs
-ggplot(repeat_median_cent, aes(x = gestational_age)) +
-  geom_histogram() +
-  labs(x = "Gestational Age (weeks), Repeats", title = paste0("N = ",dim(repeat_median_cent %>% filter(!is.na(gestational_age)))[1])) +theme_minimal()
-
-#Gestational Age x Age
-range(median_cent$age_at_scan)
-median_cent$age_in_years <- median_cent$age_at_scan/365
-ggplot(median_cent, aes(x = age_in_years, y = gestational_age)) +
-  geom_bin2d(bins = 100) +
-  scale_fill_viridis_c(option = "viridis") +
-  labs(x = "Age at Scan (years)", y = "Gestational Age (weeks)", title = "Median Scans") +
-  theme_minimal()
+limits = c(-0.3, 0.3)
+low_color = "#4878CF"
+mid_color = "white"
+high_color = "#D65F5F"
 ```
-##Numbers for median cent distinct
+
+#name mapping and phenotypes for MC
 ```{r}
-table(median_cent_distinct$preterm)
+#df to map variable names onto names displayed on figures
+name_mapping <- data.frame(
+  abbreviation = c(
+     "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_cdk_total",   
+     "totalWM_cb", "totalWM_crb", "totalGM_crb",
+     
+    "smri_vol_scs_cbwmatterlh", "smri_vol_scs_ltventriclelh", "smri_vol_scs_inflatventlh",
+    "smri_vol_scs_crbwmatterlh", "smri_vol_scs_crbcortexlh", "smri_vol_scs_tplh",
+    "smri_vol_scs_caudatelh", "smri_vol_scs_putamenlh", "smri_vol_scs_pallidumlh",
+    "smri_vol_scs_3rdventricle", "smri_vol_scs_4thventricle", "smri_vol_scs_bstem",
+    "smri_vol_scs_hpuslh", "smri_vol_scs_amygdalalh", "smri_vol_scs_csf",
+    "smri_vol_scs_lesionlh", "smri_vol_scs_aal", "smri_vol_scs_vedclh",
+    
+    "smri_vol_scs_cbwmatterrh", "smri_vol_scs_ltventriclerh", "smri_vol_scs_inflatventrh",
+    "smri_vol_scs_crbwmatterrh", "smri_vol_scs_crbcortexrh", "smri_vol_scs_tprh",
+    "smri_vol_scs_caudaterh", "smri_vol_scs_putamenrh", "smri_vol_scs_pallidumrh",
+    "smri_vol_scs_hpusrh", "smri_vol_scs_amygdalarh", "smri_vol_scs_lesionrh",
+    "smri_vol_scs_aar", "smri_vol_scs_vedcrh", 
+    
+    "smri_vol_scs_wmhint",
+    "smri_vol_scs_wmhintlh", "smri_vol_scs_wmhintrh", 
+    
+    "smri_vol_scs_ccps",
+    "smri_vol_scs_ccmidps", "smri_vol_scs_ccct", "smri_vol_scs_ccmidat",
+    "smri_vol_scs_ccat", 
+    
+    "smri_vol_scs_wholeb", "smri_vol_scs_latventricles",
+    "smri_vol_scs_allventricles", "smri_vol_scs_intracranialv", "smri_vol_scs_suprateialv",
+    "smri_vol_scs_subcorticalgv",
+    
+    "smri_vol_cdk_banksstslh", "smri_vol_cdk_cdacatelh", "smri_vol_cdk_cdmdfrlh",
+    "smri_vol_cdk_cuneuslh", "smri_vol_cdk_ehinallh", "smri_vol_cdk_fusiformlh",
+    "smri_vol_cdk_ifpllh", "smri_vol_cdk_iftmlh", "smri_vol_cdk_ihcatelh",
+    "smri_vol_cdk_locclh", "smri_vol_cdk_lobfrlh", "smri_vol_cdk_linguallh",
+    "smri_vol_cdk_mobfrlh", "smri_vol_cdk_mdtmlh", "smri_vol_cdk_parahpallh",
+    "smri_vol_cdk_paracnlh", "smri_vol_cdk_parsopclh", "smri_vol_cdk_parsobislh",
+    "smri_vol_cdk_parstgrislh", "smri_vol_cdk_pericclh", "smri_vol_cdk_postcnlh",
+    "smri_vol_cdk_ptcatelh", "smri_vol_cdk_precnlh", "smri_vol_cdk_pclh",
+    "smri_vol_cdk_rracatelh", "smri_vol_cdk_rrmdfrlh", "smri_vol_cdk_sufrlh",
+    "smri_vol_cdk_supllh", "smri_vol_cdk_sutmlh", "smri_vol_cdk_smlh",
+    "smri_vol_cdk_frpolelh", "smri_vol_cdk_tmpolelh", "smri_vol_cdk_trvtmlh",
+    "smri_vol_cdk_insulalh",
+    
+     "smri_vol_cdk_banksstsrh", "smri_vol_cdk_cdacaterh", "smri_vol_cdk_cdmdfrrh",
+    "smri_vol_cdk_cuneusrh", "smri_vol_cdk_ehinalrh", "smri_vol_cdk_fusiformrh",
+    "smri_vol_cdk_ifplrh", "smri_vol_cdk_iftmrh", "smri_vol_cdk_ihcaterh",
+    "smri_vol_cdk_loccrh", "smri_vol_cdk_lobfrrh", "smri_vol_cdk_lingualrh",
+    "smri_vol_cdk_mobfrrh", "smri_vol_cdk_mdtmrh", "smri_vol_cdk_parahpalrh",
+    "smri_vol_cdk_paracnrh", "smri_vol_cdk_parsopcrh", "smri_vol_cdk_parsobisrh",
+    "smri_vol_cdk_parstgrisrh", "smri_vol_cdk_periccrh", "smri_vol_cdk_postcnrh",
+    "smri_vol_cdk_ptcaterh", "smri_vol_cdk_precnrh", "smri_vol_cdk_pcrh",
+    "smri_vol_cdk_rracaterh", "smri_vol_cdk_rrmdfrrh", "smri_vol_cdk_sufrrh",
+    "smri_vol_cdk_suplrh", "smri_vol_cdk_sutmrh", "smri_vol_cdk_smrh",
+    "smri_vol_cdk_frpolerh", "smri_vol_cdk_tmpolerh", "smri_vol_cdk_trvtmrh",
+    "smri_vol_cdk_insularh"
+  ),
+  region_name = c(
+    "Left-Cerebral_Cortex", "Right-Cerebral-Cortex", "Total-Cerebral-Cortex",
+    "Total_Cerebral-WM", "Total_Cerebellum-WM", "Total-Cerebellum-Cortex",
+    
+    "Left-Cerebral-White-Matter", "Left-Lateral-Ventricle", "Left-Inf-Lat-Vent",
+    "Left-Cerebellum-White-Matter", "Left-Cerebellum-Cortex", "Left-Thalamus-Proper",
+    "Left-Caudate", "Left-Putamen", "Left-Pallidum",
+    "x3rd-ventricle", "x4th-ventricle", "Brain-Stem",
+    "Left-Hippocampus", "Left-Amygdala", "Cerebrospinal-Fluid",
+    "Left-Lesion", "Left-Accumbens-Area", "Left-VentralDC",
+    
+   "Right-Cerebral-White-Matter", "Right-Lateral-Ventricle", "Right-Inf-Lat-Vent",
+    "Right-Cerebellum-White-Matter", "Right-Cerebellum-Cortex", "Right-Thalamus-Proper",
+    "Right-Caudate", "Right-Putamen", "Right-Pallidum",
+    "Right-Hippocampus", "Right-Amygdala",
+    "Right-Lesion", "Right-Accumbens-Area", "Right-VentralDC",
+    
+    "WM-Hypointensities","Left-WM-Hypointensities", "Right-WM-Hypointensities",
+   
+   "CC_Posterior","CC_Mid_Posterior", "CC_Central", "CC_Mid_Anterior",
+    "CC_Anterior", 
+   
+   "WholeBrain", "LatVentricles","AllVentricles", "IntracranialVolume", 
+   "SupratentorialVolume", "SubcorticalGrayVolume",
+   
+     "lh_bankssts", "lh_caudalanteriorcingulate", "lh_caudalmiddlefrontal",
+    "lh_cuneus", "lh_entorhinal", "lh_fusiform",
+    "lh_inferiorparietal", "lh_inferiortemporal", "lh_isthmuscingulate",
+    "lh_lateraloccipital", "lh_lateralorbitofrontal", "lh_lingual",
+    "lh_medialorbitofrontal", "lh_middletemporal", "lh_parahippocampal",
+    "lh_paracentral", "lh_parsopercularis", "lh_parsorbitalis",
+    "lh_parstriangularis", "lh_pericalcarine", "lh_postcentral",
+    "lh_posteriorcingulate", "lh_precentral", "lh_precuneus", "lh_rostralanteriorcingulate",
+    "lh_rostralmiddlefrontal", "lh_superiorfrontal", "lh_superiorparietal",
+    "lh_superiortemporal", "lh_supramarginal", "lh_frontalpole",
+    "lh_temporalpole", "lh_transversetemporal", "lh_insula",
+   
+     "rh_bankssts", "rh_caudalanteriorcingulate", "rh_caudalmiddlefrontal",
+    "rh_cuneus", "rh_entorhinal", "rh_fusiform",
+    "rh_inferiorparietal", "rh_inferiortemporal", "rh_isthmuscingulate",
+    "rh_lateraloccipital", "rh_lateralorbitofrontal", "rh_lingual",
+    "rh_medialorbitofrontal", "rh_middletemporal", "rh_parahippocampal",
+    "rh_paracentral", "rh_parsopercularis", "rh_parsorbitalis",
+    "rh_parstriangularis", "rh_pericalcarine", "rh_postcentral",
+    "rh_posteriorcingulate", "rh_precentral", "rh_precuneus", "rh_rostralanteriorcingulate",
+    "rh_rostralmiddlefrontal", "rh_superiorfrontal", "rh_superiorparietal",
+    "rh_superiortemporal", "rh_supramarginal", "rh_frontalpole",
+    "rh_temporalpole", "rh_transversetemporal", "rh_insula"
+    )
+)
 
-sum(!is.na(median_cent_distinct$birth_weight_kg))
-##plot dist keeping one row per participant ID
-ggplot(median_cent_distinct, aes(x = birth_weight_kg)) +
-  geom_histogram() +
-  labs(x = "Birth Weight (kg), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(birth_weight_kg)))[1])) +
-  theme_minimal()
-sum(!is.na(median_cent_distinct$gestational_age))
-##plot dist keeping one row per participant ID
-ggplot(median_cent_distinct, aes(x = gestational_age)) +
-  geom_histogram() +
-  labs(x = "Gestational Age (weeks), Repeat Removed", title = paste0("N = ",dim(median_cent_distinct %>% filter(!is.na(gestational_age)))[1])) +
-  theme_minimal()
+phenotypes_for_MC <- c(
+    "smri_vol_scs_ltventriclelh", "smri_vol_scs_inflatventlh",
+    "smri_vol_scs_crbwmatterlh", "smri_vol_scs_crbcortexlh", "smri_vol_scs_tplh",
+    "smri_vol_scs_caudatelh", "smri_vol_scs_putamenlh", "smri_vol_scs_pallidumlh",
+    "smri_vol_scs_3rdventricle", "smri_vol_scs_4thventricle", "smri_vol_scs_bstem",
+    "smri_vol_scs_hpuslh", "smri_vol_scs_amygdalalh", "smri_vol_scs_aal", "smri_vol_scs_vedclh",
+    
+    "smri_vol_scs_ltventriclerh", "smri_vol_scs_inflatventrh",
+    "smri_vol_scs_crbwmatterrh", "smri_vol_scs_crbcortexrh", "smri_vol_scs_tprh",
+    "smri_vol_scs_caudaterh", "smri_vol_scs_putamenrh", "smri_vol_scs_pallidumrh",
+    "smri_vol_scs_hpusrh", "smri_vol_scs_amygdalarh",
+    "smri_vol_scs_aar", "smri_vol_scs_vedcrh", 
+    
+    "smri_vol_scs_ccps",
+    "smri_vol_scs_ccmidps", "smri_vol_scs_ccct", "smri_vol_scs_ccmidat",
+    "smri_vol_scs_ccat",
+    
+    "smri_vol_cdk_banksstslh", "smri_vol_cdk_cdacatelh", "smri_vol_cdk_cdmdfrlh",
+    "smri_vol_cdk_cuneuslh", "smri_vol_cdk_ehinallh", "smri_vol_cdk_fusiformlh",
+    "smri_vol_cdk_ifpllh", "smri_vol_cdk_iftmlh", "smri_vol_cdk_ihcatelh",
+    "smri_vol_cdk_locclh", "smri_vol_cdk_lobfrlh", "smri_vol_cdk_linguallh",
+    "smri_vol_cdk_mobfrlh", "smri_vol_cdk_mdtmlh", "smri_vol_cdk_parahpallh",
+    "smri_vol_cdk_paracnlh", "smri_vol_cdk_parsopclh", "smri_vol_cdk_parsobislh",
+    "smri_vol_cdk_parstgrislh", "smri_vol_cdk_pericclh", "smri_vol_cdk_postcnlh",
+    "smri_vol_cdk_ptcatelh", "smri_vol_cdk_precnlh", "smri_vol_cdk_pclh",
+    "smri_vol_cdk_rracatelh", "smri_vol_cdk_rrmdfrlh", "smri_vol_cdk_sufrlh",
+    "smri_vol_cdk_supllh", "smri_vol_cdk_sutmlh", "smri_vol_cdk_smlh",
+    "smri_vol_cdk_frpolelh", "smri_vol_cdk_tmpolelh", "smri_vol_cdk_trvtmlh",
+    "smri_vol_cdk_insulalh",
+    
+     "smri_vol_cdk_banksstsrh", "smri_vol_cdk_cdacaterh", "smri_vol_cdk_cdmdfrrh",
+    "smri_vol_cdk_cuneusrh", "smri_vol_cdk_ehinalrh", "smri_vol_cdk_fusiformrh",
+    "smri_vol_cdk_ifplrh", "smri_vol_cdk_iftmrh", "smri_vol_cdk_ihcaterh",
+    "smri_vol_cdk_loccrh", "smri_vol_cdk_lobfrrh", "smri_vol_cdk_lingualrh",
+    "smri_vol_cdk_mobfrrh", "smri_vol_cdk_mdtmrh", "smri_vol_cdk_parahpalrh",
+    "smri_vol_cdk_paracnrh", "smri_vol_cdk_parsopcrh", "smri_vol_cdk_parsobisrh",
+    "smri_vol_cdk_parstgrisrh", "smri_vol_cdk_periccrh", "smri_vol_cdk_postcnrh",
+    "smri_vol_cdk_ptcaterh", "smri_vol_cdk_precnrh", "smri_vol_cdk_pcrh",
+    "smri_vol_cdk_rracaterh", "smri_vol_cdk_rrmdfrrh", "smri_vol_cdk_sufrrh",
+    "smri_vol_cdk_suplrh", "smri_vol_cdk_sutmrh", "smri_vol_cdk_smrh",
+    "smri_vol_cdk_frpolerh", "smri_vol_cdk_tmpolerh", "smri_vol_cdk_trvtmrh",
+    "smri_vol_cdk_insularh"
+  )
+
+global_phenotypes <- c("smri_vol_cdk_total", "totalWM_cb", "smri_vol_scs_allventricles", "smri_vol_scs_subcorticalgv")
+
+phenotypes_to_fit <- (c(phenotypes_for_MC, global_phenotypes, "smri_vol_scs_wholeb", "smri_vol_scs_wholeb", "totalWM_crb", "totalGM_crb", "smri_vol_scs_csf", "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_scs_cbwmatterlh", "smri_vol_scs_cbwmatterrh"))
+
+#save phenotypes not plotted with ggseg surface plots
+plot_data_dkt <- merge(name_mapping, ggseg::dk, by.x = "region_name", by.y = "label")
+plot_data_aseg <- merge(name_mapping, ggseg::aseg, by.x = "region_name", by.y = "label")
 ```
+#Read in data files
+```{r, echo = FALSE}
+all_vars <- read.csv(paste0(csv_save_path,"all_vars2025-12-05.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(csv_save_path,"global_vars2025-12-05.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(csv_save_path,"vol_vars2025-12-05.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(csv_save_path,"sa_vars2025-12-05.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(csv_save_path,"th_vars2025-12-05.csv")) %>% pull(x)
 
+median_distinct <- read.csv(paste0(csv_save_path,"median_distinct_clean_2025-12-05.csv")) %>% select(-("X"))
+median_all <- read.csv(paste0(csv_save_path,"median_processed_2025-12-05.csv")) %>% select(-("X"))
+gamlss_data <- readRDS(gamlss_data_path)
+```
+#Numbers for gamlss model data file, for sanity check
+```{r}
+gamlss_data_inc <- gamlss_data %>% filter(INDEX.OB == 1)
+length(unique(gamlss_data_inc$participant_id))
+range(gamlss_data_inc$age_days/365)
+```
+#Age Distribution - preliminary, before restricting to < 21
+```{r}
+hist(median_distinct$age_years)
+range(median_distinct$age_years)#0.97, 35.8
+```
+#Age Distribution - Remove Age > 21
+```{r}
+sum(median_distinct$adjusted_age_years > 21)
+sum(median_all$adjusted_age_years > 21)
+#GA/BW Numbers before removing > 21
+sum(!is.na(median_distinct$birth_weight_kg))
+sum(!is.na(median_distinct$gestational_age))
+sum(!is.na(median_distinct$birth_weight_kg) & !is.na(median_distinct$gestational_age))
+
+median_distinct <- median_distinct %>% filter(adjusted_age_years <= 21)
+median_all <- median_all %>% filter(adjusted_age_years <= 21)
+
+#GA/BW Numbers after removing > 21
+sum(!is.na(median_distinct$birth_weight_kg))
+sum(!is.na(median_distinct$gestational_age))
+sum(!is.na(median_distinct$birth_weight_kg) & !is.na(median_distinct$gestational_age))
+
+#Age Distribution Stats
+range(median_distinct$adjusted_age_years)
+IQR(median_distinct$adjusted_age_years)
+quartiles <- quantile(median_distinct$adjusted_age_years, probs = c(0.25, 0.75))
+quartiles[1]
+quartiles[2]  
+median(median_distinct$adjusted_age_years)
+```
+#Age Distribution - for young/old split
+```{r}
+median_distinct_young <- median_distinct %>% filter(age_years < mean(median_distinct$adjusted_age_years))
+median_distinct_old <- median_distinct %>% filter(age_years > mean(median_distinct$adjusted_age_years))
+
+#Age Distribution Stats Young
+range(median_distinct_young$adjusted_age_years)
+IQR(median_distinct_young$adjusted_age_years)
+median(median_distinct_young$adjusted_age_years)
+
+#Age Distribution Stats Young - with BW
+range(median_distinct_young[which(!is.na(median_distinct_young$birth_weight_kg)),]$adjusted_age_years)
+IQR(median_distinct_young[which(!is.na(median_distinct_young$birth_weight_kg)),]$adjusted_age_years)
+median(median_distinct_young[which(!is.na(median_distinct_young$birth_weight_kg)),]$adjusted_age_years)
+
+#Age Distribution Stats Young - with GA
+range(median_distinct_young[which(!is.na(median_distinct_young$gestational_age)),]$adjusted_age_years)
+IQR(median_distinct_young[which(!is.na(median_distinct_young$gestational_age)),]$adjusted_age_years)
+median(median_distinct_young[which(!is.na(median_distinct_young$gestational_age)),]$adjusted_age_years)
+
+#Age Distribution Stats old
+range(median_distinct_old$adjusted_age_years)
+IQR(median_distinct_old$adjusted_age_years)
+median(median_distinct_old$adjusted_age_years)
+
+#Age Distribution Stats old - with BW
+range(median_distinct_old[which(!is.na(median_distinct_old$birth_weight_kg)),]$adjusted_age_years)
+IQR(median_distinct_old[which(!is.na(median_distinct_old$birth_weight_kg)),]$adjusted_age_years)
+median(median_distinct_old[which(!is.na(median_distinct_old$birth_weight_kg)),]$adjusted_age_years)
+
+#Age Distribution Stats old - with GA
+range(median_distinct_old[which(!is.na(median_distinct_old$gestational_age)),]$adjusted_age_years)
+IQR(median_distinct_old[which(!is.na(median_distinct_old$gestational_age)),]$adjusted_age_years)
+median(median_distinct_old[which(!is.na(median_distinct_old$gestational_age)),]$adjusted_age_years)
+```
+#Variable: Sex
+```{r}
+prop.table(table(median_distinct$sex))
+prop.table(table(median_distinct[which(!is.na(median_distinct$gestational_age)),]$sex))
+prop.table(table(median_distinct[which(!is.na(median_distinct$birth_weight_kg)),]$sex))
+prop.table(table(median_distinct[which(!is.na(median_distinct$birth_weight_kg) & !is.na(median_distinct$gestational_age)),]$sex))
+```
+#Variable: Age
+```{r}
+#Whole sample (one session per participant)
+N_all <- sum(!is.na(median_distinct$adjusted_age_years))
+N_ga <- sum(!is.na(median_distinct$gestational_age))
+N_bw <- sum(!is.na(median_distinct$birth_weight_kg))
+N_ga_only <- sum(!is.na(median_distinct$gestational_age) & is.na(median_distinct$birth_weight_kg))
+N_bw_only <- sum(!is.na(median_distinct$birth_weight_kg) & is.na(median_distinct$gestational_age))
+N_gabw <- sum(!is.na(median_distinct$gestational_age) & !is.na(median_distinct$birth_weight_kg))
+N_none <- sum(is.na(median_distinct$gestational_age) & is.na(median_distinct$birth_weight_kg))
+
+
+(age_dist_all_plot <- ggplot(median_distinct, aes(x = adjusted_age_years)) +
+  geom_histogram(binwidth = 0.1, fill = "grey70", color = "white") +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_all),
+    y = NULL,
+    title = "All Participants for Growth Charts"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+if(save_figs == TRUE){
+panel_save(age_dist_all_plot, "age-dist-all", "pdf", plot_save_path)
+}
+
+df_age <- median_distinct %>%
+  mutate(
+    ga_known  = !is.na(gestational_age),
+    bw_known  = !is.na(birth_weight_kg),
+    group = case_when(
+      ga_known & bw_known ~ "GA & BW Known",
+      ga_known & !bw_known ~ "Only GA Known",
+      bw_known & !ga_known ~ "Only BW Known",
+      TRUE ~ "None"
+    )) %>%
+  mutate(group = factor(group, levels = c(
+    "Only GA Known",
+    "Only BW Known",
+    "GA & BW Known",
+    "None"
+  )))
+
+(age_dist_gabw_plot <- ggplot(df_age, aes(x = adjusted_age_years, fill = group)) +
+  geom_histogram(binwidth = 0.1, color = "white") +
+  scale_fill_manual(
+    values = c(
+      "Only GA Known" = "#9EC3D2",
+      "Only BW Known" = "#D6B8A8",
+      "GA & BW Known" = "#6A5A78",
+      "None" = "#E0E0E0"
+    ),
+    labels = c(
+      paste0("Only GA Known, N=", N_ga_only),
+      paste0("Only BW Known, N=", N_bw_only),
+      paste0("GA & BW Known, N=", N_gabw),
+      paste0("Neither Known, N=", N_none)
+    ),name = NULL) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_all),
+    y = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+theme(
+  legend.position = "bottom",
+  legend.direction = "horizontal",
+  legend.box = "horizontal",
+  legend.text = element_text(size = 14),
+  legend.key.width = unit(1.5, "cm"),
+  legend.box.just = "center",
+  panel.grid = element_blank()
+) +
+guides(fill = guide_legend(nrow = 2)))
+
+if(save_figs == TRUE){
+panel_save(age_dist_gabw_plot, "age-dist-gabw_all", "pdf", plot_save_path)
+}
+
+#GA available
+N_age_ga <- sum(!is.na(median_distinct$gestational_age))
+
+(age_dist_ga_plot <- ggplot(median_distinct %>% filter(!is.na(gestational_age)), aes(x = adjusted_age_years)) +
+  geom_histogram(binwidth = 0.1, fill = "#9EC3D2", color = "white") +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_age_ga),
+    y = NULL,
+    title = "Gestational Age Known"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+if(save_figs == TRUE){
+panel_save(age_dist_ga_plot, "age-dist-ga", "pdf", plot_save_path)
+}
+
+#BW available
+N_age_bw <- sum(!is.na(median_distinct$birth_weight_kg))
+
+(age_dist_bw_plot <- ggplot(median_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = adjusted_age_years)) +
+  geom_histogram(binwidth = 0.1, fill = "#D6B8A8", color = "white") +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_age_bw),
+    y = NULL,
+    title = "Birthweight Known"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+if(save_figs == TRUE){
+panel_save(age_dist_bw_plot, "age-dist-bw", "pdf", plot_save_path)
+}
+```
+#Variable: Gestational Age
+```{r}
+table(median_distinct$preterm)
+
+ga_ptb <- median_distinct %>%
+  filter(!is.na(gestational_age)) %>%
+  mutate(group = ifelse(gestational_age < 37, "Preterm", "Term"))
+
+pct_preterm <- round(mean(ga_ptb$group == "Preterm") * 100, 1)
+
+(ga_preterm_dist_plot <- ggplot(ga_ptb, aes(x = gestational_age, fill = group)) +
+  geom_histogram(binwidth = 0.5, color = "white") +
+  scale_fill_manual(values = c("Preterm" = "#F4A475", "Term" = "#A7D9A0")) +
+  labs(
+    x = paste0("Gestational Age(weeks),  % Preterm(<37wks) = ", pct_preterm),
+    y = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none"
+  ))
+
+if(save_figs == TRUE){
+panel_save(ga_preterm_dist_plot, "ga-preterm-dist-plot", "pdf", plot_save_path)
+}
+
+median_distinct <- median_distinct %>%
+  mutate(preterm = factor(preterm, levels = c("VPM", "LPM", "Term")))
+
+(ga_preterm_age_plot <- ggplot(median_distinct %>% filter(!is.na(preterm)), aes(x = adjusted_age_years, fill = preterm)) +
+  geom_histogram(position = "fill", binwidth = 0.25, color = "white") +
+  scale_fill_manual(
+    values = c(
+      "VPM"  = "#E8A0A8",
+      "LPM"  = "#A8C4E8",
+      "Term" = "#A7D9A0"
+    )
+  ) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = "Proportion",
+    fill = "Preterm Status"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal"
+  ))
+
+if(save_figs == TRUE){
+panel_save(ga_preterm_age_plot, "ga-preterm-byage-plot", "pdf", plot_save_path)
+}
+```
+#Variable: Birthweight
+```{r}
+median_distinct$bw_category <- as.factor(cut(median_distinct$birth_weight_kg, breaks = c(-Inf, 1.5, 2.5, Inf), labels = c("VLBW", "LBW", "Normal BW"), include.lowest = TRUE))
+
+bw_low <- median_distinct %>%
+  filter(!is.na(birth_weight_kg)) %>%
+  mutate(group = ifelse(birth_weight_kg < 2.5, "Low BW", "Normal BW"))
+
+pct_lowbw <- round(mean(bw_low$group == "Low BW") * 100, 1)
+
+(bw_low_dist_plot <- ggplot(bw_low, aes(x = birth_weight_kg, fill = group)) +
+    geom_histogram(
+    binwidth = 0.1,
+    boundary = 0,
+    color = "white"
+  ) +
+  scale_fill_manual(values = c("Low BW" = "#C76E6A", "Normal BW" = "#7FAF8A")) +
+  labs(
+    x = paste0("Birthweight(kg),  % Low(<2.5kg) = ", pct_lowbw),
+    y = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none"
+  ))
+
+if(save_figs == TRUE){
+panel_save(bw_low_dist_plot, "bw-low-dist-plot", "pdf", plot_save_path)
+}
+
+(bw_low_age_plot <- ggplot(median_distinct %>% filter(!is.na(bw_category)), aes(x = adjusted_age_years, fill = bw_category)) +
+  geom_histogram(position = "fill", binwidth = 0.25, color = "white") +
+  scale_fill_manual(
+    values = c(
+      "VLBW"  = "#B9836A",
+      "LBW"  = "#6A8F9F",
+      "Normal BW" = "#7FAF8A"
+    )
+  ) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = "Proportion",
+    fill = "Birthweight"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal"
+  ))
+
+if(save_figs == TRUE){
+panel_save(bw_low_age_plot, "bw-low-byage-plot", "pdf", plot_save_path)
+}
+
+median_distinct$age_group <- cut(median_distinct$adjusted_age_years, breaks = 80, include.lowest = TRUE, labels = FALSE)
+
+median_distinct <- median_distinct %>%
+  group_by(age_group) %>%
+  arrange(birth_weight_kg, .by_group = TRUE) %>%
+  ungroup()
+
+#for x axis labeling
+age_labels <- c(0, 5, 10, 15, 20)
+group_width <- (max(median_distinct$adjusted_age_years) - min(median_distinct$adjusted_age_years)) / 80
+x_breaks <- floor((age_labels - min(median_distinct$adjusted_age_years)) / group_width) + 1
+#fix position of 0
+x_breaks[1] <- 1
+
+(bw_cont_age_plot <- ggplot(median_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = age_group, y = 1, fill = birth_weight_kg)) + geom_bar(stat = "identity", width = 0.8) +
+    scale_fill_gradient2(low = "#F2EAD3", mid = "#E6E2C8", high = "#7FAF8A", limits = range(median_distinct$birth_weight_kg, na.rm = TRUE)) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = NULL,
+    fill = "Birthweight"
+  ) +
+  scale_x_continuous(
+      breaks = x_breaks,
+      labels = age_labels
+    ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(margin = margin(r = 10))
+  ) +
+  guides(fill = guide_colorbar(
+    barwidth = 10,
+    barheight = 1,
+    title.position = "left",
+    title.vjust = 1
+  )))
+
+if(save_figs == TRUE){
+panel_save(bw_cont_age_plot, "bw-cont-byage-plot", "pdf", plot_save_path)
+}
+```
+#Variable: Birthweight Percentile
+```{r}
+if(!("age_group" %in% names(median_distinct))){
+median_distinct$age_group <- cut(median_distinct$adjusted_age_years, breaks = 80, include.lowest = TRUE, labels = FALSE)
+}
+
+median_distinct <- median_distinct %>%
+  group_by(age_group) %>%
+  arrange(bweight_percentile, .by_group = TRUE) %>%
+  ungroup()
+
+#for x axis labeling
+age_labels <- c(0, 5, 10, 15, 20)
+group_width <- (max(median_distinct$adjusted_age_years) - min(median_distinct$adjusted_age_years)) / 80
+x_breaks <- floor((age_labels - min(median_distinct$adjusted_age_years)) / group_width) + 1
+#fix position of 0
+x_breaks[1] <- 1
+
+(bwp_cont_age_plot <- ggplot(median_distinct %>% filter(!is.na(bweight_percentile)), aes(x = age_group, y = 1, fill = bweight_percentile)) + geom_bar(stat = "identity", width = 0.8) +
+    scale_fill_gradient2(low = "#F2EAD3", mid = "#E6E2C8", high = "#7FAF8A", limits = c(0,1)) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = NULL,
+    fill = "Birthweight Percentile"
+  ) +
+  scale_x_continuous(
+      breaks = x_breaks,
+      labels = age_labels
+    ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(margin = margin(r = 10))
+  ) +
+  guides(fill = guide_colorbar(
+    barwidth = 10,
+    barheight = 1,
+    title.position = "left",
+    title.vjust = 1
+  )))
+
+if(save_figs == TRUE){
+panel_save(bwp_cont_age_plot, "bwp-cont-byage-plot", "pdf", plot_save_path)
+}
+```
 #Ages of repeat measurements
 ```{r}
 length(unique(repeat_median_cent$participant_id))

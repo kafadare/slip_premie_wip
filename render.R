@@ -3,12 +3,10 @@
 library(rmarkdown)
 
 # --------------------------------------------------
-# Argument parsing
-# Usage:
-#   Rscript render.R input.Rmd [output_dir] [output_file_base]
+# Rscript render.R input.Rmd [output_dir] [output_file_base]
 #
 # Defaults if only input.Rmd is supplied:
-#   output_dir       = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/markdown_output/"
+#   output_dir = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/markdown_output/"
 #   output_file_base = defaults to name of input Rmd
 # --------------------------------------------------
 
@@ -22,10 +20,10 @@ input_rmd <- args[1]
 
 message("Rendering: ", input_rmd)
 
-# default output directory
+# default output directory if no output directory arg supplied
 output_dir <- if (length(args) >= 2) args[2] else "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/markdown_output/"
 
-# default file base = input filename without extension
+# default file base = input filename without extension, if no file name supplied
 default_name <- tools::file_path_sans_ext(basename(input_rmd))
 output_filename <- if (length(args) >= 3) args[3] else default_name
 
@@ -38,8 +36,9 @@ if (!dir.exists(output_dir)) {
 }
 
 # Render R Markdown
-render(
+rmarkdown::render(
   input       = input_rmd,
+  output_format = "html document"
   output_file = output_file,
   output_dir  = output_dir,
   clean       = TRUE

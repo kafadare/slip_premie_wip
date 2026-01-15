@@ -13,25 +13,44 @@ editor_options:
 save_tables <- TRUE
 plot <- TRUE
 save_figs <- TRUE
+set.seed(42)
 ```
-#Define Paths and Load Packages
-```{r, echo = FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
-#define paths
+#Define Paths
+```{r}
+#set folder paths
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/"
+
+#raw data paths
 data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
 qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
-gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/median/DATA.rds"
-csv_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/results_csv/"
-plot_save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/plots/"
+gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/mpr/DATA.rds"
+#processed data path
+distinct_centiles_data_path <- paste0(vars_path,"liza_median_distinct_clean_2026-01-08.csv")
+all_centiles_data_path <- paste0(vars_path,"liza_median_all_clean_2026-01-08.csv")
+#output folder
+save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-liza/"
 
+## output subfolder paths
+csv_save_path <-  paste0(save_path, "results_csv/")
+plot_save_path <- paste0(save_path, "plots/")
 betas_folder <- paste0(csv_save_path, "full_betas/")
 if (!dir.exists(betas_folder)) dir.create(betas_folder)
 dkt_folder <- paste0(csv_save_path, "dkt_betas/")
 if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
 
+```
+#Load custom functions
+```{r}
 source(paste0(code_path,"sliding_window.R"))
+
+panel_save <- function(plot, filename, extension, folder){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300)
+}
+```
+#Load Packages
+```{r, echo = FALSE}
 #Load libraries
 require(dplyr)
 require(magrittr)
@@ -39,6 +58,7 @@ require(readr)
 require(stringr)
 require(tidyr)
 require(gamlssTools) #Margaret's package
+require(tibble)
 #For figures/plotting
 require(ggplot2)
 require(gridExtra)
@@ -52,11 +72,6 @@ require(interactions)
 require(growthstandards)
 require(gtsummary)
 require(svglite)
-
-panel_save <- function(plot, filename, extension, folder){
-  save_name <- paste0(folder, filename, ".", extension)
-  ggsave(save_name, plot = plot, dpi = 300)
-}
 ```
 #Plots specifications
 ```{r}
@@ -65,8 +80,7 @@ low_color = "#4878CF"
 mid_color = "white"
 high_color = "#D65F5F"
 ```
-
-#name mapping and phenotypes for MC
+#Plotting helper vectors, name-mapping
 ```{r}
 #df to map variable names onto names displayed on figures
 name_mapping <- data.frame(
@@ -229,14 +243,15 @@ plot_data_aseg <- merge(name_mapping, ggseg::aseg, by.x = "region_name", by.y = 
 ```
 #Read in data files
 ```{r, echo = FALSE}
-all_vars <- read.csv(paste0(csv_save_path,"all_vars2025-12-05.csv")) %>% pull(x)
-global_vars <- read.csv(paste0(csv_save_path,"global_vars2025-12-05.csv")) %>% pull(x)
-vol_vars <- read.csv(paste0(csv_save_path,"vol_vars2025-12-05.csv")) %>% pull(x)
-sa_vars <- read.csv(paste0(csv_save_path,"sa_vars2025-12-05.csv")) %>% pull(x)
-th_vars <- read.csv(paste0(csv_save_path,"th_vars2025-12-05.csv")) %>% pull(x)
+all_vars <- read.csv(paste0(vars_path,"all_vars2025-12-05.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars2025-12-05.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars2025-12-05.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars2025-12-05.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars2025-12-05.csv")) %>% pull(x)
 
-median_distinct <- read.csv(paste0(csv_save_path,"median_distinct_clean_2025-12-05.csv")) %>% select(-("X"))
-median_all <- read.csv(paste0(csv_save_path,"median_processed_2025-12-05.csv")) %>% select(-("X"))
+cent_distinct <- read.csv(distinct_centiles_data_path) %>% select(-("X"))
+cent_all <- read.csv(all_centiles_data_path) %>% select(-("X"))
+
 gamlss_data <- readRDS(gamlss_data_path)
 ```
 #Numbers for gamlss model data file, for sanity check
@@ -247,89 +262,89 @@ range(gamlss_data_inc$age_days/365)
 ```
 #Age Distribution - preliminary, before restricting to < 21
 ```{r}
-hist(median_distinct$age_years)
-range(median_distinct$age_years)#0.97, 35.8
+hist(cent_distinct$age_years)
+range(cent_distinct$age_years)#0.97, 35.8
 ```
 #Age Distribution - Remove Age > 21
 ```{r}
-sum(median_distinct$adjusted_age_years > 21)
-sum(median_all$adjusted_age_years > 21)
+sum(cent_distinct$adjusted_age_years > 21)
+sum(cent_all$adjusted_age_years > 21)
 #GA/BW Numbers before removing > 21
-sum(!is.na(median_distinct$birth_weight_kg))
-sum(!is.na(median_distinct$gestational_age))
-sum(!is.na(median_distinct$birth_weight_kg) & !is.na(median_distinct$gestational_age))
+sum(!is.na(cent_distinct$birth_weight_kg))
+sum(!is.na(cent_distinct$gestational_age))
+sum(!is.na(cent_distinct$birth_weight_kg) & !is.na(cent_distinct$gestational_age))
 
-median_distinct <- median_distinct %>% filter(adjusted_age_years <= 21)
-median_all <- median_all %>% filter(adjusted_age_years <= 21)
+cent_distinct <- cent_distinct %>% filter(adjusted_age_years <= 21)
+cent_all <- cent_all %>% filter(adjusted_age_years <= 21)
 
 #GA/BW Numbers after removing > 21
-sum(!is.na(median_distinct$birth_weight_kg))
-sum(!is.na(median_distinct$gestational_age))
-sum(!is.na(median_distinct$birth_weight_kg) & !is.na(median_distinct$gestational_age))
+sum(!is.na(cent_distinct$birth_weight_kg))
+sum(!is.na(cent_distinct$gestational_age))
+sum(!is.na(cent_distinct$birth_weight_kg) & !is.na(cent_distinct$gestational_age))
 
 #Age Distribution Stats
-range(median_distinct$adjusted_age_years)
-IQR(median_distinct$adjusted_age_years)
-quartiles <- quantile(median_distinct$adjusted_age_years, probs = c(0.25, 0.75))
+range(cent_distinct$adjusted_age_years)
+IQR(cent_distinct$adjusted_age_years)
+quartiles <- quantile(cent_distinct$adjusted_age_years, probs = c(0.25, 0.75))
 quartiles[1]
 quartiles[2]  
-median(median_distinct$adjusted_age_years)
+median(cent_distinct$adjusted_age_years)
 ```
 #Age Distribution - for young/old split
 ```{r}
-median_distinct_young <- median_distinct %>% filter(age_years < mean(median_distinct$adjusted_age_years))
-median_distinct_old <- median_distinct %>% filter(age_years > mean(median_distinct$adjusted_age_years))
+cent_distinct_young <- cent_distinct %>% filter(age_years < mean(cent_distinct$adjusted_age_years))
+cent_distinct_old <- cent_distinct %>% filter(age_years > mean(cent_distinct$adjusted_age_years))
 
 #Age Distribution Stats Young
-range(median_distinct_young$adjusted_age_years)
-IQR(median_distinct_young$adjusted_age_years)
-median(median_distinct_young$adjusted_age_years)
+range(cent_distinct_young$adjusted_age_years)
+IQR(cent_distinct_young$adjusted_age_years)
+median(cent_distinct_young$adjusted_age_years)
 
 #Age Distribution Stats Young - with BW
-range(median_distinct_young[which(!is.na(median_distinct_young$birth_weight_kg)),]$adjusted_age_years)
-IQR(median_distinct_young[which(!is.na(median_distinct_young$birth_weight_kg)),]$adjusted_age_years)
-median(median_distinct_young[which(!is.na(median_distinct_young$birth_weight_kg)),]$adjusted_age_years)
+range(cent_distinct_young[which(!is.na(cent_distinct_young$birth_weight_kg)),]$adjusted_age_years)
+IQR(cent_distinct_young[which(!is.na(cent_distinct_young$birth_weight_kg)),]$adjusted_age_years)
+median(cent_distinct_young[which(!is.na(cent_distinct_young$birth_weight_kg)),]$adjusted_age_years)
 
 #Age Distribution Stats Young - with GA
-range(median_distinct_young[which(!is.na(median_distinct_young$gestational_age)),]$adjusted_age_years)
-IQR(median_distinct_young[which(!is.na(median_distinct_young$gestational_age)),]$adjusted_age_years)
-median(median_distinct_young[which(!is.na(median_distinct_young$gestational_age)),]$adjusted_age_years)
+range(cent_distinct_young[which(!is.na(cent_distinct_young$gestational_age)),]$adjusted_age_years)
+IQR(cent_distinct_young[which(!is.na(cent_distinct_young$gestational_age)),]$adjusted_age_years)
+median(cent_distinct_young[which(!is.na(cent_distinct_young$gestational_age)),]$adjusted_age_years)
 
 #Age Distribution Stats old
-range(median_distinct_old$adjusted_age_years)
-IQR(median_distinct_old$adjusted_age_years)
-median(median_distinct_old$adjusted_age_years)
+range(cent_distinct_old$adjusted_age_years)
+IQR(cent_distinct_old$adjusted_age_years)
+median(cent_distinct_old$adjusted_age_years)
 
 #Age Distribution Stats old - with BW
-range(median_distinct_old[which(!is.na(median_distinct_old$birth_weight_kg)),]$adjusted_age_years)
-IQR(median_distinct_old[which(!is.na(median_distinct_old$birth_weight_kg)),]$adjusted_age_years)
-median(median_distinct_old[which(!is.na(median_distinct_old$birth_weight_kg)),]$adjusted_age_years)
+range(cent_distinct_old[which(!is.na(cent_distinct_old$birth_weight_kg)),]$adjusted_age_years)
+IQR(cent_distinct_old[which(!is.na(cent_distinct_old$birth_weight_kg)),]$adjusted_age_years)
+median(cent_distinct_old[which(!is.na(cent_distinct_old$birth_weight_kg)),]$adjusted_age_years)
 
 #Age Distribution Stats old - with GA
-range(median_distinct_old[which(!is.na(median_distinct_old$gestational_age)),]$adjusted_age_years)
-IQR(median_distinct_old[which(!is.na(median_distinct_old$gestational_age)),]$adjusted_age_years)
-median(median_distinct_old[which(!is.na(median_distinct_old$gestational_age)),]$adjusted_age_years)
+range(cent_distinct_old[which(!is.na(cent_distinct_old$gestational_age)),]$adjusted_age_years)
+IQR(cent_distinct_old[which(!is.na(cent_distinct_old$gestational_age)),]$adjusted_age_years)
+median(cent_distinct_old[which(!is.na(cent_distinct_old$gestational_age)),]$adjusted_age_years)
 ```
 #Variable: Sex
 ```{r}
-prop.table(table(median_distinct$sex))
-prop.table(table(median_distinct[which(!is.na(median_distinct$gestational_age)),]$sex))
-prop.table(table(median_distinct[which(!is.na(median_distinct$birth_weight_kg)),]$sex))
-prop.table(table(median_distinct[which(!is.na(median_distinct$birth_weight_kg) & !is.na(median_distinct$gestational_age)),]$sex))
+prop.table(table(cent_distinct$sex))
+prop.table(table(cent_distinct[which(!is.na(cent_distinct$gestational_age)),]$sex))
+prop.table(table(cent_distinct[which(!is.na(cent_distinct$birth_weight_kg)),]$sex))
+prop.table(table(cent_distinct[which(!is.na(cent_distinct$birth_weight_kg) & !is.na(cent_distinct$gestational_age)),]$sex))
 ```
 #Variable: Age
 ```{r}
 #Whole sample (one session per participant)
-N_all <- sum(!is.na(median_distinct$adjusted_age_years))
-N_ga <- sum(!is.na(median_distinct$gestational_age))
-N_bw <- sum(!is.na(median_distinct$birth_weight_kg))
-N_ga_only <- sum(!is.na(median_distinct$gestational_age) & is.na(median_distinct$birth_weight_kg))
-N_bw_only <- sum(!is.na(median_distinct$birth_weight_kg) & is.na(median_distinct$gestational_age))
-N_gabw <- sum(!is.na(median_distinct$gestational_age) & !is.na(median_distinct$birth_weight_kg))
-N_none <- sum(is.na(median_distinct$gestational_age) & is.na(median_distinct$birth_weight_kg))
+N_all <- sum(!is.na(cent_distinct$adjusted_age_years))
+N_ga <- sum(!is.na(cent_distinct$gestational_age))
+N_bw <- sum(!is.na(cent_distinct$birth_weight_kg))
+N_ga_only <- sum(!is.na(cent_distinct$gestational_age) & is.na(cent_distinct$birth_weight_kg))
+N_bw_only <- sum(!is.na(cent_distinct$birth_weight_kg) & is.na(cent_distinct$gestational_age))
+N_gabw <- sum(!is.na(cent_distinct$gestational_age) & !is.na(cent_distinct$birth_weight_kg))
+N_none <- sum(is.na(cent_distinct$gestational_age) & is.na(cent_distinct$birth_weight_kg))
 
 
-(age_dist_all_plot <- ggplot(median_distinct, aes(x = adjusted_age_years)) +
+(age_dist_all_plot <- ggplot(cent_distinct, aes(x = adjusted_age_years)) +
   geom_histogram(binwidth = 0.1, fill = "grey70", color = "white") +
   labs(
     x = paste0("Adjusted Age (years),  N = ", N_all),
@@ -346,7 +361,7 @@ if(save_figs == TRUE){
 panel_save(age_dist_all_plot, "age-dist-all", "pdf", plot_save_path)
 }
 
-df_age <- median_distinct %>%
+df_age <- cent_distinct %>%
   mutate(
     ga_known  = !is.na(gestational_age),
     bw_known  = !is.na(birth_weight_kg),
@@ -399,9 +414,9 @@ panel_save(age_dist_gabw_plot, "age-dist-gabw_all", "pdf", plot_save_path)
 }
 
 #GA available
-N_age_ga <- sum(!is.na(median_distinct$gestational_age))
+N_age_ga <- sum(!is.na(cent_distinct$gestational_age))
 
-(age_dist_ga_plot <- ggplot(median_distinct %>% filter(!is.na(gestational_age)), aes(x = adjusted_age_years)) +
+(age_dist_ga_plot <- ggplot(cent_distinct %>% filter(!is.na(gestational_age)), aes(x = adjusted_age_years)) +
   geom_histogram(binwidth = 0.1, fill = "#9EC3D2", color = "white") +
   labs(
     x = paste0("Adjusted Age (years),  N = ", N_age_ga),
@@ -419,9 +434,9 @@ panel_save(age_dist_ga_plot, "age-dist-ga", "pdf", plot_save_path)
 }
 
 #BW available
-N_age_bw <- sum(!is.na(median_distinct$birth_weight_kg))
+N_age_bw <- sum(!is.na(cent_distinct$birth_weight_kg))
 
-(age_dist_bw_plot <- ggplot(median_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = adjusted_age_years)) +
+(age_dist_bw_plot <- ggplot(cent_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = adjusted_age_years)) +
   geom_histogram(binwidth = 0.1, fill = "#D6B8A8", color = "white") +
   labs(
     x = paste0("Adjusted Age (years),  N = ", N_age_bw),
@@ -440,9 +455,9 @@ panel_save(age_dist_bw_plot, "age-dist-bw", "pdf", plot_save_path)
 ```
 #Variable: Gestational Age
 ```{r}
-table(median_distinct$preterm)
+table(cent_distinct$preterm)
 
-ga_ptb <- median_distinct %>%
+ga_ptb <- cent_distinct %>%
   filter(!is.na(gestational_age)) %>%
   mutate(group = ifelse(gestational_age < 37, "Preterm", "Term"))
 
@@ -465,10 +480,10 @@ if(save_figs == TRUE){
 panel_save(ga_preterm_dist_plot, "ga-preterm-dist-plot", "pdf", plot_save_path)
 }
 
-median_distinct <- median_distinct %>%
+cent_distinct <- cent_distinct %>%
   mutate(preterm = factor(preterm, levels = c("VPM", "LPM", "Term")))
 
-(ga_preterm_age_plot <- ggplot(median_distinct %>% filter(!is.na(preterm)), aes(x = adjusted_age_years, fill = preterm)) +
+(ga_preterm_age_plot <- ggplot(cent_distinct %>% filter(!is.na(preterm)), aes(x = adjusted_age_years, fill = preterm)) +
   geom_histogram(position = "fill", binwidth = 0.25, color = "white") +
   scale_fill_manual(
     values = c(
@@ -495,9 +510,9 @@ panel_save(ga_preterm_age_plot, "ga-preterm-byage-plot", "pdf", plot_save_path)
 ```
 #Variable: Birthweight
 ```{r}
-median_distinct$bw_category <- as.factor(cut(median_distinct$birth_weight_kg, breaks = c(-Inf, 1.5, 2.5, Inf), labels = c("VLBW", "LBW", "Normal BW"), include.lowest = TRUE))
+cent_distinct$bw_category <- as.factor(cut(cent_distinct$birth_weight_kg, breaks = c(-Inf, 1.5, 2.5, Inf), labels = c("VLBW", "LBW", "Normal BW"), include.lowest = TRUE))
 
-bw_low <- median_distinct %>%
+bw_low <- cent_distinct %>%
   filter(!is.na(birth_weight_kg)) %>%
   mutate(group = ifelse(birth_weight_kg < 2.5, "Low BW", "Normal BW"))
 
@@ -524,7 +539,7 @@ if(save_figs == TRUE){
 panel_save(bw_low_dist_plot, "bw-low-dist-plot", "pdf", plot_save_path)
 }
 
-(bw_low_age_plot <- ggplot(median_distinct %>% filter(!is.na(bw_category)), aes(x = adjusted_age_years, fill = bw_category)) +
+(bw_low_age_plot <- ggplot(cent_distinct %>% filter(!is.na(bw_category)), aes(x = adjusted_age_years, fill = bw_category)) +
   geom_histogram(position = "fill", binwidth = 0.25, color = "white") +
   scale_fill_manual(
     values = c(
@@ -549,22 +564,22 @@ if(save_figs == TRUE){
 panel_save(bw_low_age_plot, "bw-low-byage-plot", "pdf", plot_save_path)
 }
 
-median_distinct$age_group <- cut(median_distinct$adjusted_age_years, breaks = 80, include.lowest = TRUE, labels = FALSE)
+cent_distinct$age_group <- cut(cent_distinct$adjusted_age_years, breaks = 80, include.lowest = TRUE, labels = FALSE)
 
-median_distinct <- median_distinct %>%
+cent_distinct <- cent_distinct %>%
   group_by(age_group) %>%
   arrange(birth_weight_kg, .by_group = TRUE) %>%
   ungroup()
 
 #for x axis labeling
 age_labels <- c(0, 5, 10, 15, 20)
-group_width <- (max(median_distinct$adjusted_age_years) - min(median_distinct$adjusted_age_years)) / 80
-x_breaks <- floor((age_labels - min(median_distinct$adjusted_age_years)) / group_width) + 1
+group_width <- (max(cent_distinct$adjusted_age_years) - min(cent_distinct$adjusted_age_years)) / 80
+x_breaks <- floor((age_labels - min(cent_distinct$adjusted_age_years)) / group_width) + 1
 #fix position of 0
 x_breaks[1] <- 1
 
-(bw_cont_age_plot <- ggplot(median_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = age_group, y = 1, fill = birth_weight_kg)) + geom_bar(stat = "identity", width = 0.8) +
-    scale_fill_gradient2(low = "#F2EAD3", mid = "#E6E2C8", high = "#7FAF8A", limits = range(median_distinct$birth_weight_kg, na.rm = TRUE)) +
+(bw_cont_age_plot <- ggplot(cent_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = age_group, y = 1, fill = birth_weight_kg)) + geom_bar(stat = "identity", width = 0.8) +
+    scale_fill_gradient2(low = "#F2EAD3", mid = "#E6E2C8", high = "#7FAF8A", limits = range(cent_distinct$birth_weight_kg, na.rm = TRUE)) +
   labs(
     x = "Adjusted Age (years)",
     y = NULL,
@@ -594,23 +609,23 @@ panel_save(bw_cont_age_plot, "bw-cont-byage-plot", "pdf", plot_save_path)
 ```
 #Variable: Birthweight Percentile
 ```{r}
-if(!("age_group" %in% names(median_distinct))){
-median_distinct$age_group <- cut(median_distinct$adjusted_age_years, breaks = 80, include.lowest = TRUE, labels = FALSE)
+if(!("age_group" %in% names(cent_distinct))){
+cent_distinct$age_group <- cut(cent_distinct$adjusted_age_years, breaks = 80, include.lowest = TRUE, labels = FALSE)
 }
 
-median_distinct <- median_distinct %>%
+cent_distinct <- cent_distinct %>%
   group_by(age_group) %>%
   arrange(bweight_percentile, .by_group = TRUE) %>%
   ungroup()
 
 #for x axis labeling
 age_labels <- c(0, 5, 10, 15, 20)
-group_width <- (max(median_distinct$adjusted_age_years) - min(median_distinct$adjusted_age_years)) / 80
-x_breaks <- floor((age_labels - min(median_distinct$adjusted_age_years)) / group_width) + 1
+group_width <- (max(cent_distinct$adjusted_age_years) - min(cent_distinct$adjusted_age_years)) / 80
+x_breaks <- floor((age_labels - min(cent_distinct$adjusted_age_years)) / group_width) + 1
 #fix position of 0
 x_breaks[1] <- 1
 
-(bwp_cont_age_plot <- ggplot(median_distinct %>% filter(!is.na(bweight_percentile)), aes(x = age_group, y = 1, fill = bweight_percentile)) + geom_bar(stat = "identity", width = 0.8) +
+(bwp_cont_age_plot <- ggplot(cent_distinct %>% filter(!is.na(bweight_percentile)), aes(x = age_group, y = 1, fill = bweight_percentile)) + geom_bar(stat = "identity", width = 0.8) +
     scale_fill_gradient2(low = "#F2EAD3", mid = "#E6E2C8", high = "#7FAF8A", limits = c(0,1)) +
   labs(
     x = "Adjusted Age (years)",
@@ -639,20 +654,20 @@ if(save_figs == TRUE){
 panel_save(bwp_cont_age_plot, "bwp-cont-byage-plot", "pdf", plot_save_path)
 }
 ```
-#Ages of repeat measurements
+#Ages of repeat measurements -- this data frame is no longer created/read into this script
 ```{r}
-length(unique(repeat_median_cent$participant_id))
-repeat_median_cent$age_years <- repeat_median_cent$age_days/365
-ggplot(repeat_median_cent, aes(x = age_years, y = global_MeanThickness, group = participant_id, color = participant_id)) + 
-  geom_point() +
-  geom_line() +
-  theme_minimal() +
-  theme(legend.position = "none")
-
-length(unique(repeat_median2_cent$participant_id))
-repeat_median2_cent$age_years <- repeat_median2_cent$age_days/365
-ggplot(repeat_median2_cent %>% filter(!is.na(gestational_age)), aes(x = age_years, y = global_MeanThickness, group = participant_id, color = gestational_age)) + 
-  geom_point() +
-  geom_line() +
-  theme_minimal()
+# length(unique(repeat_median_cent$participant_id))
+# repeat_median_cent$age_years <- repeat_median_cent$age_days/365
+# ggplot(repeat_median_cent, aes(x = age_years, y = global_MeanThickness, group = participant_id, color = participant_id)) + 
+#   geom_point() +
+#   geom_line() +
+#   theme_minimal() +
+#   theme(legend.position = "none")
+# 
+# length(unique(repeat_median2_cent$participant_id))
+# repeat_median2_cent$age_years <- repeat_median2_cent$age_days/365
+# ggplot(repeat_median2_cent %>% filter(!is.na(gestational_age)), aes(x = age_years, y = global_MeanThickness, group = participant_id, color = gestational_age)) + 
+#   geom_point() +
+#   geom_line() +
+#   theme_minimal()
 ```

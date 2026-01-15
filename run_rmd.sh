@@ -9,15 +9,15 @@
 module load R
 
 # Rmd file name required
-INPUT_RMD="slipga_prelim.Rmd"
 
-# output directory and basename are optional arguments
-# Leave blank to use the defaults defined inside render.R
-OUTPUT_DIR=""
-OUTPUT_BASE=""
+INPUT_RMD=$1
 
-conda init
-conda activate slip_premie
+#if no arg supplied, then uses defaults defined inside render.R
+OUTPUT_DIR=${2:-""}
+OUTPUT_BASE=${3:-""}
+
+#conda init
+#conda activate slip_premie
 
 # --- Build command depending on which args are supplied ---
 if [ -n "$OUTPUT_DIR" ] && [ -n "$OUTPUT_BASE" ]; then

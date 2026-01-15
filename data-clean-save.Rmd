@@ -13,6 +13,7 @@ editor_options:
 save_tables <- TRUE
 plot <- TRUE
 save_figs <- TRUE
+vars_find <- FALSE
 ```
 ##Define Paths and Load Packages
 ```{r, include = FALSE}
@@ -22,15 +23,21 @@ knitr::opts_chunk$set(echo = TRUE)
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
 data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
 data_gaonly_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/slip_ga_median_centiles_20251203.csv"
+data_liza_mpr_path <- "/mnt/isilon/bgdlab_processing/Liza/SLIP_nnUNet_braincharts/code/gamlss/OUT/slip_mpr_aparc_global_centiles_qnorm_20251209.csv"
+data_liza_median_path <- "/mnt/isilon/bgdlab_processing/Liza/SLIP_nnUNet_braincharts/code/gamlss/OUT/slip_median_aparc_global_centiles_qnorm_20251209.csv"
 qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
-csv_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/results_csv/"
+vars_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/"
+## output/save paths
+csv_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-all/results_csv/"
+plot_save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-all/plots/"
 
 betas_folder <- paste0(csv_save_path, "full_betas/")
 if (!dir.exists(betas_folder)) dir.create(betas_folder)
 dkt_folder <- paste0(csv_save_path, "dkt_betas/")
 if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
 
-source(paste0(code_path,"sliding_window.R"))
+source(paste0(code_path,"slip_data_utils.R"))
+
 #Load libraries
 library(dplyr)
 library(magrittr)
@@ -50,167 +57,6 @@ library(interactions)
 library(growthstandards)
 library(gtsummary)
 library(svglite)
-```
-##name mapping and phenotypes for MC
-```{r}
-#df to map variable names onto names displayed on figures
-name_mapping <- data.frame(
-  abbreviation = c(
-     "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_cdk_total",   
-     "totalWM_cb", "totalWM_crb", "totalGM_crb",
-     
-    "smri_vol_scs_cbwmatterlh", "smri_vol_scs_ltventriclelh", "smri_vol_scs_inflatventlh",
-    "smri_vol_scs_crbwmatterlh", "smri_vol_scs_crbcortexlh", "smri_vol_scs_tplh",
-    "smri_vol_scs_caudatelh", "smri_vol_scs_putamenlh", "smri_vol_scs_pallidumlh",
-    "smri_vol_scs_3rdventricle", "smri_vol_scs_4thventricle", "smri_vol_scs_bstem",
-    "smri_vol_scs_hpuslh", "smri_vol_scs_amygdalalh", "smri_vol_scs_csf",
-    "smri_vol_scs_lesionlh", "smri_vol_scs_aal", "smri_vol_scs_vedclh",
-    
-    "smri_vol_scs_cbwmatterrh", "smri_vol_scs_ltventriclerh", "smri_vol_scs_inflatventrh",
-    "smri_vol_scs_crbwmatterrh", "smri_vol_scs_crbcortexrh", "smri_vol_scs_tprh",
-    "smri_vol_scs_caudaterh", "smri_vol_scs_putamenrh", "smri_vol_scs_pallidumrh",
-    "smri_vol_scs_hpusrh", "smri_vol_scs_amygdalarh", "smri_vol_scs_lesionrh",
-    "smri_vol_scs_aar", "smri_vol_scs_vedcrh", 
-    
-    "smri_vol_scs_wmhint",
-    "smri_vol_scs_wmhintlh", "smri_vol_scs_wmhintrh", 
-    
-    "smri_vol_scs_ccps",
-    "smri_vol_scs_ccmidps", "smri_vol_scs_ccct", "smri_vol_scs_ccmidat",
-    "smri_vol_scs_ccat", 
-    
-    "smri_vol_scs_wholeb", "smri_vol_scs_latventricles",
-    "smri_vol_scs_allventricles", "smri_vol_scs_intracranialv", "smri_vol_scs_suprateialv",
-    "smri_vol_scs_subcorticalgv",
-    
-    "smri_vol_cdk_banksstslh", "smri_vol_cdk_cdacatelh", "smri_vol_cdk_cdmdfrlh",
-    "smri_vol_cdk_cuneuslh", "smri_vol_cdk_ehinallh", "smri_vol_cdk_fusiformlh",
-    "smri_vol_cdk_ifpllh", "smri_vol_cdk_iftmlh", "smri_vol_cdk_ihcatelh",
-    "smri_vol_cdk_locclh", "smri_vol_cdk_lobfrlh", "smri_vol_cdk_linguallh",
-    "smri_vol_cdk_mobfrlh", "smri_vol_cdk_mdtmlh", "smri_vol_cdk_parahpallh",
-    "smri_vol_cdk_paracnlh", "smri_vol_cdk_parsopclh", "smri_vol_cdk_parsobislh",
-    "smri_vol_cdk_parstgrislh", "smri_vol_cdk_pericclh", "smri_vol_cdk_postcnlh",
-    "smri_vol_cdk_ptcatelh", "smri_vol_cdk_precnlh", "smri_vol_cdk_pclh",
-    "smri_vol_cdk_rracatelh", "smri_vol_cdk_rrmdfrlh", "smri_vol_cdk_sufrlh",
-    "smri_vol_cdk_supllh", "smri_vol_cdk_sutmlh", "smri_vol_cdk_smlh",
-    "smri_vol_cdk_frpolelh", "smri_vol_cdk_tmpolelh", "smri_vol_cdk_trvtmlh",
-    "smri_vol_cdk_insulalh",
-    
-     "smri_vol_cdk_banksstsrh", "smri_vol_cdk_cdacaterh", "smri_vol_cdk_cdmdfrrh",
-    "smri_vol_cdk_cuneusrh", "smri_vol_cdk_ehinalrh", "smri_vol_cdk_fusiformrh",
-    "smri_vol_cdk_ifplrh", "smri_vol_cdk_iftmrh", "smri_vol_cdk_ihcaterh",
-    "smri_vol_cdk_loccrh", "smri_vol_cdk_lobfrrh", "smri_vol_cdk_lingualrh",
-    "smri_vol_cdk_mobfrrh", "smri_vol_cdk_mdtmrh", "smri_vol_cdk_parahpalrh",
-    "smri_vol_cdk_paracnrh", "smri_vol_cdk_parsopcrh", "smri_vol_cdk_parsobisrh",
-    "smri_vol_cdk_parstgrisrh", "smri_vol_cdk_periccrh", "smri_vol_cdk_postcnrh",
-    "smri_vol_cdk_ptcaterh", "smri_vol_cdk_precnrh", "smri_vol_cdk_pcrh",
-    "smri_vol_cdk_rracaterh", "smri_vol_cdk_rrmdfrrh", "smri_vol_cdk_sufrrh",
-    "smri_vol_cdk_suplrh", "smri_vol_cdk_sutmrh", "smri_vol_cdk_smrh",
-    "smri_vol_cdk_frpolerh", "smri_vol_cdk_tmpolerh", "smri_vol_cdk_trvtmrh",
-    "smri_vol_cdk_insularh"
-  ),
-  region_name = c(
-    "Left-Cerebral_Cortex", "Right-Cerebral-Cortex", "Total-Cerebral-Cortex",
-    "Total_Cerebral-WM", "Total_Cerebellum-WM", "Total-Cerebellum-Cortex",
-    
-    "Left-Cerebral-White-Matter", "Left-Lateral-Ventricle", "Left-Inf-Lat-Vent",
-    "Left-Cerebellum-White-Matter", "Left-Cerebellum-Cortex", "Left-Thalamus-Proper",
-    "Left-Caudate", "Left-Putamen", "Left-Pallidum",
-    "x3rd-ventricle", "x4th-ventricle", "Brain-Stem",
-    "Left-Hippocampus", "Left-Amygdala", "Cerebrospinal-Fluid",
-    "Left-Lesion", "Left-Accumbens-Area", "Left-VentralDC",
-    
-   "Right-Cerebral-White-Matter", "Right-Lateral-Ventricle", "Right-Inf-Lat-Vent",
-    "Right-Cerebellum-White-Matter", "Right-Cerebellum-Cortex", "Right-Thalamus-Proper",
-    "Right-Caudate", "Right-Putamen", "Right-Pallidum",
-    "Right-Hippocampus", "Right-Amygdala",
-    "Right-Lesion", "Right-Accumbens-Area", "Right-VentralDC",
-    
-    "WM-Hypointensities","Left-WM-Hypointensities", "Right-WM-Hypointensities",
-   
-   "CC_Posterior","CC_Mid_Posterior", "CC_Central", "CC_Mid_Anterior",
-    "CC_Anterior", 
-   
-   "WholeBrain", "LatVentricles","AllVentricles", "IntracranialVolume", 
-   "SupratentorialVolume", "SubcorticalGrayVolume",
-   
-     "lh_bankssts", "lh_caudalanteriorcingulate", "lh_caudalmiddlefrontal",
-    "lh_cuneus", "lh_entorhinal", "lh_fusiform",
-    "lh_inferiorparietal", "lh_inferiortemporal", "lh_isthmuscingulate",
-    "lh_lateraloccipital", "lh_lateralorbitofrontal", "lh_lingual",
-    "lh_medialorbitofrontal", "lh_middletemporal", "lh_parahippocampal",
-    "lh_paracentral", "lh_parsopercularis", "lh_parsorbitalis",
-    "lh_parstriangularis", "lh_pericalcarine", "lh_postcentral",
-    "lh_posteriorcingulate", "lh_precentral", "lh_precuneus", "lh_rostralanteriorcingulate",
-    "lh_rostralmiddlefrontal", "lh_superiorfrontal", "lh_superiorparietal",
-    "lh_superiortemporal", "lh_supramarginal", "lh_frontalpole",
-    "lh_temporalpole", "lh_transversetemporal", "lh_insula",
-   
-     "rh_bankssts", "rh_caudalanteriorcingulate", "rh_caudalmiddlefrontal",
-    "rh_cuneus", "rh_entorhinal", "rh_fusiform",
-    "rh_inferiorparietal", "rh_inferiortemporal", "rh_isthmuscingulate",
-    "rh_lateraloccipital", "rh_lateralorbitofrontal", "rh_lingual",
-    "rh_medialorbitofrontal", "rh_middletemporal", "rh_parahippocampal",
-    "rh_paracentral", "rh_parsopercularis", "rh_parsorbitalis",
-    "rh_parstriangularis", "rh_pericalcarine", "rh_postcentral",
-    "rh_posteriorcingulate", "rh_precentral", "rh_precuneus", "rh_rostralanteriorcingulate",
-    "rh_rostralmiddlefrontal", "rh_superiorfrontal", "rh_superiorparietal",
-    "rh_superiortemporal", "rh_supramarginal", "rh_frontalpole",
-    "rh_temporalpole", "rh_transversetemporal", "rh_insula"
-    )
-)
-
-phenotypes_for_MC <- c(
-    "smri_vol_scs_ltventriclelh", "smri_vol_scs_inflatventlh",
-    "smri_vol_scs_crbwmatterlh", "smri_vol_scs_crbcortexlh", "smri_vol_scs_tplh",
-    "smri_vol_scs_caudatelh", "smri_vol_scs_putamenlh", "smri_vol_scs_pallidumlh",
-    "smri_vol_scs_3rdventricle", "smri_vol_scs_4thventricle", "smri_vol_scs_bstem",
-    "smri_vol_scs_hpuslh", "smri_vol_scs_amygdalalh", "smri_vol_scs_aal", "smri_vol_scs_vedclh",
-    
-    "smri_vol_scs_ltventriclerh", "smri_vol_scs_inflatventrh",
-    "smri_vol_scs_crbwmatterrh", "smri_vol_scs_crbcortexrh", "smri_vol_scs_tprh",
-    "smri_vol_scs_caudaterh", "smri_vol_scs_putamenrh", "smri_vol_scs_pallidumrh",
-    "smri_vol_scs_hpusrh", "smri_vol_scs_amygdalarh",
-    "smri_vol_scs_aar", "smri_vol_scs_vedcrh", 
-    
-    "smri_vol_scs_ccps",
-    "smri_vol_scs_ccmidps", "smri_vol_scs_ccct", "smri_vol_scs_ccmidat",
-    "smri_vol_scs_ccat",
-    
-    "smri_vol_cdk_banksstslh", "smri_vol_cdk_cdacatelh", "smri_vol_cdk_cdmdfrlh",
-    "smri_vol_cdk_cuneuslh", "smri_vol_cdk_ehinallh", "smri_vol_cdk_fusiformlh",
-    "smri_vol_cdk_ifpllh", "smri_vol_cdk_iftmlh", "smri_vol_cdk_ihcatelh",
-    "smri_vol_cdk_locclh", "smri_vol_cdk_lobfrlh", "smri_vol_cdk_linguallh",
-    "smri_vol_cdk_mobfrlh", "smri_vol_cdk_mdtmlh", "smri_vol_cdk_parahpallh",
-    "smri_vol_cdk_paracnlh", "smri_vol_cdk_parsopclh", "smri_vol_cdk_parsobislh",
-    "smri_vol_cdk_parstgrislh", "smri_vol_cdk_pericclh", "smri_vol_cdk_postcnlh",
-    "smri_vol_cdk_ptcatelh", "smri_vol_cdk_precnlh", "smri_vol_cdk_pclh",
-    "smri_vol_cdk_rracatelh", "smri_vol_cdk_rrmdfrlh", "smri_vol_cdk_sufrlh",
-    "smri_vol_cdk_supllh", "smri_vol_cdk_sutmlh", "smri_vol_cdk_smlh",
-    "smri_vol_cdk_frpolelh", "smri_vol_cdk_tmpolelh", "smri_vol_cdk_trvtmlh",
-    "smri_vol_cdk_insulalh",
-    
-     "smri_vol_cdk_banksstsrh", "smri_vol_cdk_cdacaterh", "smri_vol_cdk_cdmdfrrh",
-    "smri_vol_cdk_cuneusrh", "smri_vol_cdk_ehinalrh", "smri_vol_cdk_fusiformrh",
-    "smri_vol_cdk_ifplrh", "smri_vol_cdk_iftmrh", "smri_vol_cdk_ihcaterh",
-    "smri_vol_cdk_loccrh", "smri_vol_cdk_lobfrrh", "smri_vol_cdk_lingualrh",
-    "smri_vol_cdk_mobfrrh", "smri_vol_cdk_mdtmrh", "smri_vol_cdk_parahpalrh",
-    "smri_vol_cdk_paracnrh", "smri_vol_cdk_parsopcrh", "smri_vol_cdk_parsobisrh",
-    "smri_vol_cdk_parstgrisrh", "smri_vol_cdk_periccrh", "smri_vol_cdk_postcnrh",
-    "smri_vol_cdk_ptcaterh", "smri_vol_cdk_precnrh", "smri_vol_cdk_pcrh",
-    "smri_vol_cdk_rracaterh", "smri_vol_cdk_rrmdfrrh", "smri_vol_cdk_sufrrh",
-    "smri_vol_cdk_suplrh", "smri_vol_cdk_sutmrh", "smri_vol_cdk_smrh",
-    "smri_vol_cdk_frpolerh", "smri_vol_cdk_tmpolerh", "smri_vol_cdk_trvtmrh",
-    "smri_vol_cdk_insularh"
-  )
-
-global_phenotypes <- c("smri_vol_cdk_total", "totalWM_cb", "smri_vol_scs_allventricles", "smri_vol_scs_subcorticalgv")
-
-phenotypes_to_fit <- (c(phenotypes_for_MC, global_phenotypes, "smri_vol_scs_wholeb", "smri_vol_scs_wholeb", "totalWM_crb", "totalGM_crb", "smri_vol_scs_csf", "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_scs_cbwmatterlh", "smri_vol_scs_cbwmatterrh"))
-
-#save phenotypes not plotted with ggseg surface plots
-plot_data_dkt <- merge(name_mapping, ggseg::dk, by.x = "region_name", by.y = "label")
-plot_data_aseg <- merge(name_mapping, ggseg::aseg, by.x = "region_name", by.y = "label")
 ```
 ##Load Data
 ```{r, echo = FALSE}
@@ -235,7 +81,9 @@ median_cent <- read.csv(paste0(data_path, "slip_median_centiles_20250912.csv"))
 median2_cent <- read.csv(paste0(data_path, "slip_median2_centiles_20250912.csv"))
 mpr_cent <- read.csv(paste0(data_path, "slip_mpr_centiles_20250912.csv"))
 mpr2_cent <- read.csv(paste0(data_path, "slip_mpr2_centiles_20250912.csv"))
-median_ga_cent <- read.csv(data_gaonly_path)
+medianga_cent <- read.csv(data_gaonly_path)
+liza_median_cent <- read.csv(data_liza_median_path)
+liza_mpr_cent <- read.csv(data_liza_mpr_path)
 ```
 #QC inter-variable correlations
 ```{r}
@@ -253,109 +101,28 @@ ggcorrplot(
 ```
 #Define IDP variable names
 ```{r}
-vol_vars <- c(names(median_cent)[grepl("aparc_GrayVol", names(median_cent))], names(median_cent)[grepl("aseg", names(median_cent))])
-vol_vars <- vol_vars[!vol_vars %in% c("aseg_Left_Cerebral_Cortex", "aseg_Left_Cerebral_White_Matter", "aseg_Right_Cerebral_Cortex", "aseg_Right_Cerebral_White_Matter", "aseg_CSF" )]
-sa_vars <- c(names(median_cent)[grepl("aparc_SurfArea", names(median_cent))])
-th_vars <- c(names(median_cent)[grepl("aparc_ThickAvg", names(median_cent))])
-global_vars <- c(names(median_cent)[grepl("global", names(median_cent))])
-all_vars <- c(vol_vars, sa_vars, th_vars, global_vars)
-
-if (save_tables == TRUE){
-write.csv(all_vars, paste0(csv_save_path, "all_vars", Sys.Date(), ".csv"))
-write.csv(global_vars, paste0(csv_save_path, "global_vars", Sys.Date(), ".csv"))
-write.csv(vol_vars, paste0(csv_save_path, "vol_vars", Sys.Date(), ".csv"))
-write.csv(sa_vars, paste0(csv_save_path, "sa_vars", Sys.Date(), ".csv"))
-write.csv(th_vars, paste0(csv_save_path, "th_vars", Sys.Date(), ".csv"))
+if (vars_find == TRUE){
+  vol_vars <- c(names(median_cent)[grepl("aparc_GrayVol", names(median_cent))],
+                names(median_cent)[grepl("aseg", names(median_cent))])
+  vol_vars <- vol_vars[!vol_vars %in% c("aseg_Left_Cerebral_Cortex", "aseg_Left_Cerebral_White_Matter",
+                                        "aseg_Right_Cerebral_Cortex", "aseg_Right_Cerebral_White_Matter",
+                                        "aseg_CSF" )]
+  sa_vars <- c(names(median_cent)[grepl("aparc_SurfArea", names(median_cent))])
+  th_vars <- c(names(median_cent)[grepl("aparc_ThickAvg", names(median_cent))])
+  global_vars <- c(names(median_cent)[grepl("global", names(median_cent))])
+  all_vars <- c(vol_vars, sa_vars, th_vars, global_vars)
+  
+  if (save_tables == TRUE){
+    write.csv(all_vars, paste0(csv_save_path, "all_vars", Sys.Date(), ".csv"))
+    write.csv(global_vars, paste0(csv_save_path, "global_vars", Sys.Date(), ".csv"))
+    write.csv(vol_vars, paste0(csv_save_path, "vol_vars", Sys.Date(), ".csv"))
+    write.csv(sa_vars, paste0(csv_save_path, "sa_vars", Sys.Date(), ".csv"))
+    write.csv(th_vars, paste0(csv_save_path, "th_vars", Sys.Date(), ".csv"))
+  }
 }
 ```
-#DATA PREP - all four tables (mpr, mpr2, median, median2) + medianGA
-##Merge centile tables with participant tables
-```{r}
-#mpr2
-##overall including repeat participant IDs
-mpr2_cent <- merge(mpr2_cent, participants %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                   "age_at_scan", 
-                                                   "adjusted_age_in_days",
-                                                   "avg_grade",
-                                                   "height_at_enc",
-                                                   "weight_at_enc",
-                                                   "year_of_scan")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-mpr2_cent <- merge(mpr2_cent, participants %>% select(c("participant_id",
-                                                   "gestational_age",
-                                                   "birth_weight_kg",
-                                                   "birth_length_cm")), by = c("participant_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-
-#mpr
-##overall including repeat participant IDs
-mpr_cent <- merge(mpr_cent, participants %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                   "age_at_scan", 
-                                                   "adjusted_age_in_days",
-                                                   "avg_grade",
-                                                   "height_at_enc",
-                                                   "weight_at_enc",
-                                                   "year_of_scan")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-mpr_cent <- merge(mpr_cent, participants %>% select(c("participant_id",
-                                                   "gestational_age",
-                                                   "birth_weight_kg",
-                                                   "birth_length_cm")), by = c("participant_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-#mpr2
-##overall including repeat participant IDs
-median2_cent <- merge(median2_cent, participants %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                   "age_at_scan", 
-                                                   "adjusted_age_in_days",
-                                                   "avg_grade",
-                                                   "height_at_enc",
-                                                   "weight_at_enc",
-                                                   "year_of_scan")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-median2_cent <- merge(median2_cent, participants %>% select(c("participant_id",
-                                                   "gestational_age",
-                                                   "birth_weight_kg",
-                                                   "birth_length_cm")), by = c("participant_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-
-#median
-##overall including repeat participant IDs
-median_cent <- merge(median_cent, participants %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                   "age_at_scan", 
-                                                   "adjusted_age_in_days",
-                                                   "avg_grade",
-                                                   "height_at_enc",
-                                                   "weight_at_enc",
-                                                   "year_of_scan")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-median_cent <- merge(median_cent, participants %>% select(c("participant_id",
-                                                   "gestational_age",
-                                                   "birth_weight_kg",
-                                                   "birth_length_cm")), by = c("participant_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-
-#median
-##overall including repeat participant IDs
-median_ga_cent <- merge(median_ga_cent, participants %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                   "age_at_scan", 
-                                                   "adjusted_age_in_days",
-                                                   "avg_grade",
-                                                   "height_at_enc",
-                                                   "weight_at_enc",
-                                                   "year_of_scan")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-median_ga_cent <- merge(median_ga_cent, participants %>% select(c("participant_id",
-                                                    #"gestational_age", (exists in median_ga_cent already)
-                                                    "birth_weight_kg",
-                                                  "birth_length_cm")), by = c("participant_id"), 
-                                                                             all.x = TRUE, all.y = FALSE)
-```
-##Merge tables with QC metrics
+#DATA PREP
+##QC metrics prep
 ```{r}
 ##group by session-id and take median of euler_mean
 qc_metrics <- qc_metrics %>%
@@ -364,330 +131,168 @@ qc_metrics <- qc_metrics %>%
             .groups = "drop") %>%
   left_join(qc_metrics, by = "session_id") %>%
   rename(participant_id = subject_id)
-
-##merge centile tables with QC metrics
-#MPRage centiles already have corresponding euler_mean for scan
-
-#median2
-##overall including repeat participant IDs
-median2_cent <- merge(median2_cent, qc_metrics %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                    "median_euler_mean")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-
-
-#median
-##overall including repeat participant IDs
-median_cent <- merge(median_cent, qc_metrics %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                    "median_euler_mean")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
-#median
-##overall including repeat participant IDs
-median_ga_cent <- merge(median_ga_cent, qc_metrics %>% select(c("participant_id", 
-                                                   "session_id", 
-                                                    "median_euler_mean")), by = c("participant_id", "session_id"), 
-                                                                            all.x = TRUE, all.y = FALSE)
 ```
-##Create Variables - for all
-###Add age in years
+##Participant DF prep
+Check if any participant has separate values recorded for these variables of interest across session entries
+sub-HM2BYW325 has NA and 36 recorded for GA in two separate sessions, otherwise no other examples in SLIP 25-03
 ```{r}
-median_cent$age_years <- median_cent$age_days/365
-median_ga_cent$age_years <- median_ga_cent$age_days/365
-median2_cent$age_years <- median2_cent$age_days/365
-mpr_cent$age_years <- mpr_cent$age_days/365
-mpr2_cent$age_years <- mpr2_cent$age_days/365
-
-median_cent$adjusted_age_years <- median_cent$adjusted_age_in_days/365
-median_ga_cent$adjusted_age_years <- median_ga_cent$adjusted_age_in_days/365
-median2_cent$adjusted_age_years <- median2_cent$adjusted_age_in_days/365
-mpr_cent$adjusted_age_years <- mpr_cent$adjusted_age_in_days/365
-mpr2_cent$adjusted_age_years <- mpr2_cent$adjusted_age_in_days/365
+ participants %>%
+     group_by(participant_id) %>%
+     summarise(n_var = n_distinct(birth_length_cm)) %>%
+     filter(n_var > 1)
+ participants %>%
+     group_by(participant_id) %>%
+     summarise(n_var = n_distinct(birth_weight_kg)) %>%
+     filter(n_var > 1)
+  participants %>%
+     group_by(participant_id) %>%
+     summarise(n_var = n_distinct(gestational_age)) %>%
+     filter(n_var > 1)
+#
 ```
-###Assign preterm categories
+###Replace missing bw/ga values for participants across sessions -- if more than one value recorded, then take the mean
 ```{r}
-#Assign preterm categories
-median_cent$preterm <- as.factor(cut(median_cent$gestational_age, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-median_ga_cent$preterm <- as.factor(cut(median_ga_cent$gestational_age, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-median2_cent$preterm <- as.factor(cut(median2_cent$gestational_age, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-mpr_cent$preterm <- as.factor(cut(mpr_cent$gestational_age, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-mpr2_cent$preterm <- as.factor(cut(mpr2_cent$gestational_age, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
+participants <- participants %>%
+    group_by(participant_id) %>%
+    mutate(
+      gestational_age = if (all(is.na(gestational_age))) NA_real_
+      else mean(gestational_age, na.rm = TRUE)
+    ) %>%
+    ungroup()
+
+participants <- participants %>%
+    group_by(participant_id) %>%
+    mutate(
+      birth_weight_kg = if (all(is.na(birth_weight_kg))) NA_real_
+      else mean(birth_weight_kg, na.rm = TRUE)
+    ) %>%
+    ungroup()
+
+participants <- participants %>%
+    group_by(participant_id) %>%
+    mutate(
+      birth_length_cm = if (all(is.na(birth_length_cm))) NA_real_
+      else mean(birth_length_cm, na.rm = TRUE)
+    ) %>%
+    ungroup()
 ```
-###Calculate birth weight percentile
+##run data cleanup
 ```{r}
-median_cent <- median_cent %>%
-  mutate(gestAge_days = gestational_age*7+3) %>%
-  mutate(sex_recode= recode(sex, "M" = "Male", "F" = "Female"))
-median_cent$bweight_percentile <- igb_wtkg2centile(median_cent$gestAge_days, median_cent$birth_weight_kg, sex = median_cent$sex_recode)/100
+liza_median <- slip_centdf_clean(liza_median_cent, participants, qc_metrics, type = "median")
+liza_median_distinct <- liza_median$distinct
+liza_median_all <- liza_median$all
+rm(liza_median)
+liza_mpr <- slip_centdf_clean(liza_mpr_cent, participants, qc_metrics, type = "mpr")
+liza_mpr_distinct <- liza_mpr$distinct
+liza_mpr_all <- liza_mpr$all
+rm(liza_mpr)
 
-median_ga_cent <- median_ga_cent %>%
-  mutate(gestAge_days = gestational_age*7+3) %>%
-  mutate(sex_recode= recode(sex, "M" = "Male", "F" = "Female"))
-median_ga_cent$bweight_percentile <- igb_wtkg2centile(median_ga_cent$gestAge_days, median_ga_cent$birth_weight_kg, sex = median_ga_cent$sex_recode)/100
+median <- slip_centdf_clean(median_cent, participants, qc_metrics, type = "median")
+median_distinct <- median$distinct
+median_all <- median$all
+rm(median)
+mpr <- slip_centdf_clean(mpr_cent, participants, qc_metrics, type = "mpr")
+mpr_distinct <- mpr$distinct
+mpr_all <- mpr$all
+rm(mpr)
 
-median2_cent <- median2_cent %>%
-  mutate(gestAge_days = gestational_age*7+3) %>%
-  mutate(sex_recode= recode(sex, "M" = "Male", "F" = "Female"))
-median2_cent$bweight_percentile <- igb_wtkg2centile(median2_cent$gestAge_days, median2_cent$birth_weight_kg, sex = median2_cent$sex_recode)/100
+median2 <- slip_centdf_clean(median2_cent, participants, qc_metrics, type = "median")
+median2_distinct <- median2$distinct
+median2_all <- median2$all
+rm(median2)
+mpr2 <- slip_centdf_clean(mpr2_cent, participants, qc_metrics, type = "mpr2")
+mpr2_distinct <- mpr2$distinct
+mpr2_all <- mpr2$all
+rm(mpr2)
 
-mpr_cent <- mpr_cent %>%
-  mutate(gestAge_days = gestational_age*7+3) %>%
-  mutate(sex_recode= recode(sex, "M" = "Male", "F" = "Female"))
-mpr_cent$bweight_percentile <- igb_wtkg2centile(mpr_cent$gestAge_days, mpr_cent$birth_weight_kg, sex = mpr_cent$sex_recode)/100
-
-mpr2_cent <- mpr2_cent %>%
-  mutate(gestAge_days = gestational_age*7+3) %>%
-  mutate(sex_recode= recode(sex, "M" = "Male", "F" = "Female"))
-mpr2_cent$bweight_percentile <- igb_wtkg2centile(mpr2_cent$gestAge_days, mpr2_cent$birth_weight_kg, sex = mpr2_cent$sex_recode)/100
+medianga_cent$gestational_age <- NULL
+medianga <- slip_centdf_clean(medianga_cent, participants, qc_metrics, type = "median")
+medianga_distinct <- medianga$distinct
+medianga_all <- medianga$all
+rm(medianga)
 ```
-###Log transform Age (ln)
-```{r}
-median_cent$age_days_log <- log(median_cent$age_days)
-median_cent$adjusted_age_days_log <- log(median_cent$adjusted_age_in_days)
-
-median_ga_cent$age_days_log <- log(median_ga_cent$age_days)
-median_ga_cent$adjusted_age_days_log <- log(median_ga_cent$adjusted_age_in_days)
-
-median2_cent$age_days_log <- log(median2_cent$age_days)
-median2_cent$adjusted_age_days_log <- log(median2_cent$adjusted_age_in_days)
-
-mpr_cent$age_days_log <- log(mpr_cent$age_days)
-mpr_cent$adjusted_age_days_log <- log(mpr_cent$adjusted_age_in_days)
-
-mpr2_cent$age_days_log <- log(mpr2_cent$age_days)
-mpr2_cent$adjusted_age_days_log <- log(mpr2_cent$adjusted_age_in_days)
-```
-#Subset df to distinct participant ids
-```{r}
-mpr2_cent_distinct <- mpr2_cent %>% distinct(participant_id, .keep_all = TRUE)
-
-mpr_cent_distinct <- mpr_cent %>% distinct(participant_id, .keep_all = TRUE)
-
-median2_cent_distinct <- median2_cent %>% distinct(participant_id, .keep_all = TRUE)
-
-median_cent_distinct <- median_cent %>% distinct(participant_id, .keep_all = TRUE)
-
-median_ga_cent_distinct <- median_ga_cent %>% distinct(participant_id, .keep_all = TRUE)
-```
-
-
-#QC and Exclusions - for all
-##GA and BW quality control -- for distinct df
+#GA and BW quality control
 ```{r}
 ##set bw > 1000kg to NA
-sum(median_cent_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
-median_cent_distinct$birth_weight_kg[median_cent_distinct$birth_weight_kg>1000] <- NA
+bw_absurd <- sum(median_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
+print(paste0("Number of data point set to NA for recorded BW > 1000kg: ", bw_absurd))
+median_distinct$birth_weight_kg[median_distinct$birth_weight_kg>1000] <- NA
 ##remove >4SDs
-bw_mean <- mean(median_cent_distinct$birth_weight_kg, na.rm = TRUE)
-bw_sd <- sd(median_cent_distinct$birth_weight_kg, na.rm = TRUE)
+bw_mean <- mean(median_distinct$birth_weight_kg, na.rm = TRUE)
+bw_sd <- sd(median_distinct$birth_weight_kg, na.rm = TRUE)
 
-#Median Centiles
-sum(median_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(median_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-median_cent_distinct$birth_weight_kg[median_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-median_cent_distinct$birth_weight_kg[median_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(median_cent_distinct$gestational_age > 42, na.rm = TRUE)
-sum(median_cent_distinct$gestational_age < 22, na.rm = TRUE)
-median_cent_distinct$gestational_age[median_cent_distinct$gestational_age<21] <- NA
-median_cent_distinct$gestational_age[median_cent_distinct$gestational_age>42] <- NA
+#apply QC function
+liza_median_distinct <- slip_bwga_qc(cent_df = liza_median_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+liza_median_all <- slip_bwga_qc(cent_df = liza_median_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
+liza_mpr_distinct <- slip_bwga_qc(cent_df = liza_mpr_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+liza_mpr_all <- slip_bwga_qc(cent_df = liza_mpr_all, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
 
-#MedianGA Centiles
-sum(median_ga_cent_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
-median_ga_cent_distinct$birth_weight_kg[median_ga_cent_distinct$birth_weight_kg>1000] <- NA
-sum(median_ga_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(median_ga_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-median_ga_cent_distinct$birth_weight_kg[median_ga_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-median_ga_cent_distinct$birth_weight_kg[median_ga_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(median_ga_cent_distinct$gestational_age > 42, na.rm = TRUE)
-sum(median_ga_cent_distinct$gestational_age < 22, na.rm = TRUE)
-median_ga_cent_distinct$gestational_age[median_ga_cent_distinct$gestational_age<21] <- NA
-median_ga_cent_distinct$gestational_age[median_ga_cent_distinct$gestational_age>42] <- NA
+#apply QC function
+median_distinct <- slip_bwga_qc(cent_df = median_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+median_all <- slip_bwga_qc(cent_df = median_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
+mpr_distinct <- slip_bwga_qc(cent_df = mpr_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+mpr_all <- slip_bwga_qc(cent_df = mpr_all, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
 
-#Median2 Centiles
-sum(median2_cent_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
-median2_cent_distinct$birth_weight_kg[median2_cent_distinct$birth_weight_kg>1000] <- NA
-sum(median2_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(median2_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-median2_cent_distinct$birth_weight_kg[median2_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-median2_cent_distinct$birth_weight_kg[median2_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(median2_cent_distinct$gestational_age > 42, na.rm = TRUE)
-sum(median2_cent_distinct$gestational_age < 22, na.rm = TRUE)
-median2_cent_distinct$gestational_age[median2_cent_distinct$gestational_age<21] <- NA
-median2_cent_distinct$gestational_age[median2_cent_distinct$gestational_age>42] <- NA
+#apply QC function
+median2_distinct <- slip_bwga_qc(cent_df = median2_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+median2_all <- slip_bwga_qc(cent_df = median2_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
+mpr2_distinct <- slip_bwga_qc(cent_df = mpr2_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+mpr2_all <- slip_bwga_qc(cent_df = mpr2_all, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
 
-#mpr Centiles
-sum(mpr_cent_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
-mpr_cent_distinct$birth_weight_kg[mpr_cent_distinct$birth_weight_kg>1000] <- NA
-sum(mpr_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(mpr_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-mpr_cent_distinct$birth_weight_kg[mpr_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-mpr_cent_distinct$birth_weight_kg[mpr_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(mpr_cent_distinct$gestational_age > 42, na.rm = TRUE)
-sum(mpr_cent_distinct$gestational_age < 22, na.rm = TRUE)
-mpr_cent_distinct$gestational_age[mpr_cent_distinct$gestational_age<21] <- NA
-mpr_cent_distinct$gestational_age[mpr_cent_distinct$gestational_age>42] <- NA
-
-#mpr2 Centiles
-sum(mpr2_cent_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
-mpr2_cent_distinct$birth_weight_kg[mpr2_cent_distinct$birth_weight_kg>1000] <- NA
-sum(mpr2_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(mpr2_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-mpr2_cent_distinct$birth_weight_kg[mpr2_cent_distinct$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-mpr2_cent_distinct$birth_weight_kg[mpr2_cent_distinct$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(mpr2_cent_distinct$gestational_age > 42, na.rm = TRUE)
-sum(mpr2_cent_distinct$gestational_age < 22, na.rm = TRUE)
-mpr2_cent_distinct$gestational_age[mpr2_cent_distinct$gestational_age<21] <- NA
-mpr2_cent_distinct$gestational_age[mpr2_cent_distinct$gestational_age>42] <- NA
-
-```
-##GA and BW quality control for non-distinct scans
-```{r}
-##remove >4SDs
-bw_mean <- mean(median_cent_distinct$birth_weight_kg, na.rm = TRUE)
-bw_sd <- sd(median_cent_distinct$birth_weight_kg, na.rm = TRUE)
-
-##set bw > 1000kg to NA
-sum(median_cent$birth_weight_kg  > 1000, na.rm = TRUE)
-median_cent$birth_weight_kg[median_cent$birth_weight_kg>1000] <- NA
-
-#Median Centiles
-sum(median_cent$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(median_cent$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-median_cent$birth_weight_kg[median_cent$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-median_cent$birth_weight_kg[median_cent$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(median_cent$gestational_age > 42, na.rm = TRUE)
-sum(median_cent$gestational_age < 22, na.rm = TRUE)
-median_cent$gestational_age[median_cent$gestational_age<21] <- NA
-median_cent$gestational_age[median_cent$gestational_age>42] <- NA
-
-#MedianGA Centiles
-sum(median_ga_cent$birth_weight_kg  > 1000, na.rm = TRUE)
-median_ga_cent$birth_weight_kg[median_ga_cent$birth_weight_kg>1000] <- NA
-sum(median_ga_cent$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(median_ga_cent$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-median_ga_cent$birth_weight_kg[median_ga_cent$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-median_ga_cent$birth_weight_kg[median_ga_cent$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(median_ga_cent$gestational_age > 42, na.rm = TRUE)
-sum(median_ga_cent$gestational_age < 22, na.rm = TRUE)
-median_ga_cent$gestational_age[median_ga_cent$gestational_age<21] <- NA
-median_ga_cent$gestational_age[median_ga_cent$gestational_age>42] <- NA
-
-#Median2 Centiles
-sum(median2_cent$birth_weight_kg  > 1000, na.rm = TRUE)
-median2_cent$birth_weight_kg[median2_cent$birth_weight_kg>1000] <- NA
-sum(median2_cent$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(median2_cent$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-median2_cent$birth_weight_kg[median2_cent$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-median2_cent$birth_weight_kg[median2_cent$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(median2_cent$gestational_age > 42, na.rm = TRUE)
-sum(median2_cent$gestational_age < 22, na.rm = TRUE)
-median2_cent$gestational_age[median2_cent$gestational_age<21] <- NA
-median2_cent$gestational_age[median2_cent$gestational_age>42] <- NA
-
-#mpr Centiles
-sum(mpr_cent$birth_weight_kg  > 1000, na.rm = TRUE)
-mpr_cent$birth_weight_kg[mpr_cent$birth_weight_kg>1000] <- NA
-sum(mpr_cent$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(mpr_cent$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-mpr_cent$birth_weight_kg[mpr_cent$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-mpr_cent$birth_weight_kg[mpr_cent$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(mpr_cent$gestational_age > 42, na.rm = TRUE)
-sum(mpr_cent$gestational_age < 22, na.rm = TRUE)
-mpr_cent$gestational_age[mpr_cent$gestational_age<21] <- NA
-mpr_cent$gestational_age[mpr_cent$gestational_age>42] <- NA
-
-#mpr2 Centiles
-sum(mpr2_cent$birth_weight_kg  > 1000, na.rm = TRUE)
-mpr2_cent$birth_weight_kg[mpr2_cent$birth_weight_kg>1000] <- NA
-sum(mpr2_cent$birth_weight_kg > bw_mean + 4*bw_sd, na.rm = TRUE)
-sum(mpr2_cent$birth_weight_kg < bw_mean - 4*bw_sd, na.rm = TRUE)
-mpr2_cent$birth_weight_kg[mpr2_cent$birth_weight_kg > bw_mean + 4*bw_sd] <- NA
-mpr2_cent$birth_weight_kg[mpr2_cent$birth_weight_kg < bw_mean - 4*bw_sd] <- NA
-##set GA < 22 and > 42 to NA
-sum(mpr2_cent$gestational_age > 42, na.rm = TRUE)
-sum(mpr2_cent$gestational_age < 22, na.rm = TRUE)
-mpr2_cent$gestational_age[mpr2_cent$gestational_age<21] <- NA
-mpr2_cent$gestational_age[mpr2_cent$gestational_age>42] <- NA
+#apply QC function
+medianga_distinct <- slip_bwga_qc(cent_df = medianga_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+medianga_all <- slip_bwga_qc(cent_df = medianga_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
 ```
 ##numbers after exclusions
 ```{r}
-sum(!is.na(median_cent_distinct$birth_weight_kg))
-sum(!is.na(median_cent_distinct$gestational_age))
-
-#should be the same number for GA
-sum(!is.na(median_ga_cent_distinct$birth_weight_kg))
-sum(!is.na(median_ga_cent_distinct$gestational_age))
+#Liza Samples
+##median
+sum(!is.na(liza_median_distinct$birth_weight_kg))
+sum(!is.na(liza_median_distinct$gestational_age))
+##mpr
+sum(!is.na(liza_mpr_distinct$birth_weight_kg))
+sum(!is.na(liza_mpr_distinct$gestational_age))
 ```
 
-##set preterm category and bweight percentile to NA if participant was excluded
-```{r}
-#preterm
-median_cent$preterm[is.na(median_cent$gestational_age)] <- NA
-median_cent_distinct$preterm[is.na(median_cent_distinct$gestational_age)] <- NA
-
-median_ga_cent$preterm[is.na(median_ga_cent$gestational_age)] <- NA
-median_ga_cent_distinct$preterm[is.na(median_ga_cent_distinct$gestational_age)] <- NA
-
-median2_cent$preterm[is.na(median2_cent$gestational_age)] <- NA
-median2_cent_distinct$preterm[is.na(median2_cent_distinct$gestational_age)] <- NA
-
-mpr_cent$preterm[is.na(mpr_cent$gestational_age)] <- NA
-mpr_cent_distinct$preterm[is.na(mpr_cent_distinct$gestational_age)] <- NA
-
-mpr2_cent$preterm[is.na(mpr2_cent$gestational_age)] <- NA
-mpr2_cent_distinct$preterm[is.na(mpr2_cent_distinct$gestational_age)] <- NA
-
-#bweight percentile
-median_cent$bweight_percentile[is.na(median_cent$gestational_age) | is.na(median_cent$birth_weight_kg)] <- NA
-median_cent_distinct$bweight_percentile[is.na(median_cent_distinct$gestational_age) | is.na(median_cent_distinct$birth_weight_kg)] <- NA
-
-median_ga_cent$bweight_percentile[is.na(median_ga_cent$gestational_age) | is.na(median_ga_cent$birth_weight_kg)] <- NA
-median_ga_cent_distinct$bweight_percentile[is.na(median_ga_cent_distinct$gestational_age) | is.na(median_ga_cent_distinct$birth_weight_kg)] <- NA
-
-median2_cent$bweight_percentile[is.na(median2_cent$gestational_age) | is.na(median2_cent$birth_weight_kg)] <- NA
-median2_cent_distinct$bweight_percentile[is.na(median2_cent_distinct$gestational_age) | is.na(median2_cent_distinct$birth_weight_kg)] <- NA
-
-mpr_cent$bweight_percentile[is.na(mpr_cent$gestational_age) | is.na(mpr_cent$birth_weight_kg)] <- NA
-mpr_cent_distinct$bweight_percentile[is.na(mpr_cent_distinct$gestational_age) | is.na(mpr_cent_distinct$birth_weight_kg)] <- NA
-
-mpr2_cent$bweight_percentile[is.na(mpr2_cent$gestational_age) | is.na(mpr2_cent$birth_weight_kg)] <- NA
-mpr2_cent_distinct$bweight_percentile[is.na(mpr2_cent_distinct$gestational_age) | is.na(mpr2_cent_distinct$birth_weight_kg)] <- NA
-```
-#SAVE Data output - for median cent distinct only
+#SAVE Data Frames
 ```{r}
 if (save_tables == TRUE){
 #one row per participant
-median_filename <- paste0(csv_save_path, "median_distinct_clean_", Sys.Date(), ".csv")
-write.csv(median_cent_distinct, median_filename)
-median_ga_filename <- paste0(csv_save_path, "median_ga_distinct_clean_", Sys.Date(), ".csv")
-write.csv(median_ga_cent_distinct, median_ga_filename)
-median2_filename <- paste0(csv_save_path, "median2_distinct_clean_", Sys.Date(), ".csv")
-write.csv(median2_cent_distinct, median2_filename)
-mpr_filename <- paste0(csv_save_path, "mpr_distinct_clean_", Sys.Date(), ".csv")
-write.csv(mpr_cent_distinct, mpr_filename)
-mpr2_filename <- paste0(csv_save_path, "mpr2_distinct_clean_", Sys.Date(), ".csv")
-write.csv(mpr2_cent_distinct, mpr2_filename)
+median_filename <- paste0(vars_save_path, "median_distinct_clean_", Sys.Date(), ".csv")
+write.csv(median_distinct, median_filename)
+
+medianga_filename <- paste0(vars_save_path, "median_ga_distinct_clean_", Sys.Date(), ".csv")
+write.csv(medianga_distinct, medianga_filename)
+
+median2_filename <- paste0(vars_save_path, "median2_distinct_clean_", Sys.Date(), ".csv")
+write.csv(median2_distinct, median2_filename)
+mpr_filename <- paste0(vars_save_path, "mpr_distinct_clean_", Sys.Date(), ".csv")
+write.csv(mpr_distinct, mpr_filename)
+mpr2_filename <- paste0(vars_save_path, "mpr2_distinct_clean_", Sys.Date(), ".csv")
+write.csv(mpr2_distinct, mpr2_filename)
+liza_median_distinct_filename <- paste0(vars_save_path, "liza_median_distinct_clean_", Sys.Date(), ".csv")
+write.csv(liza_median_distinct, liza_median_distinct_filename)
+liza_mpr_distinct_filename <- paste0(vars_save_path, "liza_mpr_distinct_clean_", Sys.Date(), ".csv")
+write.csv(liza_mpr_distinct, liza_mpr_distinct_filename)
 
 #all data, including repeated measures
-median_all_filename <- paste0(csv_save_path, "median_processed_", Sys.Date(), ".csv")
-write.csv(median_cent, median_all_filename)
-median_ga_all_filename <- paste0(csv_save_path, "median_ga_processed_", Sys.Date(), ".csv")
-write.csv(median_ga_cent, median_ga_all_filename)
-median2_all_filename <- paste0(csv_save_path, "median2_processed_", Sys.Date(), ".csv")
-write.csv(median2_cent, median2_all_filename)
-mpr_all_filename <- paste0(csv_save_path, "mpr_processed_", Sys.Date(), ".csv")
-write.csv(mpr_cent, mpr_all_filename)
-mpr2_all_filename <- paste0(csv_save_path, "mpr2_processed_", Sys.Date(), ".csv")
-write.csv(mpr2_cent, mpr2_all_filename)
+median_all_filename <- paste0(vars_save_path, "median_all_clean_", Sys.Date(), ".csv")
+write.csv(median_all, median_all_filename)
+medianga_all_filename <- paste0(vars_save_path, "median_ga_all_clean_", Sys.Date(), ".csv")
+write.csv(medianga_all, medianga_all_filename)
+median2_all_filename <- paste0(vars_save_path, "median2_all_clean_", Sys.Date(), ".csv")
+write.csv(median2_all, median2_all_filename)
+
+mpr_all_filename <- paste0(vars_save_path, "mpr_all_clean_", Sys.Date(), ".csv")
+write.csv(mpr_all, mpr_all_filename)
+mpr2_all_filename <- paste0(vars_save_path, "mpr2_all_clean_", Sys.Date(), ".csv")
+write.csv(mpr2_all, mpr2_all_filename)
+
+liza_median_all_clean_filename <- paste0(vars_save_path, "liza_median_all_clean_", Sys.Date(), ".csv")
+write.csv(liza_median_all, liza_median_all_clean_filename)
+liza_mpr_all_clean_filename <- paste0(vars_save_path, "liza_mpr_all_clean_", Sys.Date(), ".csv")
+write.csv(liza_mpr_all, liza_mpr_all_clean_filename)
+
 }
 ```
 

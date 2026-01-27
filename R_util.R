@@ -1,17 +1,22 @@
 # Setup ----
-
-library(tidyverse)
+## Utility functions written by Ben Jung, PhD
+library(dplyr)
+library(magrittr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(tibble)
 library(glue)
 library(ggseg)
 library(gridExtra)
-library(ggsegTissue)
+#library(ggsegTissue)
 library(kableExtra)
 library(table1)
-library(flextable)
+#library(flextable)
 library(broom)
 library(broom.mixed)
 library(effectsize)
-library(ggpubr)
+#library(ggpubr)
 library(cowplot)
 library(reticulate)
 

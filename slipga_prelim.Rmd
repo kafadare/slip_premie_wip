@@ -3,46 +3,56 @@ title: "SLIP GA Prelim"
 output:
   html_document:
     df_print: paged
+params:
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades/"
+  centiles_path: "mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/median_distinct_clean_2026-01-08.csv"
 ---
-#Controls
-```{r setup}
+
+# Controls
+```{r setup, echo = TRUE}
 knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE
 )
-#set command
+# set command
 save_tables <- TRUE
 plot <- TRUE
 save_figs <- TRUE
 gamlss_models <- FALSE
+global_measure_vol <- "global_eTIV"
+global_measure_sa <- "global_SurfaceArea"
+global_measure_th <- "global_MeanThickness"
 set.seed(42)
 ```
-#Define Paths
+
+# Define Paths
 ```{r, echo = TRUE}
-#set folder paths
+# set folder paths
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
 vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/"
 
-#raw data paths
-data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
+# data paths
 qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
 gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/mpr/DATA.rds"
-#processed data path
-centiles_data_path <- paste0(vars_path,"liza_median_distinct_clean_2026-01-08.csv")
+# processed data path
+centiles_data_path <- paste0(vars_path, params$centiles_path)
 
-#output folder
-save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-liza/"
-
-## output subfolder paths
+# output folder
+save_path <- params$output_folder
+if (!dir.exists(save_path)) dir.create(save_path)
+##  output subfolder paths
 csv_save_path <-  paste0(save_path, "results_csv/")
+if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
 plot_save_path <- paste0(save_path, "plots/")
+if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
 betas_folder <- paste0(csv_save_path, "full_betas/")
 if (!dir.exists(betas_folder)) dir.create(betas_folder)
 dkt_folder <- paste0(csv_save_path, "dkt_betas/")
 if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
 
 ```
-#Load custom functions
+
+# Load custom functions
 ```{r, echo = FALSE}
 source(paste0(code_path,"sliding_window.R"))
 
@@ -51,22 +61,24 @@ panel_save <- function(plot, filename, extension, folder){
   ggsave(save_name, plot = plot, dpi = 300)
 }
 ```
-#Load Packages
+
+# Load Packages
 ```{r, echo = FALSE}
-#Load libraries
+# Load libraries
 require(dplyr)
+require(glue)
 require(magrittr)
 require(readr)
 require(stringr)
 require(tidyr)
-require(gamlssTools) #Margaret's package
+require(gamlssTools) # Margaret's package
 require(tibble)
-#For figures/plotting
+# For figures/plotting
 require(ggplot2)
 require(gridExtra)
 require(ggsegDKT)
 require(ggseg)
-#require(ggpubr)
+# require(ggpubr)
 require(ggcorrplot)
 require(cowplot)
 require(egg)
@@ -75,16 +87,18 @@ require(growthstandards)
 require(gtsummary)
 require(svglite)
 ```
-#Plots specifications
+
+# Plots specifications
 ```{r, echo = TRUE}
 limits = c(-0.3, 0.3)
 low_color = "#4878CF"
 mid_color = "white"
 high_color = "#D65F5F"
 ```
-#Plotting helper vectors, name-mapping
+
+# Plotting helper vectors, name-mapping
 ```{r, echo = FALSE}
-#df to map variable names onto names displayed on figures
+# df to map variable names onto names displayed on figures
 name_mapping <- data.frame(
   abbreviation = c(
      "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_cdk_total",   
@@ -239,11 +253,12 @@ global_phenotypes <- c("smri_vol_cdk_total", "totalWM_cb", "smri_vol_scs_allvent
 
 phenotypes_to_fit <- (c(phenotypes_for_MC, global_phenotypes, "smri_vol_scs_wholeb", "smri_vol_scs_wholeb", "totalWM_crb", "totalGM_crb", "smri_vol_scs_csf", "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_scs_cbwmatterlh", "smri_vol_scs_cbwmatterrh"))
 
-#save phenotypes not plotted with ggseg surface plots
+# save phenotypes not plotted with ggseg surface plots
 plot_data_dkt <- merge(name_mapping, ggseg::dk, by.x = "region_name", by.y = "label")
 plot_data_aseg <- merge(name_mapping, ggseg::aseg, by.x = "region_name", by.y = "label")
 ```
-#Read in data files
+
+# Read in data files
 ```{r, echo = FALSE, echo = FALSE}
 all_vars <- read.csv(paste0(vars_path,"all_vars2025-12-05.csv")) %>% pull(x)
 global_vars <- read.csv(paste0(vars_path,"global_vars2025-12-05.csv")) %>% pull(x)
@@ -257,7 +272,8 @@ if (gamlss_models == TRUE) {
   gamlss_data <- readRDS(gamlss_data_path)
 }
 ```
-#Find if any models don't exist, remove from variable list for downstream analysis.
+
+# Find if any models don't exist, remove from variable list for downstream analysis.
 ```{r, echo = FALSE}
 vars_missing <- all_vars[!(all_vars %in% names(full_df))]
 print(paste0("Phenotype Variables Missing in the Data Provided: ", paste(vars_missing, collapse = ", ")))
@@ -267,16 +283,18 @@ vol_vars <- vol_vars[!(vol_vars %in% vars_missing)]
 sa_vars <- sa_vars[!(sa_vars %in% vars_missing)]
 th_vars <- th_vars[!(th_vars %in% vars_missing)]
 ```
-#Find any cells with missing data within the centile scores
+
+# Find any cells with missing data within the centile scores
 ```{r, echo = FALSE}
 missing_data_sessions <- full_df[rowSums(is.na(full_df[, all_vars, drop = FALSE])) > 0, ]$session_id
 print(paste0("Number of sessions with any missing centile data: ", dim(missing_data_sessions)[1]))
 missing_data_sessions_df <- full_df %>% filter(session_id %in% missing_data_sessions) %>% select(any_of(c("session_id", "participant_id", "age_years", all_vars)))
 
-#remove sessions with any missing data (especially for calculating CMDs)
+# remove sessions with any missing data (especially for calculating CMDs)
 full_df <- full_df[!(full_df$session_id %in% missing_data_sessions),]
 ```
-#Numbers for gamlss models
+
+# Numbers for gamlss models
 ```{r, echo = FALSE}
 if (exists("gamlss_data")){
   gamlss_data_inc <- gamlss_data %>% filter(INDEX.OB == 1)
@@ -284,7 +302,8 @@ if (exists("gamlss_data")){
   range(gamlss_data_inc$age_days/365)
 }
 ```
-#Deal with QC Variable Naming Difference
+
+# Deal with QC Variable Naming Difference
 ```{r, echo = FALSE}
 if(!("median_euler_mean" %in% names(full_df)) & "euler_mean" %in% names(full_df)){
     full_df$qc_var <- full_df$euler_mean
@@ -292,7 +311,8 @@ if(!("median_euler_mean" %in% names(full_df)) & "euler_mean" %in% names(full_df)
   full_df$qc_var <- full_df$median_euler_mean
 }
 ```
-#Remove Age > 21
+
+# Remove Age > 21
 ```{r, echo = TRUE}
 hist(full_df$adjusted_age_years)
 sum(!is.na(full_df$birth_weight_kg))
@@ -308,12 +328,14 @@ sum(!is.na(full_df$birth_weight_kg) & !is.na(full_df$gestational_age))
 IQR(full_df$age_years)
 median(full_df$age_years)
 ```
-#CMD
-###correlations between CMDs for vol, sa, and th
+
+# CMD
+
+## correlations between CMDs for vol, sa, and th
 ```{r, echo = FALSE}
 vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
 length_names <- length(c(vol_vars_cortical, sa_vars, th_vars))
-#Ensure all names are in the same order
+# Ensure all names are in the same order
 names_base <- names(full_df)[grep("aparc_GrayVol", names(full_df))] %>% sub("aparc_GrayVol_","",.) %>%
   gsub("_Z", "", .)
 names.vol <- paste0("aparc_GrayVol_",names_base)
@@ -322,32 +344,32 @@ names.th <- paste0("aparc_ThickAvg_",names_base)
 df_var <- data.frame(matrix(ncol = 4, nrow = dim(full_df)[1]))
 colnames(df_var) <- c("vol.variance", "sa.variance", "th.variance", "participant_id")
 df_var$participant_id <- full_df$participant_id
-#CMD Calculation
-##vol
+# CMD Calculation
+## vol
 vol.center <- colMeans(full_df %>% select(all_of(names.vol)))
 vol.cov_matrix <- cov(full_df %>% select(all_of(names.vol)))
 vol.md <- sqrt(mahalanobis(full_df %>% select(all_of(names.vol)), vol.center, vol.cov_matrix))
 full_df$vol.cmd <- vol.md
-##sa
+## sa
 sa.center <- colMeans(full_df %>% select(all_of(names.sa)), na.rm = TRUE)
 sa.cov_matrix <- cov(full_df %>% select(all_of(names.sa)), use = "complete.obs")
 sa.md <- sqrt(mahalanobis(full_df %>% select(all_of(names.sa)), sa.center, sa.cov_matrix))
 full_df$sa.cmd <- sa.md
-##th
+## th
 th.center <- colMeans(full_df %>% select(all_of(names.th)), na.rm = TRUE)
 th.cov_matrix <- cov(full_df %>% select(all_of(names.th)), use = "complete.obs")
 th.md <- sqrt(mahalanobis(full_df %>% select(all_of(names.th)), th.center, th.cov_matrix))
 full_df$th.cmd <- th.md
 
-#remove outliers as defined by >5 sd from the mean
-#full_df <- full_df %>% filter(vol.cmd < mean(full_df$vol.cmd) + 10*sd(full_df$vol.cmd))
+# remove outliers as defined by >5 sd from the mean
+# full_df <- full_df %>% filter(vol.cmd < mean(full_df$vol.cmd) + 10*sd(full_df$vol.cmd))
 
-#correlations between CMDs across three centiles
+# correlations between CMDs across three centiles
 cor.test(full_df$vol.cmd, full_df$sa.cmd)
 cor.test(full_df$vol.cmd, full_df$th.cmd)
 cor.test(full_df$sa.cmd, full_df$th.cmd)
 
-#Plots for CMD correlations
+# Plots for CMD correlations
 (vol_sa_cmd <- ggplot(data = full_df, mapping = aes(x = vol.cmd, y = sa.cmd)) + 
   geom_point(alpha = 0.3, color = "gray") + 
   geom_smooth(method = "lm", se = FALSE, color = "magenta") +
@@ -377,9 +399,10 @@ panel_save(vol_th_cmd, "vol-th-cmd", "pdf", plot_save_path)
 panel_save(sa_th_cmd, "sa-th-cmd", "pdf", plot_save_path)
 }
 ```
-###correlations between CMDs and centile scores
+
+## correlations between CMDs and centile scores
 ```{r, echo = FALSE}
-#volume
+# volume
 cor_matrix <- cor(full_df[,c(vol_vars_cortical, "vol.cmd")], use = "pairwise.complete.obs")
 p_mat <- cor_pmat(full_df[,c(vol_vars_cortical, "vol.cmd")])
 
@@ -394,7 +417,7 @@ ggcorrplot(
   lab = FALSE
 )
 
-#sa
+# sa
 cor_matrix <- cor(full_df[,c(sa_vars, "sa.cmd")], use = "pairwise.complete.obs")
 p_mat <- cor_pmat(full_df[,c(sa_vars, "sa.cmd")])
 
@@ -409,7 +432,7 @@ ggcorrplot(
   lab = FALSE
 )
 
-#th
+# th
 cor_matrix <- cor(full_df[,c(th_vars, "th.cmd")], use = "pairwise.complete.obs")
 p_mat <- cor_pmat(full_df[,c(th_vars, "th.cmd")])
 
@@ -424,18 +447,21 @@ ggcorrplot(
   lab = FALSE
 )
 ```
-#Prepare Df for Analysis
-##zscore centiles (new df)
+
+# Prepare Df for Analysis
+
+## zscore centiles (new df)
 ```{r, echo = FALSE}
-#zscore centiles and other variables of interest
+# zscore centiles and other variables of interest
 df.zscore <- full_df %>%
   mutate(across(all_of(c(all_vars, "bweight_percentile")), qnorm)) %>%
   mutate(across(all_of(c("gestational_age", "birth_weight_kg", "age_days", "age_years", "adjusted_age_in_days", "adjusted_age_years", "qc_var", "vol.cmd", "sa.cmd", "th.cmd")), scale))
-#set sex and preterm as factor
+# set sex and preterm as factor
 df.zscore$sex <- as.factor(full_df$sex)
 df.zscore$preterm <- as.factor(full_df$preterm)
 ```
-##find Inf cells, make a table of N per phenotype, then convert to NaN
+
+## find Inf cells, make a table of N per phenotype, then convert to NaN
 ```{r, echo = FALSE}
 inf_nan_table <- as.data.frame(t(sapply(df.zscore[c(all_vars, "bweight_percentile")], function(x){
   c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
@@ -445,19 +471,24 @@ max(inf_nan_table$nan)
 
 inf_nan_table %>% filter(inf > 0)
 ```
-##set Inf cells to NaN
+
+## set Inf cells to NaN
 ```{r, echo = FALSE}
 df.zscore <- df.zscore %>% 
   mutate(across(all_of(c(all_vars, "bweight_percentile")), ~ replace(., is.infinite(.), NaN)))
 ```
-##create dfs grouped by age at scan
+
+## create dfs grouped by age at scan
 ```{r, echo = FALSE}
 df.zscore_young <- df.zscore %>% filter(age_years < mean(df.zscore$adjusted_age_years))
 df.zscore_old <- df.zscore %>% filter(age_years > mean(df.zscore$adjusted_age_years))
 ```
-#CMD Correlations with GA and BW
+
+# CMD Correlations with GA and BW
+
+## Full available set 
 ```{r, echo = FALSE}
-#Exploratory
+# Exploratory
 cor.test(full_df$vol.cmd, full_df$gestational_age)
 cor.test(full_df$vol.cmd, full_df$birth_weight_kg)
 
@@ -468,11 +499,11 @@ cor.test(full_df$th.cmd, full_df$gestational_age)
 cor.test(full_df$th.cmd, full_df$birth_weight_kg)
 cor.test(full_df$th.cmd, full_df$bweight_percentile)
 
-#BW-ThicknessCMD
+# BW-ThicknessCMD
 bw_N <- sum(!is.na(full_df$birth_weight_kg))
 
 cor_thCMD_bw <- cor.test(full_df$th.cmd, full_df$birth_weight_kg)
-##plot
+## plot
 thCMD_bw_r <- signif(cor_thCMD_bw$estimate, 3)
 thCMD_bw_p <- signif(cor_thCMD_bw$p.value, 3)
 
@@ -496,11 +527,11 @@ if(save_figs == TRUE){
 panel_save(cor_thCMD_bw_plot, "cor-thcmd-bw", "pdf", plot_save_path)
 }
 
-#BWpercentile-ThicknessCMD
+# BWpercentile-ThicknessCMD
 bwp_N <- sum(!is.na(full_df$bweight_percentile))
 
 cor_thCMD_bwp <- cor.test(full_df$th.cmd, full_df$bweight_percentile)
-##plot
+## plot
 thCMD_bwp_r <- signif(cor_thCMD_bwp$estimate, 3)
 thCMD_bwp_p <- signif(cor_thCMD_bwp$p.value, 3)
 
@@ -524,11 +555,11 @@ if(save_figs == TRUE){
 panel_save(cor_thCMD_bwp_plot, "cor-thcmd-bwp", "pdf", plot_save_path)
 }
 
-#GA-ThicknessCMD
+# GA-ThicknessCMD
 ga_N <- sum(!is.na(full_df$gestational_age))
 
 cor_thCMD_ga <- cor.test(full_df$th.cmd, full_df$gestational_age)
-##plot
+## plot
 thCMD_ga_r <- signif(cor_thCMD_ga$estimate, 3)
 thCMD_ga_p <- signif(cor_thCMD_ga$p.value, 3)
 
@@ -552,11 +583,12 @@ if(save_figs == TRUE){
 panel_save(cor_thCMD_ga_plot, "cor-thcmd-ga", "pdf", plot_save_path)
 }
 ```
-#CMD correlations, remove 3SD from mean
+
+## Remove CMDs > 3SD from mean
 ```{r, include = FALSE}
-#remove outliers as defined by >3 sd from the mean
+# remove outliers as defined by >3 sd from the mean
 test <- full_df %>% filter(th.cmd < mean(full_df$th.cmd) + 3*sd(full_df$th.cmd))
-#Exploratory
+# Exploratory
 cor.test(test$vol.cmd, test$gestational_age)
 cor.test(test$vol.cmd, test$birth_weight_kg)
 
@@ -567,11 +599,11 @@ cor.test(test$th.cmd, test$gestational_age)
 cor.test(test$th.cmd, test$birth_weight_kg)
 cor.test(test$th.cmd, test$bweight_percentile)
 
-#BW-ThicknessCMD
+# BW-ThicknessCMD
 bw_N <- sum(!is.na(test$birth_weight_kg))
 
 cor_thCMD_bw <- cor.test(test$th.cmd, test$birth_weight_kg)
-##plot
+## plot
 thCMD_bw_r <- signif(cor_thCMD_bw$estimate, 3)
 thCMD_bw_p <- signif(cor_thCMD_bw$p.value, 3)
 
@@ -595,11 +627,11 @@ if(save_figs == TRUE){
 panel_save(cor_thCMD_bw_plot, "cor-thcmd-bw", "pdf", plot_save_path)
 }
 
-#BWpercentile-ThicknessCMD
+# BWpercentile-ThicknessCMD
 bwp_N <- sum(!is.na(test$bweight_percentile))
 
 cor_thCMD_bwp <- cor.test(test$th.cmd, test$bweight_percentile)
-##plot
+## plot
 thCMD_bwp_r <- signif(cor_thCMD_bwp$estimate, 3)
 thCMD_bwp_p <- signif(cor_thCMD_bwp$p.value, 3)
 
@@ -620,12 +652,13 @@ ggplot(test, aes(bweight_percentile, th.cmd)) +
     plot.title = element_blank()
   )
 ```
-#CMD Methods figure
+
+# CMD Methods figure
 ```{r, include = FALSE}
 vol_subject_row <- which(df.zscore$vol.cmd == max(df.zscore$vol.cmd))
 sa_subject_row <- which(df.zscore$sa.cmd == max(df.zscore$sa.cmd))
 th_subject_row <- which(df.zscore$th.cmd == max(df.zscore$th.cmd))
-#compute PCA for visualization purposes
+# compute PCA for visualization purposes
 make_cmd_fig <- function(df, var_names, title, subject_row_no) {
 p <- prcomp(df %>% select(all_of(var_names)))
 p_df <- as.data.frame(p$x[, 1:2])
@@ -634,29 +667,29 @@ colnames(p_df) <- c("PC1", "PC2")
 mu <- colMeans(p_df)
 Sigma <- cov(p_df)
 
-#make an ellipse for visualization
+# make an ellipse for visualization
 ellipse_level <- 0.95
-chi_val <- qchisq(ellipse_level, df = 2)   # chi-square radius
+chi_val <- qchisq(ellipse_level, df = 2)   #  chi-square radius
 
 eig <- eigen(Sigma)
-axes <- sqrt(eig$values * chi_val)         # ellipse radii
+axes <- sqrt(eig$values * chi_val)         #  ellipse radii
 theta <- seq(0, 2*pi, length.out = 200)
 
 ellipse_mat <- t(eig$vectors %*% diag(axes) %*% rbind(cos(theta), sin(theta)))
 ellipse_df <- as.data.frame(sweep(ellipse_mat, 2, mu, "+"))
 colnames(ellipse_df) <- c("PC1", "PC2")
 
-#Find subject with defined row (max CMD) and project their centiles onto the PCA space for visualization
+# Find subject with defined row (max CMD) and project their centiles onto the PCA space for visualization
 subject <- df[subject_row_no, var_names]
 sub_p   <- predict(p, subject)[, 1:2]
 sub_df  <- data.frame(PC1 = sub_p[1], PC2 = sub_p[2])
 
-#Calculate mahalanobis distance for this subject
+# Calculate mahalanobis distance for this subject
 MD <- sqrt(mahalanobis(sub_df, center = mu, cov = Sigma))
 
-# ------------------------------------------------------------
-# Plot
-# ------------------------------------------------------------
+#  ------------------------------------------------------------
+#  Plot
+#  ------------------------------------------------------------
 (plot <- ggplot() +
   geom_path(data = ellipse_df, aes(PC1, PC2), linewidth = 1, alpha = 0.7) +
   geom_point(data = p_df, aes(PC1, PC2), alpha = 0.05, size = 0.75) +
@@ -664,13 +697,13 @@ MD <- sqrt(mahalanobis(sub_df, center = mu, cov = Sigma))
   geom_segment(aes(x = mu[1], y = mu[2],
                    xend = sub_df$PC1, yend = sub_df$PC2),
                colour = "#E64B35", linewidth = 1) +
-  # annotate("text", x = sub_df$PC1, y = sub_df$PC2,
-  #          label = paste0("MD = ", round(MD, 2)),
-  #          vjust = -1, colour = "#E64B35") +
+  #  annotate("text", x = sub_df$PC1, y = sub_df$PC2,
+  #           label = paste0("MD = ", round(MD, 2)),
+  #           vjust = -1, colour = "#E64B35") +
    annotate("text", x = sub_df$PC1, y = sub_df$PC2,
             label = "d",
-            #vjust = -1,
-            #hjust = 4, 
+            # vjust = -1,
+            # hjust = 4, 
             colour = "#E64B35",
             fontface = "bold",
             size = 6
@@ -687,9 +720,9 @@ MD <- sqrt(mahalanobis(sub_df, center = mu, cov = Sigma))
 print(plot)
 return(plot)
 }
-#df_noNAs <- df.zscore %>% select(all_vars) %>% na.omit()
-##df, var_names, title, subject_row_no
-#vol_cmd_plot <- make_cmd_fig(df_noNAs, vol_vars_cortical, "CMD Cortical Volume", vol_subject_row)
+# df_noNAs <- df.zscore %>% select(all_vars) %>% na.omit()
+## df, var_names, title, subject_row_no
+# vol_cmd_plot <- make_cmd_fig(df_noNAs, vol_vars_cortical, "CMD Cortical Volume", vol_subject_row)
 (vol_cmd_plot <- make_cmd_fig(full_df, vol_vars_cortical, "CMD Cortical Volume", vol_subject_row))
 vol_cmd_plot$layers[[5]]$aes_params$hjust <- 3
 vol_cmd_plot$layers[[5]]$aes_params$vjust <- -0.5
@@ -706,14 +739,16 @@ panel_save(sa_cmd_plot, "sa-cmd-pca-plot", "pdf", plot_save_path)
 panel_save(th_cmd_plot, "th-cmd-pca-plot", "pdf", plot_save_path)
 }
 ```
-#Analyses with global phenotypes
-##Define global vars of interest
+
+# Analyses with global phenotypes
+
+## Define global vars of interest
 ```{r, echo = TRUE}
-global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol",
-                        "global_VentricleChoroidVol","global_SurfaceArea",
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea",
                         "global_MeanThickness", "aseg_CSF")
 ```
-##GA
+
+## GA
 ```{r, echo = FALSE}
 ga_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(full_df) %in% global_vars_totest)], function(x) {
   lm <- lm(x ~ df.zscore$gestational_age + df.zscore$qc_var)
@@ -726,7 +761,8 @@ ga_reg_table_global$ga_p_adj <- p.adjust(ga_reg_table_global$ga_p, method = "BH"
 ga_reg_table_global %>% filter(ga_p_adj < 0.05)
 range(ga_reg_table_global %>% filter(ga_p_adj < 0.05) %>% select(ga_beta))
 ```
-##BW
+
+## BW
 ```{r, echo = FALSE}
 bw_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(full_df) %in% global_vars_totest)], function(x) {
   lm <- lm(x ~ df.zscore$birth_weight_kg + df.zscore$qc_var)
@@ -739,13 +775,14 @@ bw_reg_table_global$bw_p_adj <- p.adjust(bw_reg_table_global$bw_p, method = "BH"
 bw_reg_table_global %>% filter(bw_p_adj < 0.05)
 range(bw_reg_table_global %>% filter(bw_p_adj < 0.05) %>% select(bw_beta))
 ```
-##Visualize
+
+## Visualize/Figure Panel
 ```{r, echo = FALSE}
-# Add phenotype column from rownames
+#  Add phenotype column from rownames
 ga_reg_table_global$phenotype <- rownames(ga_reg_table_global)
 bw_reg_table_global$phenotype <- rownames(bw_reg_table_global)
 
-# Add model identifiers + rename to common column names
+#  Add model identifiers + rename to common column names
 ga_reg_table_global <- ga_reg_table_global %>%
   mutate(model = "Gestational Age",
          beta = ga_beta,
@@ -753,8 +790,8 @@ ga_reg_table_global <- ga_reg_table_global %>%
          p_adj    = ga_p_adj) %>%
     mutate(sig = p_adj < 0.05,
           color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   # muted red
-            sig & beta < 0 ~ "#7293b0",   # muted blue
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
             TRUE ~ "gray70"))
 
 bw_reg_table_global <- bw_reg_table_global %>%
@@ -764,17 +801,17 @@ bw_reg_table_global <- bw_reg_table_global %>%
          p_adj    = bw_p_adj) %>%
     mutate(sig = p_adj < 0.05,
           color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   # muted red
-            sig & beta < 0 ~ "#7293b0",   # muted blue
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
             TRUE ~ "gray70"))
 
-# Combine and arrange by specific order of global phenotypes
+#  Combine and arrange by specific order of global phenotypes
 df <- bind_rows(ga_reg_table_global, bw_reg_table_global) %>%
   mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
                                                   "global_SubCortGrayVol", "global_VentricleChoroidVol",
                                                   "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
 
-# Labeling for phenotypes on plot
+#  Labeling for phenotypes on plot
 phenotype_labs <- c(
  global_eTIV = "Intracranial Volume",
  global_MeanThickness = "Mean Cortical Thickness",
@@ -785,7 +822,7 @@ phenotype_labs <- c(
  global_SubCortGrayVol = "Subcortical Gray Matter Volume"
 )
 
-# Plot
+#  Plot
 (global_betas_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
     geom_point(aes(shape = model, color = color), size = 3) +
     geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
@@ -814,14 +851,19 @@ if(save_figs == TRUE){
 panel_save(global_betas_plot, "global-betas-gabw", "pdf", plot_save_path)
 }
 ```
-#Analyses with regional phenotypes
-##GA
-###Volume
-####simple linear regressions
-#####compute regressions
+
+# Analyses with regional phenotypes
+
+## GA
+
+### Volume
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore)
   summary <- summary(lm)
@@ -831,7 +873,8 @@ ga_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_var
 ga_vol$ga_p_adj <- p.adjust(ga_vol$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga_vol %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(ga_vol), perl = TRUE)
 
@@ -847,11 +890,12 @@ ga_vol_sig_MC <- ga_vol %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga_vol_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga_vol
 name <- "ga_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -860,23 +904,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(ga_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga_vol_noplot <- ga_vol_sig_MC[!(ga_vol_sig_MC$label %in% plot_data_dkt$label) & !(ga_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -897,7 +942,8 @@ panel_save(ga_dkt_vol_plot, "ga-dkt-vol", "pdf", plot_save_path)
 panel_save(ga_aseg_vol_plot , "ga-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if (dim(ga_vol_sig_MC)[1] > 0){
 top_n = if(dim(ga_vol_sig_MC)[1] > 10) {10} else {dim(ga_vol_sig_MC)[1]}
@@ -924,10 +970,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ gestational_age*age_years, data = df.zscore)
   summary <- summary(lm)
@@ -943,7 +991,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage_vo
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage_vol %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage_vol %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(gabyage_vol), perl = TRUE)
 
@@ -959,11 +1008,12 @@ gabyage_vol_sig_MC <- gabyage_vol %>% filter(gabyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage_vol_sig_MC$gabyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage_vol
 name <- "gabyage_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -972,23 +1022,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(gabyage_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage_vol_noplot <- gabyage_vol_sig_MC[!(gabyage_vol_sig_MC$label %in% plot_data_dkt$label) & !(gabyage_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1009,7 +1060,8 @@ panel_save(gabyage_dkt_vol_plot, "gabyage-dkt-vol", "pdf", plot_save_path)
 panel_save(gabyage_aseg_vol_plot , "gabyage-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(gabyage_vol_sig_MC)[1] > 0){
 vars <- rownames(gabyage_vol_sig_MC[order(-(gabyage_vol_sig_MC$gabyage_beta)),])
@@ -1028,12 +1080,15 @@ interaction_plots
 }
 }
 ```
-###Surface Area
-####simple linear regressions
-#####compute regressions
+
+### Surface Area
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore)
   summary <- summary(lm)
@@ -1043,7 +1098,8 @@ ga_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)
 ga_sa$ga_p_adj <- p.adjust(ga_sa$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga_sa %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga_sa$label <- rownames(ga_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -1052,11 +1108,12 @@ ga_sa_sig_MC <- ga_sa %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga_sa_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga_sa
 name <- "ga_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1065,22 +1122,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga_sa_noplot <- ga_sa_sig_MC[!(ga_sa_sig_MC$label %in% plot_data_dkt$label) & !(ga_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1093,7 +1151,8 @@ if(save_figs == TRUE){
 panel_save(ga_dkt_sa_plot, "ga-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if (dim(ga_sa_sig_MC)[1] > 0){
 top_n = if(dim(ga_sa_sig_MC)[1] > 10) {10} else {dim(ga_sa_sig_MC)[1]}
@@ -1120,10 +1179,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ gestational_age*age_years, data = df.zscore)
   summary <- summary(lm)
@@ -1139,7 +1200,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage_sa
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage_sa %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage_sa %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 gabyage_sa$label <- rownames(gabyage_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -1148,11 +1210,12 @@ gabyage_sa_sig_MC <- gabyage_sa %>% filter(gabyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage_sa_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage_sa
 name <- "gabyage_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1161,22 +1224,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage_sa_noplot <- gabyage_sa_sig_MC[!(gabyage_sa_sig_MC$label %in% plot_data_dkt$label) & !(gabyage_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1189,7 +1253,8 @@ if(save_figs == TRUE){
 panel_save(gabyage_dkt_sa_plot, "gabyage-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(gabyage_sa_sig_MC)[1] > 0){
 vars <- rownames(gabyage_sa_sig_MC[order(-(gabyage_sa_sig_MC$gabyage_beta)),])
@@ -1206,12 +1271,15 @@ interaction_plots
 }
 }
 ```
-###Thickness
-####simple linear regressions
-#####compute regressions
+
+### Thickness
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore)
   summary <- summary(lm)
@@ -1221,7 +1289,8 @@ ga_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)
 ga_th$ga_p_adj <- p.adjust(ga_th$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga_th %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga_th$label <- rownames(ga_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -1230,11 +1299,12 @@ ga_th_sig_MC <- ga_th %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga_th_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga_th
 name <- "ga_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1243,22 +1313,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga_th_noplot <- ga_th_sig_MC[!(ga_th_sig_MC$label %in% plot_data_dkt$label) & !(ga_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1271,7 +1342,8 @@ if(save_figs == TRUE){
 panel_save(ga_dkt_th_plot, "ga-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if (dim(ga_th_sig_MC)[1] > 0){
 top_n = if(dim(ga_th_sig_MC)[1] > 10) {10} else {dim(ga_th_sig_MC)[1]}
@@ -1300,10 +1372,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age*age_years, data = df.zscore)
   summary <- summary(lm)
@@ -1319,7 +1393,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage_th
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage_th %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage_th %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 gabyage_th$label <- rownames(gabyage_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -1328,11 +1403,12 @@ gabyage_th_sig_MC <- gabyage_th %>% filter(gabyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage_th_sig_MC$gabyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage_th
 name <- "gabyage_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1341,22 +1417,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage_th_noplot <- gabyage_th_sig_MC[!(gabyage_th_sig_MC$label %in% plot_data_dkt$label) & !(gabyage_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1369,7 +1446,8 @@ if(save_figs == TRUE){
 panel_save(gabyage_dkt_th_plot, "gabyage-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(gabyage_th_sig_MC)[1] > 0){
 vars <- rownames(gabyage_th_sig_MC[order(-(gabyage_th_sig_MC$gabyage_beta)),])
@@ -1386,12 +1464,15 @@ interaction_plots
 }
 }
 ```
-####group by age and check ga on thickness effect
-#####young
-######compute regressions
+
+####  group by age and check ga on thickness effect
+
+##### young
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_young$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_young) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore_young)
   summary <- summary(lm)
@@ -1401,7 +1482,8 @@ ga_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_yo
 ga_th_young$ga_p_adj <- p.adjust(ga_th_young$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga_th_young %>% filter(ga_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga_th_young$label <- rownames(ga_th_young) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -1410,11 +1492,12 @@ ga_th_young_sig_MC <- ga_th_young %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga_th_young_sig_MC$ga_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga_th_young
 name <- "ga_thick_young.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1423,22 +1506,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga_th_young_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga_th_young_noplot <- ga_th_young_sig_MC[!(ga_th_young_sig_MC$label %in% plot_data_dkt$label) & !(ga_th_young_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gayoung_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1452,11 +1536,12 @@ panel_save(gayoung_dkt_th_plot, "ga-young-dkt-th", "pdf", plot_save_path)
 }
 ```
 
-#####old
-######compute regressions
+##### old
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_old$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore_old)
   summary <- summary(lm)
@@ -1466,7 +1551,8 @@ ga_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %
 ga_th_old$ga_p_adj <- p.adjust(ga_th_old$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga_th_old %>% filter(ga_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga_th_old$label <- rownames(ga_th_old) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -1475,11 +1561,12 @@ ga_th_old_sig_MC <- ga_th_old %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga_th_old_sig_MC$ga_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga_th_old
 name <- "ga_thick_old.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1488,22 +1575,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga_th_old_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga_th_old_noplot <- ga_th_old_sig_MC[!(ga_th_old_sig_MC$label %in% plot_data_dkt$label) & !(ga_th_old_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gaold_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1516,14 +1604,16 @@ panel_save(gaold_dkt_th_plot, "ga-old-dkt-th", "pdf", plot_save_path)
 }
 ```
 
+## BW
 
-##BW
-###Volume
-####simple linear regressions
-#####compute regressions
+### Volume
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore)
   summary <- summary(lm)
@@ -1533,7 +1623,8 @@ bw_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_var
 bw_vol$bw_p_adj <- p.adjust(bw_vol$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw_vol %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(bw_vol), perl = TRUE)
 
@@ -1549,11 +1640,12 @@ bw_vol_sig_MC <- bw_vol %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw_vol_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw_vol
 name <- "bw_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1562,23 +1654,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(bw_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw_vol_noplot <- bw_vol_sig_MC[!(bw_vol_sig_MC$label %in% plot_data_dkt$label) & !(bw_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1599,7 +1692,8 @@ panel_save(bw_dkt_vol_plot, "bw-dkt-vol", "pdf", plot_save_path)
 panel_save(bw_aseg_vol_plot , "bw-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if (dim(bw_vol_sig_MC)[1] > 0){
 top_n = if(dim(bw_vol_sig_MC)[1] > 10) {10} else {dim(bw_vol_sig_MC)[1]}
@@ -1626,10 +1720,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg*age_years, data = df.zscore)
   summary <- summary(lm)
@@ -1645,7 +1741,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage_vo
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage_vol %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage_vol %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(bwbyage_vol), perl = TRUE)
 
@@ -1661,11 +1758,12 @@ bwbyage_vol_sig_MC <- bwbyage_vol %>% filter(bwbyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage_vol_sig_MC$bwbyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage_vol
 name <- "bwbyage_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1674,23 +1772,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(bwbyage_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage_vol_noplot <- bwbyage_vol_sig_MC[!(bwbyage_vol_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1711,7 +1810,8 @@ panel_save(bwbyage_dkt_vol_plot, "bwbyage-dkt-vol", "pdf", plot_save_path)
 panel_save(bwbyage_aseg_vol_plot , "bwbyage-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(bwbyage_vol_sig_MC)[1] > 0){
 vars <- rownames(bwbyage_vol_sig_MC[order(-(bwbyage_vol_sig_MC$bwbyage_beta)),])
@@ -1730,12 +1830,15 @@ interaction_plots
 }
 }
 ```
-###Surface Area
-####simple linear regressions
-#####compute regressions
+
+### Surface Area
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore)
   summary <- summary(lm)
@@ -1745,7 +1848,8 @@ bw_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)
 bw_sa$bw_p_adj <- p.adjust(bw_sa$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw_sa %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw_sa$label <- rownames(bw_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -1754,11 +1858,12 @@ bw_sa_sig_MC <- bw_sa %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw_sa_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw_sa
 name <- "bw_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1767,22 +1872,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw_sa_noplot <- bw_sa_sig_MC[!(bw_sa_sig_MC$label %in% plot_data_dkt$label) & !(bw_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1795,7 +1901,8 @@ if(save_figs == TRUE){
 panel_save(bw_dkt_sa_plot, "bw-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if (dim(bw_sa_sig_MC)[1] > 0){
 top_n = if(dim(bw_sa_sig_MC)[1] > 10) {10} else {dim(bw_sa_sig_MC)[1]}
@@ -1822,10 +1929,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg*age_years, data = df.zscore)
   summary <- summary(lm)
@@ -1841,7 +1950,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage_sa
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage_sa %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage_sa %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bwbyage_sa$label <- rownames(bwbyage_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -1850,11 +1960,12 @@ bwbyage_sa_sig_MC <- bwbyage_sa %>% filter(bwbyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage_sa_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage_sa
 name <- "bwbyage_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1863,22 +1974,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage_sa_noplot <- bwbyage_sa_sig_MC[!(bwbyage_sa_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1891,7 +2003,8 @@ if(save_figs == TRUE){
 panel_save(bwbyage_dkt_sa_plot, "bwbyage-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(bwbyage_sa_sig_MC)[1] > 0){
 vars <- rownames(bwbyage_sa_sig_MC[order(-(bwbyage_sa_sig_MC$bwbyage_beta)),])
@@ -1908,12 +2021,15 @@ interaction_plots
 }
 }
 ```
-###Thickness
-####simple linear regressions
-#####compute regressions
+
+### Thickness
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore)
   summary <- summary(lm)
@@ -1923,7 +2039,8 @@ bw_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)
 bw_th$bw_p_adj <- p.adjust(bw_th$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw_th %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw_th$label <- rownames(bw_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -1932,11 +2049,12 @@ bw_th_sig_MC <- bw_th %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw_th_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw_th
 name <- "bw_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -1945,22 +2063,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw_th_noplot <- bw_th_sig_MC[!(bw_th_sig_MC$label %in% plot_data_dkt$label) & !(bw_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -1973,7 +2092,8 @@ if(save_figs == TRUE){
 panel_save(bw_dkt_th_plot, "bw-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if (dim(bw_th_sig_MC)[1] > 0){
 top_n = if(dim(bw_th_sig_MC)[1] > 10) {10} else {dim(bw_th_sig_MC)[1]}
@@ -2002,10 +2122,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg*age_years, data = df.zscore)
   summary <- summary(lm)
@@ -2021,7 +2143,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage_th
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage_th %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage_th %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bwbyage_th$label <- rownames(bwbyage_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -2030,11 +2153,12 @@ bwbyage_th_sig_MC <- bwbyage_th %>% filter(bwbyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage_th_sig_MC$bwbyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage_th
 name <- "bwbyage_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2043,22 +2167,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage_th_noplot <- bwbyage_th_sig_MC[!(bwbyage_th_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2071,7 +2196,8 @@ if(save_figs == TRUE){
 panel_save(bwbyage_dkt_th_plot, "bwbyage-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(bwbyage_th_sig_MC)[1] > 0){
 vars <- rownames(bwbyage_th_sig_MC[order(-(bwbyage_th_sig_MC$bwbyage_beta)),])
@@ -2088,12 +2214,15 @@ interaction_plots
 }
 }
 ```
-####group by age and check bw on thickness effect
-#####young
-######compute regressions
+
+####  group by age and check bw on thickness effect
+
+##### young
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_young$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_young) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore_young)
   summary <- summary(lm)
@@ -2103,7 +2232,8 @@ bw_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_yo
 bw_th_young$bw_p_adj <- p.adjust(bw_th_young$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw_th_young %>% filter(bw_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw_th_young$label <- rownames(bw_th_young) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -2112,11 +2242,12 @@ bw_th_young_sig_MC <- bw_th_young %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw_th_young_sig_MC$bw_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw_th_young
 name <- "bw_thick_young.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2125,22 +2256,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw_th_young_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw_th_young_noplot <- bw_th_young_sig_MC[!(bw_th_young_sig_MC$label %in% plot_data_dkt$label) & !(bw_th_young_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwyoung_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2154,11 +2286,12 @@ panel_save(bwyoung_dkt_th_plot, "bw-young-dkt-th", "pdf", plot_save_path)
 }
 ```
 
-#####old
-######compute regressions
+##### old
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_old$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore_old)
   summary <- summary(lm)
@@ -2168,7 +2301,8 @@ bw_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %
 bw_th_old$bw_p_adj <- p.adjust(bw_th_old$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw_th_old %>% filter(bw_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw_th_old$label <- rownames(bw_th_old) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -2177,11 +2311,12 @@ bw_th_old_sig_MC <- bw_th_old %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw_th_old_sig_MC$bw_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw_th_old
 name <- "bw_thick_old.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2190,22 +2325,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw_th_old_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw_th_old_noplot <- bw_th_old_sig_MC[!(bw_th_old_sig_MC$label %in% plot_data_dkt$label) & !(bw_th_old_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwold_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2218,13 +2354,16 @@ panel_save(bwold_dkt_th_plot, "bw-old-dkt-th", "pdf", plot_save_path)
 }
 ```
 
-##GA with QC covariate
-###Volume
-####simple linear regressions
-#####compute regressions
+## GA with QC covariate
+
+### Volume
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -2234,7 +2373,8 @@ ga.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_
 ga.qc_vol$ga_p_adj <- p.adjust(ga.qc_vol$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc_vol %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(ga.qc_vol), perl = TRUE)
 
@@ -2250,11 +2390,12 @@ ga.qc_vol_sig_MC <- ga.qc_vol %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc_vol_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc_vol
 name <- "ga.qc_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2263,23 +2404,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(ga.qc_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc_vol_noplot <- ga.qc_vol_sig_MC[!(ga.qc_vol_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2300,7 +2442,8 @@ panel_save(ga.qc_dkt_vol_plot, "ga-qc-dkt-vol", "pdf", plot_save_path)
 panel_save(ga.qc_aseg_vol_plot , "ga-qc-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if (dim(ga.qc_vol_sig_MC)[1] > 0){
 top_n = if(dim(ga.qc_vol_sig_MC)[1] > 10) {10} else {dim(ga.qc_vol_sig_MC)[1]}
@@ -2327,10 +2470,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ gestational_age*age_years + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -2346,7 +2491,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc_vol %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc_vol %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(gabyage.qc_vol), perl = TRUE)
 
@@ -2362,11 +2508,12 @@ gabyage.qc_vol_sig_MC <- gabyage.qc_vol %>% filter(gabyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage.qc_vol_sig_MC$gabyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage.qc_vol
 name <- "gabyage.qc_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2375,23 +2522,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage.qc_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(gabyage.qc_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage.qc_vol_noplot <- gabyage.qc_vol_sig_MC[!(gabyage.qc_vol_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage.qc_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2412,7 +2560,8 @@ panel_save(gabyage.qc_dkt_vol_plot, "gabyage-qc-dkt-vol", "pdf", plot_save_path)
 panel_save(gabyage.qc_aseg_vol_plot , "gabyage-qc-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(gabyage.qc_vol_sig_MC)[1] > 0){
 vars <- rownames(gabyage.qc_vol_sig_MC[order(-(gabyage.qc_vol_sig_MC$gabyage_beta)),])
@@ -2431,12 +2580,15 @@ interaction_plots
 }
 }
 ```
-###Surface Area
-####simple linear regressions
-#####compute regressions
+
+### Surface Area
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -2446,7 +2598,8 @@ ga.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_va
 ga.qc_sa$ga_p_adj <- p.adjust(ga.qc_sa$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc_sa %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc_sa$label <- rownames(ga.qc_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -2455,11 +2608,12 @@ ga.qc_sa_sig_MC <- ga.qc_sa %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc_sa_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc_sa
 name <- "ga.qc_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2468,22 +2622,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc_sa_noplot <- ga.qc_sa_sig_MC[!(ga.qc_sa_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2496,7 +2651,8 @@ if(save_figs == TRUE){
 panel_save(ga.qc_dkt_sa_plot, "ga-qc-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(ga.qc_sa_sig_MC)[1] > 0) {
 top_n = if(dim(ga.qc_sa_sig_MC)[1] > 10) {10} else {dim(ga.qc_sa_sig_MC)[1]}
@@ -2523,10 +2679,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ gestational_age*age_years + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -2542,7 +2700,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc_sa %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc_sa %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 gabyage.qc_sa$label <- rownames(gabyage.qc_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -2551,11 +2710,12 @@ gabyage.qc_sa_sig_MC <- gabyage.qc_sa %>% filter(gabyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage.qc_sa_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage.qc_sa
 name <- "gabyage.qc_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2564,22 +2724,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage.qc_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage.qc_sa_noplot <- gabyage.qc_sa_sig_MC[!(gabyage.qc_sa_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2592,7 +2753,8 @@ if(save_figs == TRUE){
 panel_save(gabyage.qc_dkt_sa_plot, "gabyage-qc-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(gabyage.qc_sa_sig_MC)[1] > 0){
 vars <- rownames(gabyage.qc_sa_sig_MC[order(-(gabyage.qc_sa_sig_MC$gabyage_beta)),])
@@ -2611,12 +2773,15 @@ interaction_plots
 }
 }
 ```
-###Thickness
-####simple linear regressions
-#####compute regressions
+
+### Thickness
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -2626,7 +2791,8 @@ ga.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_va
 ga.qc_th$ga_p_adj <- p.adjust(ga.qc_th$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc_th %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc_th$label <- rownames(ga.qc_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -2635,11 +2801,12 @@ ga.qc_th_sig_MC <- ga.qc_th %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc_th_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc_th
 name <- "ga.qc_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2648,22 +2815,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc_th_noplot <- ga.qc_th_sig_MC[!(ga.qc_th_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2676,7 +2844,8 @@ if(save_figs == TRUE){
 panel_save(ga.qc_dkt_th_plot, "ga-qc-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(ga.qc_th_sig_MC)[1] > 0){
 top_n = if(dim(ga.qc_th_sig_MC)[1] > 10) {10} else {dim(ga.qc_th_sig_MC)[1]}
@@ -2705,10 +2874,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age*age_years + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -2724,7 +2895,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc_th %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc_th %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 gabyage.qc_th$label <- rownames(gabyage.qc_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -2733,11 +2905,12 @@ gabyage.qc_th_sig_MC <- gabyage.qc_th %>% filter(gabyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage.qc_th_sig_MC$gabyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage.qc_th
 name <- "gabyage.qc_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2746,22 +2919,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage.qc_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage.qc_th_noplot <- gabyage.qc_th_sig_MC[!(gabyage.qc_th_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage.qc_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2774,7 +2948,8 @@ if(save_figs == TRUE){
 panel_save(gabyage.qc_dkt_th_plot, "gabyage-qc-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if(dim(gabyage.qc_th_sig_MC)[1] > 0) {
 vars <- rownames(gabyage.qc_th_sig_MC[order(-(gabyage.qc_th_sig_MC$gabyage_beta)),])
@@ -2791,12 +2966,15 @@ interaction_plots
 }
 }
 ```
-####group by age and check ga.qc on thickness effect
-#####young
-######compute regressions
+
+####  group by age and check ga.qc on thickness effect
+
+##### young
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_young$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_young) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore_young)
   summary <- summary(lm)
@@ -2806,7 +2984,8 @@ ga.qc_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore
 ga.qc_th_young$ga_p_adj <- p.adjust(ga.qc_th_young$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc_th_young %>% filter(ga_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc_th_young$label <- rownames(ga.qc_th_young) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -2815,11 +2994,12 @@ ga.qc_th_young_sig_MC <- ga.qc_th_young %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc_th_young_sig_MC$ga_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc_th_young
 name <- "ga.qc_thick_young.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2828,22 +3008,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc_th_young_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc_th_young_noplot <- ga.qc_th_young_sig_MC[!(ga.qc_th_young_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc_th_young_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qcyoung_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2857,11 +3038,12 @@ panel_save(ga.qcyoung_dkt_th_plot, "ga-young-qc-dkt-th", "pdf", plot_save_path)
 }
 ```
 
-#####old
-######compute regressions
+##### old
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_old$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore_old)
   summary <- summary(lm)
@@ -2871,7 +3053,8 @@ ga.qc_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old
 ga.qc_th_old$ga_p_adj <- p.adjust(ga.qc_th_old$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc_th_old %>% filter(ga_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc_th_old$label <- rownames(ga.qc_th_old) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -2880,11 +3063,12 @@ ga.qc_th_old_sig_MC <- ga.qc_th_old %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc_th_old_sig_MC$ga_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc_th_old
 name <- "ga.qc_thick_old.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2893,22 +3077,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc_th_old_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc_th_old_noplot <- ga.qc_th_old_sig_MC[!(ga.qc_th_old_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc_th_old_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qcold_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -2922,13 +3107,16 @@ panel_save(ga.qcold_dkt_th_plot, "ga-old-qc-dkt-th", "pdf", plot_save_path)
 ```
 
 
-##BW with QC covariate
-###Volume
-####simple linear regressions
-#####compute regressions
+## BW with QC covariate
+
+### Volume
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -2938,7 +3126,8 @@ bw.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_
 bw.qc_vol$bw_p_adj <- p.adjust(bw.qc_vol$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc_vol %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(bw.qc_vol), perl = TRUE)
 
@@ -2954,11 +3143,12 @@ bw.qc_vol_sig_MC <- bw.qc_vol %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc_vol_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc_vol
 name <- "bw.qc_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -2967,23 +3157,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(bw.qc_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc_vol_noplot <- bw.qc_vol_sig_MC[!(bw.qc_vol_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3004,7 +3195,8 @@ panel_save(bw.qc_dkt_vol_plot, "bw-qc-dkt-vol", "pdf", plot_save_path)
 panel_save(bw.qc_aseg_vol_plot , "bw-qc-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(bw.qc_vol_sig_MC)[1] > 0) {
 top_n = if(dim(bw.qc_vol_sig_MC)[1] > 10) {10} else {dim(bw.qc_vol_sig_MC)[1]}
@@ -3031,10 +3223,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg*age_years + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -3050,7 +3244,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc_vol %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc_vol %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(bwbyage.qc_vol), perl = TRUE)
 
@@ -3066,11 +3261,12 @@ bwbyage.qc_vol_sig_MC <- bwbyage.qc_vol %>% filter(bwbyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc_vol_sig_MC$bwbyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage.qc_vol
 name <- "bwbyage.qc_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3079,23 +3275,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage.qc_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(bwbyage.qc_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage.qc_vol_noplot <- bwbyage.qc_vol_sig_MC[!(bwbyage.qc_vol_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage.qc_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3116,7 +3313,8 @@ panel_save(bwbyage.qc_dkt_vol_plot, "ga-qcbyage-dkt-vol", "pdf", plot_save_path)
 panel_save(bwbyage.qc_aseg_vol_plot , "ga-qcbyage-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(bwbyage.qc_vol_sig_MC)[1] > 0){
 vars <- rownames(bwbyage.qc_vol_sig_MC[order(-(bwbyage.qc_vol_sig_MC$bwbyage_beta)),])
@@ -3135,12 +3333,15 @@ interaction_plots
 }
 }
 ```
-###Surface Area
-####simple linear regressions
-#####compute regressions
+
+### Surface Area
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -3150,7 +3351,8 @@ bw.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_va
 bw.qc_sa$bw_p_adj <- p.adjust(bw.qc_sa$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc_sa %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc_sa$label <- rownames(bw.qc_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -3159,11 +3361,12 @@ bw.qc_sa_sig_MC <- bw.qc_sa %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc_sa_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc_sa
 name <- "bw.qc_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3172,22 +3375,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc_sa_noplot <- bw.qc_sa_sig_MC[!(bw.qc_sa_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3200,7 +3404,8 @@ if(save_figs == TRUE){
 panel_save(bw.qc_dkt_sa_plot, "bw-qc-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(bw.qc_sa_sig_MC)[1] > 0) {
 top_n = if(dim(bw.qc_sa_sig_MC)[1] > 10) {10} else {dim(bw.qc_sa_sig_MC)[1]}
@@ -3227,10 +3432,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg*age_years + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -3246,7 +3453,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc_sa %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc_sa %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bwbyage.qc_sa$label <- rownames(bwbyage.qc_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -3255,11 +3463,12 @@ bwbyage.qc_sa_sig_MC <- bwbyage.qc_sa %>% filter(bwbyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc_sa_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage.qc_sa
 name <- "bwbyage.qc_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3268,22 +3477,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage.qc_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage.qc_sa_noplot <- bwbyage.qc_sa_sig_MC[!(bwbyage.qc_sa_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3296,7 +3506,8 @@ if(save_figs == TRUE){
 panel_save(bwbyage.qc_dkt_sa_plot, "bwbyage-qc-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(bwbyage.qc_sa_sig_MC)[1] > 0){
 vars <- rownames(bwbyage.qc_sa_sig_MC[order(-(bwbyage.qc_sa_sig_MC$bwbyage_beta)),])
@@ -3313,12 +3524,15 @@ interaction_plots
 }
 }
 ```
-###Thickness
-####simple linear regressions
-#####compute regressions
+
+### Thickness
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -3328,7 +3542,8 @@ bw.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_va
 bw.qc_th$bw_p_adj <- p.adjust(bw.qc_th$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc_th %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc_th$label <- rownames(bw.qc_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -3337,11 +3552,12 @@ bw.qc_th_sig_MC <- bw.qc_th %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc_th_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc_th
 name <- "bw.qc_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3350,22 +3566,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc_th_noplot <- bw.qc_th_sig_MC[!(bw.qc_th_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3378,7 +3595,8 @@ if(save_figs == TRUE){
 panel_save(bw.qc_dkt_th_plot, "bw-qc-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(bw.qc_th_sig_MC)[1] > 0) {
 top_n = if(dim(bw.qc_th_sig_MC)[1] > 10) {10} else {dim(bw.qc_th_sig_MC)[1]}
@@ -3407,10 +3625,12 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg*age_years + qc_var, data = df.zscore)
   summary <- summary(lm)
@@ -3426,7 +3646,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc_th %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc_th %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bwbyage.qc_th$label <- rownames(bwbyage.qc_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -3435,11 +3656,12 @@ bwbyage.qc_th_sig_MC <- bwbyage.qc_th %>% filter(bwbyage_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc_th_sig_MC$bwbyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage.qc_th
 name <- "bwbyage.qc_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3448,22 +3670,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage.qc_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage.qc_th_noplot <- bwbyage.qc_th_sig_MC[!(bwbyage.qc_th_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage.qc_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3476,7 +3699,8 @@ if(save_figs == TRUE){
 panel_save(bwbyage.qc_dkt_th_plot, "bwbyage-qc-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if(dim(bwbyage.qc_th_sig_MC)[1] > 0) {
 vars <- rownames(bwbyage.qc_th_sig_MC[order(-(bwbyage.qc_th_sig_MC$bwbyage_beta)),])
@@ -3493,12 +3717,15 @@ interaction_plots
 }
 }
 ```
-####group by age and check bw.qc on thickness effect
-#####young
-######compute regressions
+
+####  group by age and check bw.qc on thickness effect
+
+##### young
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_young$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_young) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore_young)
   summary <- summary(lm)
@@ -3508,7 +3735,8 @@ bw.qc_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore
 bw.qc_th_young$bw_p_adj <- p.adjust(bw.qc_th_young$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc_th_young %>% filter(bw_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc_th_young$label <- rownames(bw.qc_th_young) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -3517,11 +3745,12 @@ bw.qc_th_young_sig_MC <- bw.qc_th_young %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc_th_young_sig_MC$bw_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc_th_young
 name <- "bw.qc_thick_young.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3530,22 +3759,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc_th_young_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc_th_young_noplot <- bw.qc_th_young_sig_MC[!(bw.qc_th_young_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc_th_young_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qcyoung_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3559,11 +3789,12 @@ panel_save(bw.qcyoung_dkt_th_plot, "bw-young-qc-dkt-th", "pdf", plot_save_path)
 }
 ```
 
-#####old
-######compute regressions
+##### old
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_old$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore_old)
   summary <- summary(lm)
@@ -3573,7 +3804,8 @@ bw.qc_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old
 bw.qc_th_old$bw_p_adj <- p.adjust(bw.qc_th_old$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc_th_old %>% filter(bw_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc_th_old$label <- rownames(bw.qc_th_old) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -3582,11 +3814,12 @@ bw.qc_th_old_sig_MC <- bw.qc_th_old %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc_th_old_sig_MC$bw_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc_th_old
 name <- "bw.qc_thick_old.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3595,22 +3828,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc_th_old_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc_th_old_noplot <- bw.qc_th_old_sig_MC[!(bw.qc_th_old_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc_th_old_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qcold_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3623,24 +3857,19 @@ panel_save(bw.qcold_dkt_th_plot, "bw-old-qc-dkt-th", "pdf", plot_save_path)
 }
 ```
 
+## GA with qc and a global measure covariate
 
+### Volume
 
+####  simple linear regressions
 
-
-
-
-
-
-##GA with qc and a global measure covariate
-###Volume
-####simple linear regressions
-#####compute regressions
+##### compute regressions
 ```{r, echo = FALSE}
-print("Global measure for volume is eTIV")
+print(glue("Global measure for volume is {global_measure_vol}"))
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ gestational_age + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("gestational_age", "qc_var", global_measure_vol), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
 })))
@@ -3648,7 +3877,8 @@ ga.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %i
 ga.qc.global_vol$ga_p_adj <- p.adjust(ga.qc.global_vol$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.global_vol %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(ga.qc.global_vol), perl = TRUE)
 
@@ -3664,11 +3894,12 @@ ga.qc.global_vol_sig_MC <- ga.qc.global_vol %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc.global_vol_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc.global_vol
 name <- "ga.qc.global_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3677,23 +3908,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc.global_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(ga.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc.global_vol_noplot <- ga.qc.global_vol_sig_MC[!(ga.qc.global_vol_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.global_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc.global_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3714,7 +3946,8 @@ panel_save(ga.qc.global_dkt_vol_plot, "ga-qc-global-dkt-vol", "pdf", plot_save_p
 panel_save(ga.qc.global_aseg_vol_plot , "ga-qc-global-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(ga.qc.global_vol_sig_MC)[1] > 0){
 top_n = if(dim(ga.qc.global_vol_sig_MC)[1] > 10) {10} else {dim(ga.qc.global_vol_sig_MC)[1]}
@@ -3741,16 +3974,18 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ gestational_age*age_years + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("gestational_age", "age_years", "qc_var", global_measure_vol, "gestational_age:age_years"), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
-   gabyage_beta = summary$coefficients[5,1], gabyage_p = summary$coefficients[5,4], gabyage_se = summary$coefficients[5,2])
+   gabyage_beta = summary$coefficients[6,1], gabyage_p = summary$coefficients[6,4], gabyage_se = summary$coefficients[6,2])
 })))
 
 gabyage.qc.global_vol$ga_p_adj <- p.adjust(gabyage.qc.global_vol$ga_p, method = "BH")
@@ -3760,7 +3995,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc.global_vol %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc.global_vol %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(gabyage.qc.global_vol), perl = TRUE)
 
@@ -3776,11 +4012,12 @@ gabyage.qc.global_vol_sig_MC <- gabyage.qc.global_vol %>% filter(gabyage_p_adj <
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage.qc.global_vol_sig_MC$gabyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage.qc.global_vol
 name <- "gabyage.qc.global_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3789,23 +4026,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage.qc.global_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(gabyage.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage.qc.global_vol_noplot <- gabyage.qc.global_vol_sig_MC[!(gabyage.qc.global_vol_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc.global_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage.qc.global_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3826,7 +4064,8 @@ panel_save(gabyage.qc.global_dkt_vol_plot, "gabyage-qc-global-dkt-vol", "pdf", p
 panel_save(gabyage.qc.global_aseg_vol_plot , "gabyage-qc-global-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(gabyage.qc_vol_sig_MC)[1] > 0){
 vars <- rownames(gabyage.qc_vol_sig_MC[order(-(gabyage.qc_vol_sig_MC$gabyage_beta)),])
@@ -3845,15 +4084,18 @@ interaction_plots
 }
 }
 ```
-###Surface Area
-####simple linear regressions
-#####compute regressions
+
+### Surface Area
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
-print("Global measure for surface area is eTIV")
+print(glue("Global measure for surface area is {global_measure_sa}"))
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ gestational_age + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("gestational_age", "qc_var", global_measure_sa), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
 })))
@@ -3861,7 +4103,8 @@ ga.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in
 ga.qc.global_sa$ga_p_adj <- p.adjust(ga.qc.global_sa$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.global_sa %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc.global_sa$label <- rownames(ga.qc.global_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -3870,11 +4113,12 @@ ga.qc.global_sa_sig_MC <- ga.qc.global_sa %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc.global_sa_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc.global_sa
 name <- "ga.qc.global_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3883,22 +4127,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc.global_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc.global_sa_noplot <- ga.qc.global_sa_sig_MC[!(ga.qc.global_sa_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.global_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc.global_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -3911,7 +4156,8 @@ if(save_figs == TRUE){
 panel_save(ga.qc.global_dkt_sa_plot, "ga-qc-global-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(ga.qc.global_sa_sig_MC)[1] > 0){
 top_n = if(dim(ga.qc.global_sa_sig_MC)[1] > 10) {10} else {dim(ga.qc.global_sa_sig_MC)[1]}
@@ -3938,16 +4184,18 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ gestational_age*age_years + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("gestational_age", "age_years", "qc_var", global_measure_sa, "gestational_age:age_years"), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
-   gabyage_beta = summary$coefficients[5,1], gabyage_p = summary$coefficients[5,4], gabyage_se = summary$coefficients[5,2])
+   gabyage_beta = summary$coefficients[6,1], gabyage_p = summary$coefficients[6,4], gabyage_se = summary$coefficients[6,2])
 })))
 
 gabyage.qc.global_sa$ga_p_adj <- p.adjust(gabyage.qc.global_sa$ga_p, method = "BH")
@@ -3957,7 +4205,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc.global_sa %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc.global_sa %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 gabyage.qc.global_sa$label <- rownames(gabyage.qc.global_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -3966,11 +4215,12 @@ gabyage.qc.global_sa_sig_MC <- gabyage.qc.global_sa %>% filter(gabyage_p_adj < 0
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage.qc.global_sa_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage.qc.global_sa
 name <- "gabyage.qc.global_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -3979,22 +4229,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage.qc.global_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage.qc_sa_noplot <- gabyage.qc.global_sa_sig_MC[!(gabyage.qc.global_sa_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc.global_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4007,7 +4258,8 @@ if(save_figs == TRUE){
 panel_save(gabyage.qc_dkt_sa_plot, "gabyage-qc-global-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(gabyage.qc.global_sa_sig_MC)[1] > 0){
 vars <- rownames(gabyage.qc.global_sa_sig_MC[order(-(gabyage.qc.global_sa_sig_MC$gabyage_beta)),])
@@ -4024,15 +4276,18 @@ interaction_plots
 }
 }
 ```
-###Thickness
-####simple linear regressions
-#####compute regressions
+
+### Thickness
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
-print("Global measure for cortical thickness is mean thickness")
+print(glue("Global measure for cortical thickness is {global_measure_th}"))
 sum(!is.na(df.zscore$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
-  lm <- lm(x ~ gestational_age + qc_var + global_MeanThickness, data = df.zscore)
+  lm <- lm(reformulate(c("gestational_age", "qc_var", global_measure_th), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
 })))
@@ -4040,7 +4295,8 @@ ga.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in
 ga.qc.global_th$ga_p_adj <- p.adjust(ga.qc.global_th$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.global_th %>% filter(ga_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc.global_th$label <- rownames(ga.qc.global_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -4049,11 +4305,12 @@ ga.qc.global_th_sig_MC <- ga.qc.global_th %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc.global_th_sig_MC$ga_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc.global_th
 name <- "ga.qc.global_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4062,22 +4319,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc.global_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc.global_th_noplot <- ga.qc.global_th_sig_MC[!(ga.qc.global_th_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.global_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc.global_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4090,7 +4348,8 @@ if(save_figs == TRUE){
 panel_save(ga.qc.global_dkt_th_plot, "ga-qc-global-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(ga.qc.global_th_sig_MC)[1] > 0) {
 top_n = if(dim(ga.qc.global_th_sig_MC)[1] > 10) {10} else {dim(ga.qc.global_th_sig_MC)[1]}
@@ -4119,16 +4378,18 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 gabyage.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
-  lm <- lm(x ~ gestational_age*age_years + qc_var + global_MeanThickness, data = df.zscore)
+  lm <- lm(reformulate(c("gestational_age", "age_years", "qc_var", global_measure_th, "gestational_age:age_years"), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
-   gabyage_beta = summary$coefficients[5,1], gabyage_p = summary$coefficients[5,4], gabyage_se = summary$coefficients[5,2])
+   gabyage_beta = summary$coefficients[6,1], gabyage_p = summary$coefficients[6,4], gabyage_se = summary$coefficients[6,2])
 })))
 
 gabyage.qc.global_th$ga_p_adj <- p.adjust(gabyage.qc.global_th$ga_p, method = "BH")
@@ -4138,7 +4399,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc.global_th %>% filter(gabyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc.global_th %>% filter(gabyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 gabyage.qc.global_th$label <- rownames(gabyage.qc.global_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -4147,11 +4409,12 @@ gabyage.qc.global_th_sig_MC <- gabyage.qc.global_th %>% filter(gabyage_p_adj < 0
 
 print(paste0("Beta range of significant IDPs: ", range(gabyage.qc.global_th_sig_MC$gabyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- gabyage.qc.global_th
 name <- "gabyage.qc.global_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4160,22 +4423,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(gabyage.qc.global_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (gabyage.qc.global_th_noplot <- gabyage.qc.global_th_sig_MC[!(gabyage.qc.global_th_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc.global_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (gabyage.qc.global_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4188,7 +4452,8 @@ if(save_figs == TRUE){
 panel_save(gabyage.qc.global_dkt_th_plot, "gabyage-qc-global-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if(dim(gabyage.qc.global_th_sig_MC)[1] > 0) {
 vars <- rownames(gabyage.qc.global_th_sig_MC[order(-(gabyage.qc.global_th_sig_MC$gabyage_beta)),])
@@ -4205,14 +4470,17 @@ interaction_plots
 }
 }
 ```
-####group by age and check ga.qc.global on thickness effect
-#####young
-######compute regressions
+
+####  group by age and check ga.qc.global on thickness effect
+
+##### young
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_young$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc.global_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_young) %in% th_vars)], function(x) {
-  lm <- lm(x ~ gestational_age + qc_var + global_MeanThickness, data = df.zscore_young)
+  lm <- lm(reformulate(c("gestational_age", "qc_var", global_measure_th), response = "x"), data = df.zscore_young)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
 })))
@@ -4220,7 +4488,8 @@ ga.qc.global_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df
 ga.qc.global_th_young$ga_p_adj <- p.adjust(ga.qc.global_th_young$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.global_th_young %>% filter(ga_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc.global_th_young$label <- rownames(ga.qc.global_th_young) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -4229,11 +4498,12 @@ ga.qc.global_th_young_sig_MC <- ga.qc.global_th_young %>% filter(ga_p_adj < 0.05
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc.global_th_young_sig_MC$ga_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc.global_th_young
 name <- "ga.qc.global_thick_young.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4242,22 +4512,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc.global_th_young_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc.global_th_young_noplot <- ga.qc.global_th_young_sig_MC[!(ga.qc.global_th_young_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.global_th_young_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc.globalyoung_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4271,13 +4542,14 @@ panel_save(ga.qc.globalyoung_dkt_th_plot, "ga-qc-meanth-young-dkt-th", "pdf", pl
 }
 ```
 
-#####old
-######compute regressions
+##### old
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_old$gestational_age))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 ga.qc.global_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %in% th_vars)], function(x) {
-  lm <- lm(x ~ gestational_age + qc_var + global_MeanThickness, data = df.zscore_old)
+  lm <- lm(reformulate(c("gestational_age","qc_var", global_measure_th), response = "x"), data = df.zscore_old)
   summary <- summary(lm)
   c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
 })))
@@ -4285,7 +4557,8 @@ ga.qc.global_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zsc
 ga.qc.global_th_old$ga_p_adj <- p.adjust(ga.qc.global_th_old$ga_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.global_th_old %>% filter(ga_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 ga.qc.global_th_old$label <- rownames(ga.qc.global_th_old) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -4294,11 +4567,12 @@ ga.qc.global_th_old_sig_MC <- ga.qc.global_th_old %>% filter(ga_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(ga.qc.global_th_old_sig_MC$ga_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- ga.qc.global_th_old
 name <- "ga.qc.global_thick_old.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4307,22 +4581,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(ga.qc.global_th_old_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (ga.qc.global_th_old_noplot <- ga.qc.global_th_old_sig_MC[!(ga.qc.global_th_old_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.global_th_old_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (ga.qc.globalold_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4335,20 +4610,19 @@ panel_save(ga.qc.globalold_dkt_th_plot, "ga-qc-meanth-old-dkt-th", "pdf", plot_s
 }
 ```
 
+## BW with qc and a global measure covariate
 
+### Volume
 
+####  simple linear regressions
 
-
-##BW with qc and a global measure covariate
-###Volume
-####simple linear regressions
-#####compute regressions
+##### compute regressions
 ```{r, echo = FALSE}
-print("Global measure for volume is eTIV")
+print(glue("Global measure for volume is {global_measure_vol}"))
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_vol), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
 })))
@@ -4356,7 +4630,8 @@ bw.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %i
 bw.qc.global_vol$bw_p_adj <- p.adjust(bw.qc.global_vol$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.global_vol %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(bw.qc.global_vol), perl = TRUE)
 
@@ -4372,11 +4647,12 @@ bw.qc.global_vol_sig_MC <- bw.qc.global_vol %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc.global_vol_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc.global_vol
 name <- "bw.qc.global_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4385,23 +4661,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc.global_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(bw.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc.global_vol_noplot <- bw.qc.global_vol_sig_MC[!(bw.qc.global_vol_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.global_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc.global_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4422,7 +4699,8 @@ panel_save(bw.qc.global_dkt_vol_plot, "bw-qc-global-dkt-vol", "pdf", plot_save_p
 panel_save(bw.qc.global_aseg_vol_plot , "bw-qc-global-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(bw.qc.global_vol_sig_MC)[1] > 0){
 top_n = if(dim(bw.qc.global_vol_sig_MC)[1] > 10) {10} else {dim(bw.qc.global_vol_sig_MC)[1]}
@@ -4449,16 +4727,18 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg*age_years + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("birth_weight_kg", "age_years", "qc_var", global_measure_vol, "birth_weight_kg:age_years"), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
-   bwbyage_beta = summary$coefficients[5,1], bwbyage_p = summary$coefficients[5,4], bwbyage_se = summary$coefficients[5,2])
+   bwbyage_beta = summary$coefficients[6,1], bwbyage_p = summary$coefficients[6,4], bwbyage_se = summary$coefficients[6,2])
 })))
 
 bwbyage.qc.global_vol$bw_p_adj <- p.adjust(bwbyage.qc.global_vol$bw_p, method = "BH")
@@ -4468,7 +4748,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc.global_vol %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc.global_vol %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 cols_edit <- grepl("aseg(?!_CC)", rownames(bwbyage.qc.global_vol), perl = TRUE)
 
@@ -4484,11 +4765,12 @@ bwbyage.qc.global_vol_sig_MC <- bwbyage.qc.global_vol %>% filter(bwbyage_p_adj <
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc.global_vol_sig_MC$bwbyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage.qc.global_vol
 name <- "bwbyage.qc.global_volume.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4497,23 +4779,24 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage.qc.global_vol_sig_MC, ggseg::dk, by = "label")
 plot_data_aseg <- merge(bwbyage.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage.qc.global_vol_noplot <- bwbyage.qc.global_vol_sig_MC[!(bwbyage.qc.global_vol_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc.global_vol_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage.qc.global_dkt_vol_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4534,7 +4817,8 @@ panel_save(bwbyage.qc.global_dkt_vol_plot, "bwbyage-qc-global-dkt-vol", "pdf", p
 panel_save(bwbyage.qc.global_aseg_vol_plot , "bwbyage-qc-global-aseg-vol", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(bwbyage.qc_vol_sig_MC)[1] > 0){
 vars <- rownames(bwbyage.qc_vol_sig_MC[order(-(bwbyage.qc_vol_sig_MC$bwbyage_beta)),])
@@ -4553,15 +4837,18 @@ interaction_plots
 }
 }
 ```
-###Surface Area
-####simple linear regressions
-#####compute regressions
+
+### Surface Area
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
-print("Global measure for surface area is eTIV")
+print(glue("Global measure for surface area is {global_measure_sa}"))
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_sa), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
 })))
@@ -4569,7 +4856,8 @@ bw.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in
 bw.qc.global_sa$bw_p_adj <- p.adjust(bw.qc.global_sa$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.global_sa %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc.global_sa$label <- rownames(bw.qc.global_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -4578,11 +4866,12 @@ bw.qc.global_sa_sig_MC <- bw.qc.global_sa %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc.global_sa_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc.global_sa
 name <- "bw.qc.global_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4591,22 +4880,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc.global_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc.global_sa_noplot <- bw.qc.global_sa_sig_MC[!(bw.qc.global_sa_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.global_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc.global_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4619,7 +4909,8 @@ if(save_figs == TRUE){
 panel_save(bw.qc.global_dkt_sa_plot, "bw-qc-global-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(bw.qc.global_sa_sig_MC)[1] > 0){
 top_n = if(dim(bw.qc.global_sa_sig_MC)[1] > 10) {10} else {dim(bw.qc.global_sa_sig_MC)[1]}
@@ -4646,16 +4937,18 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg*age_years + qc_var + global_eTIV, data = df.zscore)
+  lm <- lm(reformulate(c("birth_weight_kg", "age_years", "qc_var", global_measure_sa, "birth_weight_kg:age_years"), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
-   bwbyage_beta = summary$coefficients[5,1], bwbyage_p = summary$coefficients[5,4], bwbyage_se = summary$coefficients[5,2])
+   bwbyage_beta = summary$coefficients[6,1], bwbyage_p = summary$coefficients[6,4], bwbyage_se = summary$coefficients[6,2])
 })))
 
 bwbyage.qc.global_sa$bw_p_adj <- p.adjust(bwbyage.qc.global_sa$bw_p, method = "BH")
@@ -4665,7 +4958,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc.global_sa %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc.global_sa %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bwbyage.qc.global_sa$label <- rownames(bwbyage.qc.global_sa) %>% 
   sub("aparc_SurfArea_", "", .)
@@ -4674,11 +4968,12 @@ bwbyage.qc.global_sa_sig_MC <- bwbyage.qc.global_sa %>% filter(bwbyage_p_adj < 0
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc.global_sa_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage.qc.global_sa
 name <- "bwbyage.qc.global_surfArea.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4687,22 +4982,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage.qc.global_sa_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage.qc_sa_noplot <- bwbyage.qc.global_sa_sig_MC[!(bwbyage.qc.global_sa_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc.global_sa_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4715,7 +5011,8 @@ if(save_figs == TRUE){
 panel_save(bwbyage.qc_dkt_sa_plot, "bwbyage-qc-global-dkt-sa", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if (dim(bwbyage.qc.global_sa_sig_MC)[1] > 0){
 vars <- rownames(bwbyage.qc.global_sa_sig_MC[order(-(bwbyage.qc.global_sa_sig_MC$bwbyage_beta)),])
@@ -4732,15 +5029,18 @@ interaction_plots
 }
 }
 ```
-###Thickness
-####simple linear regressions
-#####compute regressions
+
+### Thickness
+
+####  simple linear regressions
+
+##### compute regressions
 ```{r, echo = FALSE}
-print("Global measure for cortical thickness is mean thickness")
+print(glue("Global measure for cortical thickness is {global_measure_th}"))
 sum(!is.na(df.zscore$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg + qc_var + global_MeanThickness, data = df.zscore)
+  lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_th), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
 })))
@@ -4748,7 +5048,8 @@ bw.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in
 bw.qc.global_th$bw_p_adj <- p.adjust(bw.qc.global_th$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.global_th %>% filter(bw_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc.global_th$label <- rownames(bw.qc.global_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -4757,11 +5058,12 @@ bw.qc.global_th_sig_MC <- bw.qc.global_th %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc.global_th_sig_MC$bw_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc.global_th
 name <- "bw.qc.global_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4770,22 +5072,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualization of betas on surface maps
+
+##### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc.global_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc.global_th_noplot <- bw.qc.global_th_sig_MC[!(bw.qc.global_th_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.global_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc.global_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4798,7 +5101,8 @@ if(save_figs == TRUE){
 panel_save(bw.qc.global_dkt_th_plot, "bw-qc-global-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####Scatterplot for top betas
+
+##### Scatterplot for top betas
 ```{r, echo = FALSE}
 if(dim(bw.qc.global_th_sig_MC)[1] > 0) {
 top_n = if(dim(bw.qc.global_th_sig_MC)[1] > 10) {10} else {dim(bw.qc.global_th_sig_MC)[1]}
@@ -4827,16 +5131,18 @@ for(k in 1:(length(breaks)-1)){
 }
 }
 ```
-####lm with age interaction
-#####compute regressions
+
+####  lm with age interaction
+
+##### compute regressions
 ```{r, echo = FALSE}
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bwbyage.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg*age_years + qc_var + global_MeanThickness, data = df.zscore)
+  lm <- lm(reformulate(c("birth_weight_kg", "age_years", "qc_var", global_measure_th, "birth_weight_kg:age_years"), response = "x"), data = df.zscore)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
-   bwbyage_beta = summary$coefficients[5,1], bwbyage_p = summary$coefficients[5,4], bwbyage_se = summary$coefficients[5,2])
+   bwbyage_beta = summary$coefficients[6,1], bwbyage_p = summary$coefficients[6,4], bwbyage_se = summary$coefficients[6,2])
 })))
 
 bwbyage.qc.global_th$bw_p_adj <- p.adjust(bwbyage.qc.global_th$bw_p, method = "BH")
@@ -4846,7 +5152,8 @@ print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc
 print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc.global_th %>% filter(bwbyage_p < 0.05))[1]))
 print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc.global_th %>% filter(bwbyage_p_adj < 0.05))[1]))
 ```
-#####add label column to match to ggseg
+
+##### add label column to match to ggseg
 ```{r, echo = FALSE}
 bwbyage.qc.global_th$label <- rownames(bwbyage.qc.global_th) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -4855,11 +5162,12 @@ bwbyage.qc.global_th_sig_MC <- bwbyage.qc.global_th %>% filter(bwbyage_p_adj < 0
 
 print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc.global_th_sig_MC$bwbyage_beta)))
 ```
-#####save betas
+
+##### save betas
 ```{r, echo = FALSE}
 save_table_full <- bwbyage.qc.global_th
 name <- "bwbyage.qc.global_thick.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4868,22 +5176,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-#####visualize interaction betas on surface maps
+
+##### visualize interaction betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bwbyage.qc.global_th_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bwbyage.qc.global_th_noplot <- bwbyage.qc.global_th_sig_MC[!(bwbyage.qc.global_th_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc.global_th_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bwbyage.qc.global_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4896,7 +5205,8 @@ if(save_figs == TRUE){
 panel_save(bwbyage.qc.global_dkt_th_plot, "bwbyage-qc-global-dkt-th", "pdf", plot_save_path)
 }
 ```
-#####visualize interaction plots
+
+##### visualize interaction plots
 ```{r, echo = FALSE}
 if(dim(bwbyage.qc.global_th_sig_MC)[1] > 0) {
 vars <- rownames(bwbyage.qc.global_th_sig_MC[order(-(bwbyage.qc.global_th_sig_MC$bwbyage_beta)),])
@@ -4913,14 +5223,17 @@ interaction_plots
 }
 }
 ```
-####group by age and check bw.qc.global on thickness effect
-#####young
-######compute regressions
+
+####  group by age and check bw.qc.global on thickness effect
+
+##### young
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_young$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc.global_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df.zscore_young) %in% th_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg + qc_var + global_MeanThickness, data = df.zscore_young)
+  lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_th), response = "x"), data = df.zscore_young)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
 })))
@@ -4928,7 +5241,8 @@ bw.qc.global_th_young <- as.data.frame(t(sapply(df.zscore_young[, which(names(df
 bw.qc.global_th_young$bw_p_adj <- p.adjust(bw.qc.global_th_young$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.global_th_young %>% filter(bw_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc.global_th_young$label <- rownames(bw.qc.global_th_young) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -4937,11 +5251,12 @@ bw.qc.global_th_young_sig_MC <- bw.qc.global_th_young %>% filter(bw_p_adj < 0.05
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc.global_th_young_sig_MC$bw_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc.global_th_young
 name <- "bw.qc.global_thick_young.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -4950,22 +5265,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc.global_th_young_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc.global_th_young_noplot <- bw.qc.global_th_young_sig_MC[!(bw.qc.global_th_young_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.global_th_young_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc.globalyoung_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -4979,13 +5295,14 @@ panel_save(bw.qc.globalyoung_dkt_th_plot, "bw-qc-meanth-young-dkt-th", "pdf", pl
 }
 ```
 
-#####old
-######compute regressions
+##### old
+
+###### compute regressions
 ```{r, echo = FALSE}
 sum(!is.na(df.zscore_old$birth_weight_kg))
-#Regional -- including cortical and subcortical
+# Regional -- including cortical and subcortical
 bw.qc.global_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zscore_old) %in% th_vars)], function(x) {
-  lm <- lm(x ~ birth_weight_kg + qc_var + global_MeanThickness, data = df.zscore_old)
+  lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_th), response = "x"), data = df.zscore_old)
   summary <- summary(lm)
   c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
 })))
@@ -4993,7 +5310,8 @@ bw.qc.global_th_old <- as.data.frame(t(sapply(df.zscore_old[, which(names(df.zsc
 bw.qc.global_th_old$bw_p_adj <- p.adjust(bw.qc.global_th_old$bw_p, method = "BH")
 print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.global_th_old %>% filter(bw_p_adj < 0.05))[1]))
 ```
-######add label column to match to ggseg
+
+###### add label column to match to ggseg
 ```{r, echo = FALSE}
 bw.qc.global_th_old$label <- rownames(bw.qc.global_th_old) %>% 
   sub("aparc_ThickAvg_", "", .)
@@ -5002,11 +5320,12 @@ bw.qc.global_th_old_sig_MC <- bw.qc.global_th_old %>% filter(bw_p_adj < 0.05)
 
 print(paste0("Beta range of significant IDPs: ", range(bw.qc.global_th_old_sig_MC$bw_beta)))
 ```
-######save betas
+
+###### save betas
 ```{r, echo = FALSE}
 save_table_full <- bw.qc.global_th_old
 name <- "bw.qc.global_thick_old.csv"
-#Save dkt cortical betas for spin test
+# Save dkt cortical betas for spin test
 if(save_tables == TRUE){
   output_folder <-dkt_folder
   save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
@@ -5015,22 +5334,23 @@ if(save_tables == TRUE){
   filename_all <- paste0(output_folder, name)
   write.csv(save_table_full, filename_all)
 }
-#Save full betas
+# Save full betas
 if(save_tables == TRUE){
 output_folder <- betas_folder
 filename <- paste0(output_folder, name)
 write.csv(save_table_full, filename)
 }
 ```
-######visualization of betas on surface maps
+
+###### visualization of betas on surface maps
 ```{r, echo = FALSE}
-#merge with atlas data
+# merge with atlas data
 plot_data_dkt <- merge(bw.qc.global_th_old_sig_MC, ggseg::dk, by = "label")
 
-#Regions not matched in atlases
+# Regions not matched in atlases
 (bw.qc.global_th_old_noplot <- bw.qc.global_th_old_sig_MC[!(bw.qc.global_th_old_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.global_th_old_sig_MC$label %in% plot_data_aseg$label),])
 
-#plots
+# plots
 (bw.qc.globalold_dkt_th_plot <- ggplot(plot_data_dkt) +
   geom_brain(atlas = dk, 
              position = position_brain(hemi ~ side),
@@ -5042,10 +5362,12 @@ if(save_figs == TRUE){
 panel_save(bw.qc.globalold_dkt_th_plot, "bw-qc-meanth-old-dkt-th", "pdf", plot_save_path)
 }
 ```
-#Save scale images
-##beta scale
+
+# Save scale images
+
+## beta scale
 ```{r, echo = FALSE}
-# Create dummy data just to generate the colorbar
+#  Create dummy data just to generate the colorbar
 df <- data.frame(x = 1, y = 1, beta = 0)
 
 beta_scale_hor <- ggplot(df, aes(x, y, fill = beta)) +
@@ -5057,11 +5379,11 @@ beta_scale_hor <- ggplot(df, aes(x, y, fill = beta)) +
     midpoint = 0,
     limits = limits,
     guide = guide_colorbar(
-      barwidth = 20,   # length of colorbar
-      barheight = 1    # thickness
+      barwidth = 20,   #  length of colorbar
+      barheight = 1    #  thickness
     )
   ) +
-  theme_void() +  # remove axes, grid, etc.
+  theme_void() +  #  remove axes, grid, etc.
   theme(
     legend.position = "bottom",
     legend.text = element_text(size = 14),
@@ -5077,11 +5399,11 @@ beta_scale_vert <- ggplot(df, aes(x, y, fill = beta)) +
     midpoint = 0,
     limits = limits,
     guide = guide_colorbar(
-      barwidth = 1,   # length of colorbar
-      barheight = 20    # thickness
+      barwidth = 1,   #  length of colorbar
+      barheight = 20    #  thickness
     )
   ) +
-  theme_void() +  # remove axes, grid, etc.
+  theme_void() +  #  remove axes, grid, etc.
   theme(
     legend.position = "right",
     legend.text = element_text(size = 14),

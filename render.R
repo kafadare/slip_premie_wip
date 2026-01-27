@@ -3,45 +3,52 @@
 library(rmarkdown)
 
 # --------------------------------------------------
-# Rscript render.R input.Rmd [output_dir] [output_file_base]
+# Rscript render.R input.Rmd output_dir centile_path [output_file_base]
 #
-# Defaults if only input.Rmd is supplied:
-#   output_dir = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/markdown_output/"
-#   output_file_base = defaults to name of input Rmd
 # --------------------------------------------------
 
 args <- commandArgs(trailingOnly = TRUE)
 
-if (length(args) < 1) {
-  stop("Usage: Rscript render.R input.Rmd [output_dir] [output_file_base]")
+if (length(args) < 3) {
+  stop("Usage: Rscript render.R input.Rmd output_dir centile_path [output_file_base]")
 }
 
 input_rmd <- args[1]
 
 message("Rendering: ", input_rmd)
 
-# default output directory if no output directory arg supplied
-output_dir <- if (length(args) >= 2) args[2] else "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/markdown_output/"
+# check output directory
+output_dir <- args[2]
+if(!dir.exists(output_dir)) {
+message("Output directory ", output_dir, " does not exist. Check path and spelling.")
+} else{message("Saving all output in subfolders under directory: ", output_dir)}
+
+# make subfolder in output directory to save markdown output
+markdown_output_dir <- paste0(output_dir, "markdown_output/")
+if (!dir.exists(markdown_output_dir)) dir.create(markdown_output_dir)
+
+# assign variable to centiles if available
+centiles_data_path <- args[3]
+
+message("Using centile file: ", centiles_data_path)
 
 # default file base = input filename without extension, if no file name supplied
-default_name <- tools::file_path_sans_ext(basename(input_rmd))
-output_filename <- if (length(args) >= 3) args[3] else default_name
+default_name <- tools::file_path_sans_ext(basename(centiles_data_path))
+output_filename <- if (length(args) > 3) args[4] else default_name
 
 # add date to output filename
 output_file <- paste0(output_filename, "_", Sys.Date(), ".html")
 
-# check output directory existence, if not create
-if (!dir.exists(output_dir)) {
-  dir.create(output_dir, recursive = TRUE)
-}
-
 # Render R Markdown
-rmarkdown::render(
-  input       = input_rmd,
-  output_format = "html document"
-  output_file = output_file,
-  output_dir  = output_dir,
-  clean       = TRUE
-)
+  message("Params supplied: ", output_dir, centiles_data_path)
+  rmarkdown::render(
+    input       = input_rmd,
+    output_format = "html_document",
+    output_file = output_file,
+    output_dir  = markdown_output_dir,
+    clean       = TRUE,
+    params = list(output_folder = output_dir,
+                  centiles_path = centiles_data_path)
+  )
 
-message("Rendered file saved to: ", file.path(output_dir, output_file))
+message("Rendered file saved to: ", file.path(markdown_output_dir, output_file))

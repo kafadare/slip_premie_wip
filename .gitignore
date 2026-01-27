@@ -1,4 +1,6 @@
 output/
 data/
+SLIP_25_11/
 *.err
 *.out
+360.calc-derived-noBoot.r

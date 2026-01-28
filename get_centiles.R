@@ -3,8 +3,8 @@
 # get_centiles.R 
 # N which pheno (array number): pheno_i
 # folder for gamlss fits: "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/" 
-# file with raw values: "mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/CSV/slip_median.csv"
-# where to save output centiles: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/CSV/centile_csv/slip-median-all/"
+# file with raw values: "mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/slip_median.csv"
+# where to save output centiles: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip-median-all/"
 # which type of model (should ideally match the file above) "median"
 # Get command-line arguments
 args <- commandArgs(trailingOnly = TRUE)
@@ -22,8 +22,8 @@ require(magrittr)
 ##Testing with default arguments
 #ph_no <- 2
 #fits_folder <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
-raw_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/CSV/slip_median.csv"
-#out_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/CSV/centile_csv/slip-median-all/"
+#raw_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/slip_median.csv"
+#out_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/centile_csv/slip-median-all/"
 #model_case <- "median"
 source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/940.calc-novel-wo-subset-function.r")
 

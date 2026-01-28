@@ -4,9 +4,18 @@ output:
   html_document:
     df_print: paged
 params:
-  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades/"
-  centiles_path: "mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/median_distinct_clean_2026-01-08.csv"
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/"
+  centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/CSV/centile_csv/slip_median_centiles.csv"
 ---
+# Define params if they do not exist
+```{r}
+if (!exists("params")) {
+  params <- list(
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/",
+  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/centiles_distinct_2026-01-27.csv" 
+  )
+}
+``` 
 
 # Controls
 ```{r setup, echo = TRUE}
@@ -23,31 +32,32 @@ global_measure_vol <- "global_eTIV"
 global_measure_sa <- "global_SurfaceArea"
 global_measure_th <- "global_MeanThickness"
 set.seed(42)
+
+output_folder <- params$output_folder
+centiles_path <- params$centiles_path
 ```
 
 # Define Paths
 ```{r, echo = TRUE}
 # set folder paths
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
-vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 
 # data paths
 qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
 gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/mpr/DATA.rds"
-# processed data path
-centiles_data_path <- paste0(vars_path, params$centiles_path)
 
 # output folder
-save_path <- params$output_folder
-if (!dir.exists(save_path)) dir.create(save_path)
+output_folder <- params$output_folder
+if (!dir.exists(output_folder)) dir.create(output_folder)
 ##  output subfolder paths
-csv_save_path <-  paste0(save_path, "results_csv/")
-if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
-plot_save_path <- paste0(save_path, "plots/")
-if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
-betas_folder <- paste0(csv_save_path, "full_betas/")
+csv_output_folder <-  paste0(output_folder, "results_csv/")
+if (!dir.exists(csv_output_folder)) dir.create(csv_output_folder)
+plot_output_folder <- paste0(output_folder, "plots/")
+if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
+betas_folder <- paste0(csv_output_folder, "full_betas/")
 if (!dir.exists(betas_folder)) dir.create(betas_folder)
-dkt_folder <- paste0(csv_save_path, "dkt_betas/")
+dkt_folder <- paste0(csv_output_folder, "dkt_betas/")
 if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
 
 ```
@@ -260,13 +270,13 @@ plot_data_aseg <- merge(name_mapping, ggseg::aseg, by.x = "region_name", by.y = 
 
 # Read in data files
 ```{r, echo = FALSE, echo = FALSE}
-all_vars <- read.csv(paste0(vars_path,"all_vars2025-12-05.csv")) %>% pull(x)
-global_vars <- read.csv(paste0(vars_path,"global_vars2025-12-05.csv")) %>% pull(x)
-vol_vars <- read.csv(paste0(vars_path,"vol_vars2025-12-05.csv")) %>% pull(x)
-sa_vars <- read.csv(paste0(vars_path,"sa_vars2025-12-05.csv")) %>% pull(x)
-th_vars <- read.csv(paste0(vars_path,"th_vars2025-12-05.csv")) %>% pull(x)
+all_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
 
-full_df <- read.csv(centiles_data_path) %>% select(-("X"))
+full_df <- read.csv(centiles_path) %>% select(-("X"))
 full_df <-  full_df %>% select(-(grep("_Z", names(full_df))))
 if (gamlss_models == TRUE) {
   gamlss_data <- readRDS(gamlss_data_path)
@@ -394,9 +404,9 @@ cor.test(full_df$sa.cmd, full_df$th.cmd)
 
 
 if(save_figs == TRUE){
-panel_save(vol_sa_cmd, "vol-sa-cmd", "pdf", plot_save_path)
-panel_save(vol_th_cmd, "vol-th-cmd", "pdf", plot_save_path)
-panel_save(sa_th_cmd, "sa-th-cmd", "pdf", plot_save_path)
+panel_save(vol_sa_cmd, "vol-sa-cmd", "pdf", plot_output_folder)
+panel_save(vol_th_cmd, "vol-th-cmd", "pdf", plot_output_folder)
+panel_save(sa_th_cmd, "sa-th-cmd", "pdf", plot_output_folder)
 }
 ```
 
@@ -524,7 +534,7 @@ thCMD_bw_p <- signif(cor_thCMD_bw$p.value, 3)
     plot.title = element_blank()
   ))
 if(save_figs == TRUE){
-panel_save(cor_thCMD_bw_plot, "cor-thcmd-bw", "pdf", plot_save_path)
+panel_save(cor_thCMD_bw_plot, "cor-thcmd-bw", "pdf", plot_output_folder)
 }
 
 # BWpercentile-ThicknessCMD
@@ -552,7 +562,7 @@ thCMD_bwp_p <- signif(cor_thCMD_bwp$p.value, 3)
     plot.title = element_blank()
   ))
 if(save_figs == TRUE){
-panel_save(cor_thCMD_bwp_plot, "cor-thcmd-bwp", "pdf", plot_save_path)
+panel_save(cor_thCMD_bwp_plot, "cor-thcmd-bwp", "pdf", plot_output_folder)
 }
 
 # GA-ThicknessCMD
@@ -580,7 +590,7 @@ thCMD_ga_p <- signif(cor_thCMD_ga$p.value, 3)
     plot.title = element_blank()
   ))
 if(save_figs == TRUE){
-panel_save(cor_thCMD_ga_plot, "cor-thcmd-ga", "pdf", plot_save_path)
+panel_save(cor_thCMD_ga_plot, "cor-thcmd-ga", "pdf", plot_output_folder)
 }
 ```
 
@@ -624,7 +634,7 @@ thCMD_bw_p <- signif(cor_thCMD_bw$p.value, 3)
     plot.title = element_blank()
   ))
 if(save_figs == TRUE){
-panel_save(cor_thCMD_bw_plot, "cor-thcmd-bw", "pdf", plot_save_path)
+panel_save(cor_thCMD_bw_plot, "cor-thcmd-bw", "pdf", plot_output_folder)
 }
 
 # BWpercentile-ThicknessCMD
@@ -734,9 +744,9 @@ th_cmd_plot$layers[[5]]$aes_params$hjust <- -3
 th_cmd_plot$layers[[5]]$aes_params$vjust <- 3
 
 if(save_figs == TRUE){
-panel_save(vol_cmd_plot, "vol-cmd-pca-plot", "pdf", plot_save_path)
-panel_save(sa_cmd_plot, "sa-cmd-pca-plot", "pdf", plot_save_path)
-panel_save(th_cmd_plot, "th-cmd-pca-plot", "pdf", plot_save_path)
+panel_save(vol_cmd_plot, "vol-cmd-pca-plot", "pdf", plot_output_folder)
+panel_save(sa_cmd_plot, "sa-cmd-pca-plot", "pdf", plot_output_folder)
+panel_save(th_cmd_plot, "th-cmd-pca-plot", "pdf", plot_output_folder)
 }
 ```
 
@@ -848,7 +858,7 @@ phenotype_labs <- c(
     ylab(""))
 
 if(save_figs == TRUE){
-panel_save(global_betas_plot, "global-betas-gabw", "pdf", plot_save_path)
+panel_save(global_betas_plot, "global-betas-gabw", "pdf", plot_output_folder)
 }
 ```
 
@@ -938,8 +948,8 @@ plot_data_aseg <- merge(ga_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "GA Volume"))
 
 if(save_figs == TRUE){
-panel_save(ga_dkt_vol_plot, "ga-dkt-vol", "pdf", plot_save_path)
-panel_save(ga_aseg_vol_plot , "ga-aseg-vol", "pdf", plot_save_path)
+panel_save(ga_dkt_vol_plot, "ga-dkt-vol", "pdf", plot_output_folder)
+panel_save(ga_aseg_vol_plot , "ga-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -1056,8 +1066,8 @@ plot_data_aseg <- merge(gabyage_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "GAxAge Interaction Volume"))
 
 if(save_figs == TRUE){
-panel_save(gabyage_dkt_vol_plot, "gabyage-dkt-vol", "pdf", plot_save_path)
-panel_save(gabyage_aseg_vol_plot , "gabyage-aseg-vol", "pdf", plot_save_path)
+panel_save(gabyage_dkt_vol_plot, "gabyage-dkt-vol", "pdf", plot_output_folder)
+panel_save(gabyage_aseg_vol_plot , "gabyage-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -1148,7 +1158,7 @@ plot_data_dkt <- merge(ga_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(ga_dkt_sa_plot, "ga-dkt-sa", "pdf", plot_save_path)
+panel_save(ga_dkt_sa_plot, "ga-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -1250,7 +1260,7 @@ plot_data_dkt <- merge(gabyage_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "GAxAge Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(gabyage_dkt_sa_plot, "gabyage-dkt-sa", "pdf", plot_save_path)
+panel_save(gabyage_dkt_sa_plot, "gabyage-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -1339,7 +1349,7 @@ plot_data_dkt <- merge(ga_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(ga_dkt_th_plot, "ga-dkt-th", "pdf", plot_save_path)
+panel_save(ga_dkt_th_plot, "ga-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -1443,7 +1453,7 @@ plot_data_dkt <- merge(gabyage_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "GAxAge Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(gabyage_dkt_th_plot, "gabyage-dkt-th", "pdf", plot_save_path)
+panel_save(gabyage_dkt_th_plot, "gabyage-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -1532,7 +1542,7 @@ plot_data_dkt <- merge(ga_th_young_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA Young, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(gayoung_dkt_th_plot, "ga-young-dkt-th", "pdf", plot_save_path)
+panel_save(gayoung_dkt_th_plot, "ga-young-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -1600,7 +1610,7 @@ plot_data_dkt <- merge(ga_th_old_sig_MC, ggseg::dk, by = "label")
   theme_void()+
   labs(title = "GA Old, Cortical Thickness"))
 if(save_figs == TRUE){
-panel_save(gaold_dkt_th_plot, "ga-old-dkt-th", "pdf", plot_save_path)
+panel_save(gaold_dkt_th_plot, "ga-old-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -1688,8 +1698,8 @@ plot_data_aseg <- merge(bw_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "BW Volume"))
 
 if(save_figs == TRUE){
-panel_save(bw_dkt_vol_plot, "bw-dkt-vol", "pdf", plot_save_path)
-panel_save(bw_aseg_vol_plot , "bw-aseg-vol", "pdf", plot_save_path)
+panel_save(bw_dkt_vol_plot, "bw-dkt-vol", "pdf", plot_output_folder)
+panel_save(bw_aseg_vol_plot , "bw-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -1806,8 +1816,8 @@ plot_data_aseg <- merge(bwbyage_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "BWxAge Interaction Median Volumes All, uncorrected"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage_dkt_vol_plot, "bwbyage-dkt-vol", "pdf", plot_save_path)
-panel_save(bwbyage_aseg_vol_plot , "bwbyage-aseg-vol", "pdf", plot_save_path)
+panel_save(bwbyage_dkt_vol_plot, "bwbyage-dkt-vol", "pdf", plot_output_folder)
+panel_save(bwbyage_aseg_vol_plot , "bwbyage-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -1898,7 +1908,7 @@ plot_data_dkt <- merge(bw_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(bw_dkt_sa_plot, "bw-dkt-sa", "pdf", plot_save_path)
+panel_save(bw_dkt_sa_plot, "bw-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -2000,7 +2010,7 @@ plot_data_dkt <- merge(bwbyage_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "BWxAge, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage_dkt_sa_plot, "bwbyage-dkt-sa", "pdf", plot_save_path)
+panel_save(bwbyage_dkt_sa_plot, "bwbyage-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -2089,7 +2099,7 @@ plot_data_dkt <- merge(bw_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bw_dkt_th_plot, "bw-dkt-th", "pdf", plot_save_path)
+panel_save(bw_dkt_th_plot, "bw-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -2193,7 +2203,7 @@ plot_data_dkt <- merge(bwbyage_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "BWxAge, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage_dkt_th_plot, "bwbyage-dkt-th", "pdf", plot_save_path)
+panel_save(bwbyage_dkt_th_plot, "bwbyage-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -2282,7 +2292,7 @@ plot_data_dkt <- merge(bw_th_young_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW Young, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bwyoung_dkt_th_plot, "bw-young-dkt-th", "pdf", plot_save_path)
+panel_save(bwyoung_dkt_th_plot, "bw-young-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -2350,7 +2360,7 @@ plot_data_dkt <- merge(bw_th_old_sig_MC, ggseg::dk, by = "label")
   theme_void()+
   labs(title = "BW Old, Cortical Thickness"))
 if(save_figs == TRUE){
-panel_save(bwold_dkt_th_plot, "bw-old-dkt-th", "pdf", plot_save_path)
+panel_save(bwold_dkt_th_plot, "bw-old-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -2438,8 +2448,8 @@ plot_data_aseg <- merge(ga.qc_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "GA, QC covar, Volume"))
 
 if(save_figs == TRUE){
-panel_save(ga.qc_dkt_vol_plot, "ga-qc-dkt-vol", "pdf", plot_save_path)
-panel_save(ga.qc_aseg_vol_plot , "ga-qc-aseg-vol", "pdf", plot_save_path)
+panel_save(ga.qc_dkt_vol_plot, "ga-qc-dkt-vol", "pdf", plot_output_folder)
+panel_save(ga.qc_aseg_vol_plot , "ga-qc-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -2556,8 +2566,8 @@ plot_data_aseg <- merge(gabyage.qc_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "GAxAge, QC Covar, Volume"))
 
 if(save_figs == TRUE){
-panel_save(gabyage.qc_dkt_vol_plot, "gabyage-qc-dkt-vol", "pdf", plot_save_path)
-panel_save(gabyage.qc_aseg_vol_plot , "gabyage-qc-aseg-vol", "pdf", plot_save_path)
+panel_save(gabyage.qc_dkt_vol_plot, "gabyage-qc-dkt-vol", "pdf", plot_output_folder)
+panel_save(gabyage.qc_aseg_vol_plot , "gabyage-qc-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -2648,7 +2658,7 @@ plot_data_dkt <- merge(ga.qc_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA, QC covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(ga.qc_dkt_sa_plot, "ga-qc-dkt-sa", "pdf", plot_save_path)
+panel_save(ga.qc_dkt_sa_plot, "ga-qc-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -2750,7 +2760,7 @@ plot_data_dkt <- merge(gabyage.qc_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "GAxAge, QC covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(gabyage.qc_dkt_sa_plot, "gabyage-qc-dkt-sa", "pdf", plot_save_path)
+panel_save(gabyage.qc_dkt_sa_plot, "gabyage-qc-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -2841,7 +2851,7 @@ plot_data_dkt <- merge(ga.qc_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA, QC covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(ga.qc_dkt_th_plot, "ga-qc-dkt-th", "pdf", plot_save_path)
+panel_save(ga.qc_dkt_th_plot, "ga-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -2945,7 +2955,7 @@ plot_data_dkt <- merge(gabyage.qc_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "GAxAge, QC covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(gabyage.qc_dkt_th_plot, "gabyage-qc-dkt-th", "pdf", plot_save_path)
+panel_save(gabyage.qc_dkt_th_plot, "gabyage-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -3034,7 +3044,7 @@ plot_data_dkt <- merge(ga.qc_th_young_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA, Young, QC Covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(ga.qcyoung_dkt_th_plot, "ga-young-qc-dkt-th", "pdf", plot_save_path)
+panel_save(ga.qcyoung_dkt_th_plot, "ga-young-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -3102,7 +3112,7 @@ plot_data_dkt <- merge(ga.qc_th_old_sig_MC, ggseg::dk, by = "label")
   theme_void()+
   labs(title = "GA, Old, QC Covar, Cortical Thickness"))
 if(save_figs == TRUE){
-panel_save(ga.qcold_dkt_th_plot, "ga-old-qc-dkt-th", "pdf", plot_save_path)
+panel_save(ga.qcold_dkt_th_plot, "ga-old-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -3191,8 +3201,8 @@ plot_data_aseg <- merge(bw.qc_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "GA Median Volume All"))
 
 if(save_figs == TRUE){
-panel_save(bw.qc_dkt_vol_plot, "bw-qc-dkt-vol", "pdf", plot_save_path)
-panel_save(bw.qc_aseg_vol_plot , "bw-qc-aseg-vol", "pdf", plot_save_path)
+panel_save(bw.qc_dkt_vol_plot, "bw-qc-dkt-vol", "pdf", plot_output_folder)
+panel_save(bw.qc_aseg_vol_plot , "bw-qc-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -3309,8 +3319,8 @@ plot_data_aseg <- merge(bwbyage.qc_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "BWAxAge, QC Covar, Volume"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage.qc_dkt_vol_plot, "ga-qcbyage-dkt-vol", "pdf", plot_save_path)
-panel_save(bwbyage.qc_aseg_vol_plot , "ga-qcbyage-aseg-vol", "pdf", plot_save_path)
+panel_save(bwbyage.qc_dkt_vol_plot, "ga-qcbyage-dkt-vol", "pdf", plot_output_folder)
+panel_save(bwbyage.qc_aseg_vol_plot , "ga-qcbyage-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -3401,7 +3411,7 @@ plot_data_dkt <- merge(bw.qc_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW, QC covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(bw.qc_dkt_sa_plot, "bw-qc-dkt-sa", "pdf", plot_save_path)
+panel_save(bw.qc_dkt_sa_plot, "bw-qc-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -3503,7 +3513,7 @@ plot_data_dkt <- merge(bwbyage.qc_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "BWxAge, QC covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage.qc_dkt_sa_plot, "bwbyage-qc-dkt-sa", "pdf", plot_save_path)
+panel_save(bwbyage.qc_dkt_sa_plot, "bwbyage-qc-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -3592,7 +3602,7 @@ plot_data_dkt <- merge(bw.qc_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW, QC covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bw.qc_dkt_th_plot, "bw-qc-dkt-th", "pdf", plot_save_path)
+panel_save(bw.qc_dkt_th_plot, "bw-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -3696,7 +3706,7 @@ plot_data_dkt <- merge(bwbyage.qc_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "BWxAge, QC covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage.qc_dkt_th_plot, "bwbyage-qc-dkt-th", "pdf", plot_save_path)
+panel_save(bwbyage.qc_dkt_th_plot, "bwbyage-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -3785,7 +3795,7 @@ plot_data_dkt <- merge(bw.qc_th_young_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW, Young, QC covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bw.qcyoung_dkt_th_plot, "bw-young-qc-dkt-th", "pdf", plot_save_path)
+panel_save(bw.qcyoung_dkt_th_plot, "bw-young-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -3853,7 +3863,7 @@ plot_data_dkt <- merge(bw.qc_th_old_sig_MC, ggseg::dk, by = "label")
   theme_void()+
   labs(title = "BW, Old, QC covar, Cortical Thickness"))
 if(save_figs == TRUE){
-panel_save(bw.qcold_dkt_th_plot, "bw-old-qc-dkt-th", "pdf", plot_save_path)
+panel_save(bw.qcold_dkt_th_plot, "bw-old-qc-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -3942,8 +3952,8 @@ plot_data_aseg <- merge(ga.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "GA, QC and global covar, Volume"))
 
 if(save_figs == TRUE){
-panel_save(ga.qc.global_dkt_vol_plot, "ga-qc-global-dkt-vol", "pdf", plot_save_path)
-panel_save(ga.qc.global_aseg_vol_plot , "ga-qc-global-aseg-vol", "pdf", plot_save_path)
+panel_save(ga.qc.global_dkt_vol_plot, "ga-qc-global-dkt-vol", "pdf", plot_output_folder)
+panel_save(ga.qc.global_aseg_vol_plot , "ga-qc-global-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -4060,8 +4070,8 @@ plot_data_aseg <- merge(gabyage.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "GAxAge, QC and global covar, Volume"))
 
 if(save_figs == TRUE){
-panel_save(gabyage.qc.global_dkt_vol_plot, "gabyage-qc-global-dkt-vol", "pdf", plot_save_path)
-panel_save(gabyage.qc.global_aseg_vol_plot , "gabyage-qc-global-aseg-vol", "pdf", plot_save_path)
+panel_save(gabyage.qc.global_dkt_vol_plot, "gabyage-qc-global-dkt-vol", "pdf", plot_output_folder)
+panel_save(gabyage.qc.global_aseg_vol_plot , "gabyage-qc-global-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -4153,7 +4163,7 @@ plot_data_dkt <- merge(ga.qc.global_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA, QC and global covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(ga.qc.global_dkt_sa_plot, "ga-qc-global-dkt-sa", "pdf", plot_save_path)
+panel_save(ga.qc.global_dkt_sa_plot, "ga-qc-global-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -4255,7 +4265,7 @@ plot_data_dkt <- merge(gabyage.qc.global_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "GAxAge, QC and global covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(gabyage.qc_dkt_sa_plot, "gabyage-qc-global-dkt-sa", "pdf", plot_save_path)
+panel_save(gabyage.qc_dkt_sa_plot, "gabyage-qc-global-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -4345,7 +4355,7 @@ plot_data_dkt <- merge(ga.qc.global_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA, QC and global covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(ga.qc.global_dkt_th_plot, "ga-qc-global-dkt-th", "pdf", plot_save_path)
+panel_save(ga.qc.global_dkt_th_plot, "ga-qc-global-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -4449,7 +4459,7 @@ plot_data_dkt <- merge(gabyage.qc.global_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "GAxAge, QC and global covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(gabyage.qc.global_dkt_th_plot, "gabyage-qc-global-dkt-th", "pdf", plot_save_path)
+panel_save(gabyage.qc.global_dkt_th_plot, "gabyage-qc-global-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -4538,7 +4548,7 @@ plot_data_dkt <- merge(ga.qc.global_th_young_sig_MC, ggseg::dk, by = "label")
   labs(title = "GA, Young, QC and global covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(ga.qc.globalyoung_dkt_th_plot, "ga-qc-meanth-young-dkt-th", "pdf", plot_save_path)
+panel_save(ga.qc.globalyoung_dkt_th_plot, "ga-qc-meanth-young-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -4606,7 +4616,7 @@ plot_data_dkt <- merge(ga.qc.global_th_old_sig_MC, ggseg::dk, by = "label")
   theme_void()+
   labs(title = "GA, Old, QC and global covar, Cortical Thickness"))
 if(save_figs == TRUE){
-panel_save(ga.qc.globalold_dkt_th_plot, "ga-qc-meanth-old-dkt-th", "pdf", plot_save_path)
+panel_save(ga.qc.globalold_dkt_th_plot, "ga-qc-meanth-old-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -4695,8 +4705,8 @@ plot_data_aseg <- merge(bw.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "BW, QC and global covar, Volume"))
 
 if(save_figs == TRUE){
-panel_save(bw.qc.global_dkt_vol_plot, "bw-qc-global-dkt-vol", "pdf", plot_save_path)
-panel_save(bw.qc.global_aseg_vol_plot , "bw-qc-global-aseg-vol", "pdf", plot_save_path)
+panel_save(bw.qc.global_dkt_vol_plot, "bw-qc-global-dkt-vol", "pdf", plot_output_folder)
+panel_save(bw.qc.global_aseg_vol_plot , "bw-qc-global-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -4813,8 +4823,8 @@ plot_data_aseg <- merge(bwbyage.qc.global_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "BWxAge, QC and global covar, Volume"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage.qc.global_dkt_vol_plot, "bwbyage-qc-global-dkt-vol", "pdf", plot_save_path)
-panel_save(bwbyage.qc.global_aseg_vol_plot , "bwbyage-qc-global-aseg-vol", "pdf", plot_save_path)
+panel_save(bwbyage.qc.global_dkt_vol_plot, "bwbyage-qc-global-dkt-vol", "pdf", plot_output_folder)
+panel_save(bwbyage.qc.global_aseg_vol_plot , "bwbyage-qc-global-aseg-vol", "pdf", plot_output_folder)
 }
 ```
 
@@ -4906,7 +4916,7 @@ plot_data_dkt <- merge(bw.qc.global_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW, QC and global covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(bw.qc.global_dkt_sa_plot, "bw-qc-global-dkt-sa", "pdf", plot_save_path)
+panel_save(bw.qc.global_dkt_sa_plot, "bw-qc-global-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -5008,7 +5018,7 @@ plot_data_dkt <- merge(bwbyage.qc.global_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "BWxAge, QC and global covar, Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage.qc_dkt_sa_plot, "bwbyage-qc-global-dkt-sa", "pdf", plot_save_path)
+panel_save(bwbyage.qc_dkt_sa_plot, "bwbyage-qc-global-dkt-sa", "pdf", plot_output_folder)
 }
 ```
 
@@ -5098,7 +5108,7 @@ plot_data_dkt <- merge(bw.qc.global_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW, QC and global covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bw.qc.global_dkt_th_plot, "bw-qc-global-dkt-th", "pdf", plot_save_path)
+panel_save(bw.qc.global_dkt_th_plot, "bw-qc-global-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -5202,7 +5212,7 @@ plot_data_dkt <- merge(bwbyage.qc.global_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "BWxAge, QC and global covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bwbyage.qc.global_dkt_th_plot, "bwbyage-qc-global-dkt-th", "pdf", plot_save_path)
+panel_save(bwbyage.qc.global_dkt_th_plot, "bwbyage-qc-global-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -5291,7 +5301,7 @@ plot_data_dkt <- merge(bw.qc.global_th_young_sig_MC, ggseg::dk, by = "label")
   labs(title = "BW, Young, QC and global covar, Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(bw.qc.globalyoung_dkt_th_plot, "bw-qc-meanth-young-dkt-th", "pdf", plot_save_path)
+panel_save(bw.qc.globalyoung_dkt_th_plot, "bw-qc-meanth-young-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -5359,7 +5369,7 @@ plot_data_dkt <- merge(bw.qc.global_th_old_sig_MC, ggseg::dk, by = "label")
   theme_void()+
   labs(title = "BW, Old, QC and global covar, Cortical Thickness"))
 if(save_figs == TRUE){
-panel_save(bw.qc.globalold_dkt_th_plot, "bw-qc-meanth-old-dkt-th", "pdf", plot_save_path)
+panel_save(bw.qc.globalold_dkt_th_plot, "bw-qc-meanth-old-dkt-th", "pdf", plot_output_folder)
 }
 ```
 
@@ -5412,7 +5422,7 @@ beta_scale_vert <- ggplot(df, aes(x, y, fill = beta)) +
 beta_scale_hor
 beta_scale_vert
 if(save_figs == TRUE){
-panel_save(beta_scale_hor, "beta-scale-hor", "pdf", plot_save_path)
-  panel_save(beta_scale_vert, "beta-scale-vert", "pdf", plot_save_path)
+panel_save(beta_scale_hor, "beta-scale-hor", "pdf", plot_output_folder)
+  panel_save(beta_scale_vert, "beta-scale-vert", "pdf", plot_output_folder)
 }
 ```

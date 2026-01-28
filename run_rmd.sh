@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=render_rmd
-#SBATCH --output=render_rmd_%x_%j.out
-#SBATCH --error=render_rmd_%x_%j.err
+#SBATCH --output=/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/logs/render_rmd_%x_%j.out
+#SBATCH --error=/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/logs/render_rmd_%x_%j.err
 #SBATCH --time=02:00:00
 #SBATCH --mem=8G
 #SBATCH --cpus-per-task=1

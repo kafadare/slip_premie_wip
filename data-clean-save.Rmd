@@ -5,37 +5,46 @@ date: "2025-11-18"
 output: html_document
 editor_options: 
   chunk_output_type: console
+params:
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/"
+  centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_median_centiles.csv"
+  slip_release_folder: "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/"
+  type: "median"  
 ---
-#SETUP
-##controls
+
+# Define params if they do not exist
 ```{r}
+if (!exists("params")) {
+  params <- list(
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/",
+  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_median_centiles.csv",
+  slip_release_folder = "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/",
+  type = "median"
+  )
+}
+``` 
+
+# Controls
+```{r setup, echo = TRUE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
 #set command
 save_tables <- TRUE
 plot <- TRUE
 save_figs <- TRUE
-vars_find <- FALSE
+
+set.seed(42)
+
+output_folder <- params$output_folder
+centiles_path <- params$centiles_path
+slip_release_folder <- params$slip_release_folder
+type <- params$type
 ```
-##Define Paths and Load Packages
-```{r, include = FALSE}
-knitr::opts_chunk$set(echo = TRUE)
 
-#define paths
-code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
-data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
-data_gaonly_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/slip_ga_median_centiles_20251203.csv"
-data_liza_mpr_path <- "/mnt/isilon/bgdlab_processing/Liza/SLIP_nnUNet_braincharts/code/gamlss/OUT/slip_mpr_aparc_global_centiles_qnorm_20251209.csv"
-data_liza_median_path <- "/mnt/isilon/bgdlab_processing/Liza/SLIP_nnUNet_braincharts/code/gamlss/OUT/slip_median_aparc_global_centiles_qnorm_20251209.csv"
-qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
-vars_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/"
-## output/save paths
-csv_save_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-all/results_csv/"
-plot_save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-all/plots/"
-
-betas_folder <- paste0(csv_save_path, "full_betas/")
-if (!dir.exists(betas_folder)) dir.create(betas_folder)
-dkt_folder <- paste0(csv_save_path, "dkt_betas/")
-if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
-
+# Load packages
+```{r}
 source(paste0(code_path,"slip_data_utils.R"))
 
 #Load libraries
@@ -44,7 +53,7 @@ library(magrittr)
 library(readr)
 library(stringr)
 library(tidyr)
-library(gamlssTools) #Margaret's package
+library(glue)
 #For figures/plotting
 library(ggplot2)
 library(gridExtra)
@@ -58,9 +67,27 @@ library(growthstandards)
 library(gtsummary)
 library(svglite)
 ```
-##Load Data
+
+# Define Paths
+```{r, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#define paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+qc_metrics_path <- glue("{slip_release_folder}derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv")
+participants_path <- glue("{slip_release_folder}BIDS/participants.tsv")
+
+## output/save paths
+if (!dir.exists(output_folder)) dir.create(output_folder)
+csv_save_path <- glue("{output_folder}data_clean/")
+if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
+plot_save_path <- paste0(output_folder, "plots/data-cleanup-plots/")
+if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
+```
+
+# Load Data
 ```{r, echo = FALSE}
-participants <- read.table(paste0(data_path, "participants.tsv"),
+participants <- read.table(participants_path,
                  sep = "\t",
                  header = TRUE,
                  stringsAsFactors = FALSE,
@@ -77,15 +104,10 @@ qc_metrics <- read.csv(qc_metrics_path) %>% filter(euler_mean > -60 &
                                                      qc_putamen_pallidum > 0.65 &
                                                      qc_hippocampus_amygdala > 0.65)
 
-median_cent <- read.csv(paste0(data_path, "slip_median_centiles_20250912.csv"))
-median2_cent <- read.csv(paste0(data_path, "slip_median2_centiles_20250912.csv"))
-mpr_cent <- read.csv(paste0(data_path, "slip_mpr_centiles_20250912.csv"))
-mpr2_cent <- read.csv(paste0(data_path, "slip_mpr2_centiles_20250912.csv"))
-medianga_cent <- read.csv(data_gaonly_path)
-liza_median_cent <- read.csv(data_liza_median_path)
-liza_mpr_cent <- read.csv(data_liza_mpr_path)
+centiles <- read.csv(centiles_path) %>% select(-X)
 ```
-#QC inter-variable correlations
+
+# QC inter-variable correlations
 ```{r}
 #correlation matrix and visualization
 cor_matrix <- cor(qc_metrics[,names(qc_metrics)[!grepl("_id$", names(qc_metrics))]], use = "pairwise.complete.obs")
@@ -99,30 +121,10 @@ ggcorrplot(
   lab = TRUE
 )
 ```
-#Define IDP variable names
-```{r}
-if (vars_find == TRUE){
-  vol_vars <- c(names(median_cent)[grepl("aparc_GrayVol", names(median_cent))],
-                names(median_cent)[grepl("aseg", names(median_cent))])
-  vol_vars <- vol_vars[!vol_vars %in% c("aseg_Left_Cerebral_Cortex", "aseg_Left_Cerebral_White_Matter",
-                                        "aseg_Right_Cerebral_Cortex", "aseg_Right_Cerebral_White_Matter",
-                                        "aseg_CSF" )]
-  sa_vars <- c(names(median_cent)[grepl("aparc_SurfArea", names(median_cent))])
-  th_vars <- c(names(median_cent)[grepl("aparc_ThickAvg", names(median_cent))])
-  global_vars <- c(names(median_cent)[grepl("global", names(median_cent))])
-  all_vars <- c(vol_vars, sa_vars, th_vars, global_vars)
-  
-  if (save_tables == TRUE){
-    write.csv(all_vars, paste0(csv_save_path, "all_vars", Sys.Date(), ".csv"))
-    write.csv(global_vars, paste0(csv_save_path, "global_vars", Sys.Date(), ".csv"))
-    write.csv(vol_vars, paste0(csv_save_path, "vol_vars", Sys.Date(), ".csv"))
-    write.csv(sa_vars, paste0(csv_save_path, "sa_vars", Sys.Date(), ".csv"))
-    write.csv(th_vars, paste0(csv_save_path, "th_vars", Sys.Date(), ".csv"))
-  }
-}
-```
-#DATA PREP
-##QC metrics prep
+
+# DATA PREP
+
+## QC metrics prep
 ```{r}
 ##group by session-id and take median of euler_mean
 qc_metrics <- qc_metrics %>%
@@ -132,7 +134,8 @@ qc_metrics <- qc_metrics %>%
   left_join(qc_metrics, by = "session_id") %>%
   rename(participant_id = subject_id)
 ```
-##Participant DF prep
+
+## Participant DF prep
 Check if any participant has separate values recorded for these variables of interest across session entries
 sub-HM2BYW325 has NA and 36 recorded for GA in two separate sessions, otherwise no other examples in SLIP 25-03
 ```{r}
@@ -150,7 +153,8 @@ sub-HM2BYW325 has NA and 36 recorded for GA in two separate sessions, otherwise 
      filter(n_var > 1)
 #
 ```
-###Replace missing bw/ga values for participants across sessions -- if more than one value recorded, then take the mean
+
+### Replace missing bw/ga values for participants across sessions -- if more than one value recorded, then take the mean
 ```{r}
 participants <- participants %>%
     group_by(participant_id) %>%
@@ -176,123 +180,66 @@ participants <- participants %>%
     ) %>%
     ungroup()
 ```
-##run data cleanup
+
+## check for extra variables in the centiles df
 ```{r}
-liza_median <- slip_centdf_clean(liza_median_cent, participants, qc_metrics, type = "median")
-liza_median_distinct <- liza_median$distinct
-liza_median_all <- liza_median$all
-rm(liza_median)
-liza_mpr <- slip_centdf_clean(liza_mpr_cent, participants, qc_metrics, type = "mpr")
-liza_mpr_distinct <- liza_mpr$distinct
-liza_mpr_all <- liza_mpr$all
-rm(liza_mpr)
-
-median <- slip_centdf_clean(median_cent, participants, qc_metrics, type = "median")
-median_distinct <- median$distinct
-median_all <- median$all
-rm(median)
-mpr <- slip_centdf_clean(mpr_cent, participants, qc_metrics, type = "mpr")
-mpr_distinct <- mpr$distinct
-mpr_all <- mpr$all
-rm(mpr)
-
-median2 <- slip_centdf_clean(median2_cent, participants, qc_metrics, type = "median")
-median2_distinct <- median2$distinct
-median2_all <- median2$all
-rm(median2)
-mpr2 <- slip_centdf_clean(mpr2_cent, participants, qc_metrics, type = "mpr2")
-mpr2_distinct <- mpr2$distinct
-mpr2_all <- mpr2$all
-rm(mpr2)
-
-medianga_cent$gestational_age <- NULL
-medianga <- slip_centdf_clean(medianga_cent, participants, qc_metrics, type = "median")
-medianga_distinct <- medianga$distinct
-medianga_all <- medianga$all
-rm(medianga)
+vars_to_select <- c(all_vars, "participant_id", "session_id", "site", "sex", "age_days", "avg_grade", "dx")
+vars_extra <- names(centiles)[!(names(centiles) %in% vars_to_select)]
+print(glue("Additional variables in the centiles csv provided: {vars_extra}"))
 ```
-#GA and BW quality control
+## run data cleanup
+```{r}
+print(glue("ALL Centiles DF dimensions before 'cleanup' script: {c(dim(centiles))}"))
+
+centiles <- centiles %>% select(all_of(vars_to_select))
+clean_centiles <- slip_centdf_clean(centiles, participants, qc_metrics, type = type)
+centiles_distinct <- clean_centiles$distinct
+centiles_all <- clean_centiles$all
+print(glue("DISTINCT Centiles DF dimensions after 'cleanup' script: {c(dim(centiles_distinct))}"))
+print(glue("ALL Centiles DF dimensions before 'cleanup' script: {c(dim(centiles_all))}"))
+
+rm(centiles)
+```
+
+# BW/GA QC
+
+##BW/GA numbers before exclusions
+```{r}
+print("BEFORE EXCLUSIONS")
+print(glue("Within DISTINCT participants; participants with BW available {sum(!is.na(centiles_distinct$birth_weight_kg))}"))
+print(glue("Within DISTINCT participants; participants with GA available {sum(!is.na(centiles_distinct$gestational_age))}"))
+```
+
+## exclusions
 ```{r}
 ##set bw > 1000kg to NA
-bw_absurd <- sum(median_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
-print(paste0("Number of data point set to NA for recorded BW > 1000kg: ", bw_absurd))
-median_distinct$birth_weight_kg[median_distinct$birth_weight_kg>1000] <- NA
+bw_absurd <- sum(centiles_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
+print(paste0("WITHIN DISTINCT DF: Number of data points set to NA for recorded BW > 1000kg: ", bw_absurd))
+centiles_distinct$birth_weight_kg[centiles_distinct$birth_weight_kg>1000] <- NA
 ##remove >4SDs
-bw_mean <- mean(median_distinct$birth_weight_kg, na.rm = TRUE)
-bw_sd <- sd(median_distinct$birth_weight_kg, na.rm = TRUE)
-
+bw_mean <- mean(centiles_distinct$birth_weight_kg, na.rm = TRUE)
+bw_sd <- sd(centiles_distinct$birth_weight_kg, na.rm = TRUE)
 #apply QC function
-liza_median_distinct <- slip_bwga_qc(cent_df = liza_median_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-liza_median_all <- slip_bwga_qc(cent_df = liza_median_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
-liza_mpr_distinct <- slip_bwga_qc(cent_df = liza_mpr_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-liza_mpr_all <- slip_bwga_qc(cent_df = liza_mpr_all, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-
-#apply QC function
-median_distinct <- slip_bwga_qc(cent_df = median_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-median_all <- slip_bwga_qc(cent_df = median_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
-mpr_distinct <- slip_bwga_qc(cent_df = mpr_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-mpr_all <- slip_bwga_qc(cent_df = mpr_all, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-
-#apply QC function
-median2_distinct <- slip_bwga_qc(cent_df = median2_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-median2_all <- slip_bwga_qc(cent_df = median2_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
-mpr2_distinct <- slip_bwga_qc(cent_df = mpr2_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-mpr2_all <- slip_bwga_qc(cent_df = mpr2_all, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-
-#apply QC function
-medianga_distinct <- slip_bwga_qc(cent_df = medianga_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-medianga_all <- slip_bwga_qc(cent_df = medianga_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
+centiles_distinct <- slip_bwga_qc(cent_df = centiles_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
+centiles_all <- slip_bwga_qc(cent_df = centiles_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
 ```
-##numbers after exclusions
+
+## BW/GA numbers after exclusions
 ```{r}
-#Liza Samples
-##median
-sum(!is.na(liza_median_distinct$birth_weight_kg))
-sum(!is.na(liza_median_distinct$gestational_age))
-##mpr
-sum(!is.na(liza_mpr_distinct$birth_weight_kg))
-sum(!is.na(liza_mpr_distinct$gestational_age))
+print("AFTER EXCLUSIONS")
+print(glue("Within DISTINCT participants; participants with BW available {sum(!is.na(centiles_distinct$birth_weight_kg))}"))
+print(glue("Within DISTINCT participants; participants with GA available {sum(!is.na(centiles_distinct$gestational_age))}"))
 ```
 
-#SAVE Data Frames
+# SAVE Data Frames
 ```{r}
 if (save_tables == TRUE){
 #one row per participant
-median_filename <- paste0(vars_save_path, "median_distinct_clean_", Sys.Date(), ".csv")
-write.csv(median_distinct, median_filename)
-
-medianga_filename <- paste0(vars_save_path, "median_ga_distinct_clean_", Sys.Date(), ".csv")
-write.csv(medianga_distinct, medianga_filename)
-
-median2_filename <- paste0(vars_save_path, "median2_distinct_clean_", Sys.Date(), ".csv")
-write.csv(median2_distinct, median2_filename)
-mpr_filename <- paste0(vars_save_path, "mpr_distinct_clean_", Sys.Date(), ".csv")
-write.csv(mpr_distinct, mpr_filename)
-mpr2_filename <- paste0(vars_save_path, "mpr2_distinct_clean_", Sys.Date(), ".csv")
-write.csv(mpr2_distinct, mpr2_filename)
-liza_median_distinct_filename <- paste0(vars_save_path, "liza_median_distinct_clean_", Sys.Date(), ".csv")
-write.csv(liza_median_distinct, liza_median_distinct_filename)
-liza_mpr_distinct_filename <- paste0(vars_save_path, "liza_mpr_distinct_clean_", Sys.Date(), ".csv")
-write.csv(liza_mpr_distinct, liza_mpr_distinct_filename)
-
-#all data, including repeated measures
-median_all_filename <- paste0(vars_save_path, "median_all_clean_", Sys.Date(), ".csv")
-write.csv(median_all, median_all_filename)
-medianga_all_filename <- paste0(vars_save_path, "median_ga_all_clean_", Sys.Date(), ".csv")
-write.csv(medianga_all, medianga_all_filename)
-median2_all_filename <- paste0(vars_save_path, "median2_all_clean_", Sys.Date(), ".csv")
-write.csv(median2_all, median2_all_filename)
-
-mpr_all_filename <- paste0(vars_save_path, "mpr_all_clean_", Sys.Date(), ".csv")
-write.csv(mpr_all, mpr_all_filename)
-mpr2_all_filename <- paste0(vars_save_path, "mpr2_all_clean_", Sys.Date(), ".csv")
-write.csv(mpr2_all, mpr2_all_filename)
-
-liza_median_all_clean_filename <- paste0(vars_save_path, "liza_median_all_clean_", Sys.Date(), ".csv")
-write.csv(liza_median_all, liza_median_all_clean_filename)
-liza_mpr_all_clean_filename <- paste0(vars_save_path, "liza_mpr_all_clean_", Sys.Date(), ".csv")
-write.csv(liza_mpr_all, liza_mpr_all_clean_filename)
-
+distinct_filename <- paste0(csv_save_path, "centiles_distinct_", Sys.Date(), ".csv")
+write.csv(centiles_distinct, distinct_filename)
+#all rows, included repeats of participants at different timepoints/ages
+all_filename <- paste0(csv_save_path, "centiles_all_", Sys.Date(), ".csv")
+write.csv(centiles_all, all_filename)
 }
 ```
 

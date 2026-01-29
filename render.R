@@ -104,7 +104,7 @@ if(save_markdown_flag == 1){
     params = params_pass,
     quiet = FALSE
   )
-  file.remove(output_file)
+  file.remove(paste0(markdown_output_dir, output_file))
   print("Markdown rendered, output file deleted as per save_markdown_flag == 0.")
 } else {
   stop(paste0("Save_markdown_flag (argument order three) must be 0/1 flag. You provided: ", save_markdown_flag))

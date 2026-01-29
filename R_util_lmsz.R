@@ -280,12 +280,14 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
     select(adjusted_age_days_log, sex,
            centile_cat,
            value = LMSz_input_centile) %>% 
+    rename(AgeTransformed = adjusted_age_days_log) %>%
     distinct() %>%
     as.data.frame()
   
   backtransformed_fans <- backtransform_centiles(NEWData, orig_fit$param)
   
   backtransformed_fans <- backtransformed_fans %>%
+    rename(adjusted_age_days_log = AgeTransformed) %>%
     select(adjusted_age_days_log, sex, centile_cat, 
            LMSz_fans = PRED.pop)
   

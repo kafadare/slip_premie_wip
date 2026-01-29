@@ -12,7 +12,7 @@ params:
 if (!exists("params")) {
   params <- list(
   output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/",
-  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/centiles_distinct_2026-01-27.csv" 
+  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-27.csv" 
   )
 }
 ``` 
@@ -40,7 +40,7 @@ centiles_path <- params$centiles_path
 # Define Paths
 ```{r, echo = TRUE}
 # set folder paths
-code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+code_path <- "/mcd dnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
 vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 
 # data paths
@@ -270,7 +270,7 @@ plot_data_aseg <- merge(name_mapping, ggseg::aseg, by.x = "region_name", by.y = 
 
 # Read in data files
 ```{r, echo = FALSE, echo = FALSE}
-all_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
 global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
 vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
 sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
@@ -285,9 +285,9 @@ if (gamlss_models == TRUE) {
 
 # Find if any models don't exist, remove from variable list for downstream analysis.
 ```{r, echo = FALSE}
-vars_missing <- all_vars[!(all_vars %in% names(full_df))]
+vars_missing <- full_vars[!(full_vars %in% names(full_df))]
 print(paste0("Phenotype Variables Missing in the Data Provided: ", paste(vars_missing, collapse = ", ")))
-all_vars <- all_vars[!(all_vars %in% vars_missing)]
+full_vars <- full_vars[!(full_vars %in% vars_missing)]
 global_vars <- global_vars[!(global_vars %in% vars_missing)]
 vol_vars <- vol_vars[!(vol_vars %in% vars_missing)]
 sa_vars <- sa_vars[!(sa_vars %in% vars_missing)]
@@ -296,9 +296,9 @@ th_vars <- th_vars[!(th_vars %in% vars_missing)]
 
 # Find any cells with missing data within the centile scores
 ```{r, echo = FALSE}
-missing_data_sessions <- full_df[rowSums(is.na(full_df[, all_vars, drop = FALSE])) > 0, ]$session_id
+missing_data_sessions <- full_df[rowSums(is.na(full_df[, full_vars, drop = FALSE])) > 0, ]$session_id
 print(paste0("Number of sessions with any missing centile data: ", dim(missing_data_sessions)[1]))
-missing_data_sessions_df <- full_df %>% filter(session_id %in% missing_data_sessions) %>% select(any_of(c("session_id", "participant_id", "age_years", all_vars)))
+missing_data_sessions_df <- full_df %>% filter(session_id %in% missing_data_sessions) %>% select(any_of(c("session_id", "participant_id", "age_years", full_vars)))
 
 # remove sessions with any missing data (especially for calculating CMDs)
 full_df <- full_df[!(full_df$session_id %in% missing_data_sessions),]
@@ -464,7 +464,7 @@ ggcorrplot(
 ```{r, echo = FALSE}
 # zscore centiles and other variables of interest
 df.zscore <- full_df %>%
-  mutate(across(all_of(c(all_vars, "bweight_percentile")), qnorm)) %>%
+  mutate(across(all_of(c(full_vars, "bweight_percentile")), qnorm)) %>%
   mutate(across(all_of(c("gestational_age", "birth_weight_kg", "age_days", "age_years", "adjusted_age_in_days", "adjusted_age_years", "qc_var", "vol.cmd", "sa.cmd", "th.cmd")), scale))
 # set sex and preterm as factor
 df.zscore$sex <- as.factor(full_df$sex)
@@ -473,7 +473,7 @@ df.zscore$preterm <- as.factor(full_df$preterm)
 
 ## find Inf cells, make a table of N per phenotype, then convert to NaN
 ```{r, echo = FALSE}
-inf_nan_table <- as.data.frame(t(sapply(df.zscore[c(all_vars, "bweight_percentile")], function(x){
+inf_nan_table <- as.data.frame(t(sapply(df.zscore[c(full_vars, "bweight_percentile")], function(x){
   c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
 })))
 max(inf_nan_table$inf)
@@ -485,7 +485,7 @@ inf_nan_table %>% filter(inf > 0)
 ## set Inf cells to NaN
 ```{r, echo = FALSE}
 df.zscore <- df.zscore %>% 
-  mutate(across(all_of(c(all_vars, "bweight_percentile")), ~ replace(., is.infinite(.), NaN)))
+  mutate(across(all_of(c(full_vars, "bweight_percentile")), ~ replace(., is.infinite(.), NaN)))
 ```
 
 ## create dfs grouped by age at scan
@@ -730,7 +730,7 @@ MD <- sqrt(mahalanobis(sub_df, center = mu, cov = Sigma))
 print(plot)
 return(plot)
 }
-# df_noNAs <- df.zscore %>% select(all_vars) %>% na.omit()
+# df_noNAs <- df.zscore %>% select(full_vars) %>% na.omit()
 ## df, var_names, title, subject_row_no
 # vol_cmd_plot <- make_cmd_fig(df_noNAs, vol_vars_cortical, "CMD Cortical Volume", vol_subject_row)
 (vol_cmd_plot <- make_cmd_fig(full_df, vol_vars_cortical, "CMD Cortical Volume", vol_subject_row))

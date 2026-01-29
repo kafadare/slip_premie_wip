@@ -51,16 +51,19 @@ code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
 vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 
 # raw data paths
-data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
+raw_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/slip_median.csv"
 
-centiles_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/median_distinct_clean_2026-01-08.csv"
+centiles_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-29.csv"
 models_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
 
 # output folder
-save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median/"
+save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_25.11/"
 
 ##  output subfolder paths
 csv_save_path <-  paste0(save_path, "results_csv/")
+if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
+plot_save_path <- paste0(save_path, "plots/")
+if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
 ```
 
 ## Load custom functions
@@ -73,11 +76,6 @@ panel_save <- function(plot, filename, extension, folder){
 source(glue("{code_path}R_util_lmsz.R"))
 ```
 
-# LOAD CLEAN DATA
-```{r}
-df <- read.csv(centiles_data_path) %>% select(-"X")
-```
-
 # Load Phenotype Variable Names
 ```{r}
 full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
@@ -85,6 +83,23 @@ global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
 vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
 sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
 th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+```
+# Load Clean Data
+```{r}
+df <- read.csv(centiles_data_path) %>% select(-"X") #%>%
+  #rename_with(~paste0(.x, ".cent"), all_of(full_vars))
+```
+
+# Load Raw Data and merge
+```{r}
+df_raw <- read.csv(raw_data_path) %>% select(all_of(c(full_vars, "participant_id", "session_id", "sex", "age_days",
+                                                      "site", "avg_grade", "age_at_scan"))) %>%
+  mutate(across(all_of(full_vars), ~c(scale(.)), .names = "{.col}.raw_normalised")) %>%
+  rename_with(~paste0(.x, ".raw"), all_of(full_vars))
+
+shared_names <- intersect(names(df_raw), names(df))
+
+df <- merge(df, df_raw, by = shared_names, all.x = FALSE, all.y = FALSE)
 ```
 
 # Z-score Centiles, remove Inf Cells
@@ -244,7 +259,7 @@ for (pheno in full_vars) {
 
   # Update LMSz quantiles
   df_tmp <- df_tmp %>%
-        add_column(!!glue("{pheno}.lmsz") := pred_og_centiles(growthChartModel,
+        add_column(!!glue("{pheno}.lmsz") := pred_og_centiles(fin_model,
                                                                           df_tmp)) %>%
         select(-c(pheno, zscore, adjusted_age_years))
   
@@ -266,8 +281,14 @@ df_vpm <- df_subset
 
 ### check betas across vars and intercept to see if there are any phenotypes that are wack
 ```{r}
-# CT.rh_superiorparietal is an outlier exclude it
-#models[models_vpm$feature == #"CT.rh_superiorparietal",c("AIC","BIC",colnames(models)[grepl("_coef",colnames(models))])] <- NA
+hist(models_vpm$intercept_coef)
+hist(models_vpm$intercept_sigma_coef)
+
+hist(models_vpm$age_coef)
+hist(models_vpm$age_sigma_coef)
+
+hist(models_vpm$sex_coef)
+hist(models_vpm$sex_sigma_coef)
 ```
 
 ### Save Models and Centiles
@@ -382,7 +403,7 @@ for (pheno in full_vars) {
 
   # Update LMSz quantiles
   df_tmp <- df_tmp %>%
-        add_column(!!glue("{pheno}.lmsz") := pred_og_centiles(growthChartModel,
+        add_column(!!glue("{pheno}.lmsz") := pred_og_centiles(fin_model,
                                                                           df_tmp)) %>%
         select(-c(pheno, zscore, adjusted_age_years))
   
@@ -401,10 +422,16 @@ for (pheno in full_vars) {
 }
 df_lpm <- df_subset
 ```
-
+### check betas across vars and intercept to see if there are any phenotypes that are wack
 ```{r}
-# CT.rh_superiorparietal is an outlier exclude it
-#models[models_vpm$feature == #"CT.rh_superiorparietal",c("AIC","BIC",colnames(models)[grepl("_coef",colnames(models))])] <- NA
+hist(models_lpm$intercept_coef)
+hist(models_lpm$intercept_sigma_coef)
+
+hist(models_lpm$age_coef)
+hist(models_lpm$age_sigma_coef)
+
+#hist(models_lpm$sex_coef) #(none)
+hist(models_lpm$sex_sigma_coef)
 ```
 
 ### Save Models and Centiles
@@ -413,10 +440,90 @@ write_csv(models_lpm, glue("{csv_save_path}lmsz_models_lpm.csv"))
 write_csv(df_lpm, glue("{csv_save_path}lmsz_adjusted_centiles_lpm.csv"))
 ```
 
+
+
 # Visualize Model Output on Brain Maps
+## Plots specifications
+```{r, echo = TRUE}
+limits = c(-3, 3)
+low_color = "#4878CF"
+mid_color = "white"
+high_color = "#D65F5F"
+```
+## add label column to match to ggseg
+```{r, echo = FALSE}
+#models vpm
+models_vpm$domain <- ifelse(grepl("global", models_vpm$feature), "global",
+                            ifelse(grepl("GrayVol", models_vpm$feature), "vol",
+                            ifelse(grepl("SurfArea", models_vpm$feature), "sa",
+                                   ifelse(grepl("ThickAvg", models_vpm$feature), "th",
+                                          ifelse(grepl("aseg", models_vpm$feature), "aseg", NA)))))
+cols_edit <- grepl("aseg(?!_CC)", models_vpm$feature, perl = TRUE)
 
-## Plot intercept value of all phenotypes
+models_vpm$label <- models_vpm$feature %>% 
+  sub("aparc_GrayVol_", "", .) %>%
+  sub("aparc_SurfArea_", "", .) %>%
+  sub("aparc_ThickAvg_", "", .) %>%
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%
+  sub("th_Ventricle", "th_ventricle", .) %>%
+  sub("Thalamus", "Thalamus-Proper", .)
+  
+models_vpm$label[cols_edit] <- gsub("_", "-", models_vpm$label[cols_edit])
 
+#models lpm
+models_lpm$domain <- ifelse(grepl("global", models_lpm$feature), "global",
+                            ifelse(grepl("GrayVol", models_lpm$feature), "vol",
+                            ifelse(grepl("SurfArea", models_lpm$feature), "sa",
+                                   ifelse(grepl("ThickAvg", models_lpm$feature), "th",
+                                          ifelse(grepl("aseg", models_lpm$feature), "aseg", NA)))))
+cols_edit <- grepl("aseg(?!_CC)", models_lpm$feature, perl = TRUE)
+
+models_lpm$label <- models_lpm$feature %>% 
+  sub("aparc_GrayVol_", "", .) %>%
+  sub("aparc_SurfArea_", "", .) %>%
+  sub("aparc_ThickAvg_", "", .) %>%
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%
+  sub("th_Ventricle", "th_ventricle", .) %>%
+  sub("Thalamus", "Thalamus-Proper", .)
+  
+models_lpm$label[cols_edit] <- gsub("_", "-", models_lpm$label[cols_edit])
+```
+
+## Plot mu intercept value of all phenotypes
+### VPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(vpm_vol_mu_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void()+
+  labs(title = "VPM Volume Mu Intercept"))
+
+(vpm_vol_mu_intercept_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void() +
+  labs(title = "VPM Volume Mu Intercept"))
+
+if(save_figs == TRUE){
+panel_save(ga_dkt_vol_plot, "ga-dkt-vol", "pdf", plot_output_folder)
+panel_save(ga_aseg_vol_plot , "ga-aseg-vol", "pdf", plot_output_folder)
+}
+```
 ## Plot coefficient of age in mu
 
 ## Plot coefficient of sex in mu
@@ -425,7 +532,7 @@ write_csv(df_lpm, glue("{csv_save_path}lmsz_adjusted_centiles_lpm.csv"))
 
 ## Plot coefficient of sex in sigma
 
-## Backtransform Centiles VPM
+# Backtransform Centiles VPM
 ```{r}
 ##simulation frames, log days age and sex
 #between 280 days (40 weeks gestation) and 21 years
@@ -436,7 +543,7 @@ sim_list_slip$Female <- expand.grid(adjusted_age_days_log = seq(log(280),log(365
                                     sex = c("Female"))
 
 #| results: false
-for (pheno in full_vars[1:2]) {
+for (pheno in full_vars) {
   print(pheno)
   tmp <-  backtransform_centile_fans(pheno, 
                                      glue("{save_path}lmsz_models_vpm/"), 
@@ -458,11 +565,11 @@ write_csv(out_fans_slip, glue("{csv_save_path}lmsz_centfans_vpm.csv"))
 ```{r}
 # CT scale is off and eTIV fans are doubled. Provide manual correction
 out_fans_slip <- out_fans_slip %>% 
-                          mutate(SLIP_input_fans = ifelse(grepl("CT",pheno),
-                                                          SLIP_input_fans*10000,
+                          mutate(SLIP_input_fans = ifelse(grepl("Thick",pheno),
+                                                          SLIP_input_fans*1000,
                                                           SLIP_input_fans),
-                                 LMSz_fans = ifelse(grepl("CT",pheno),
-                                                          LMSz_fans*10000,
+                                 LMSz_fans = ifelse(grepl("Thick",pheno),
+                                                          LMSz_fans*1000,
                                                           LMSz_fans)) %>% 
                           mutate(SLIP_input_fans = ifelse(pheno == "eTIV",
                                                           SLIP_input_fans/2,
@@ -484,14 +591,21 @@ x_labs <- c("0y","1y","2y","6y","21y")
 
 ```{r, fig.height = 7.5, fig.width = 11}
 #| output: false
+pheno_list_to_plot <- c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
+                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
+                       "global_MeanThickness")
+pheno_vpm_sig <- models_vpm %>% filter(!grepl("0", m_model) & !grepl("0", s_model)) %>% select(feature) %>% pull(feature)
+
+pheno_vpm_age_mu <- models_vpm %>% filter(grepl("age", m_model)) %>% select(feature) %>% pull(feature)
+pheno_vpm_age_sigma <- models_vpm %>% filter(grepl("age", s_model)) %>% select(feature) %>% pull(feature)
+
+pheno_list_to_plot <- pheno_vpm_age_mu
 
 slip_plots <- list()
 lmsz_plots <- list()
 mult <- 1
 out_fans_plot <- out_fans_slip
-for (pheno_of_int in c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
-                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
-                       "global_MeanThickness")) {
+for (pheno_of_int in pheno_list_to_plot) {
   df_plot <- df_vpm
   df_plot$pheno <- df_plot[[glue("{pheno_of_int}.zscore")]]
   df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
@@ -579,16 +693,17 @@ for (pheno_of_int in c("global_eTIV","global_VentricleChoroidVol","global_Cortex
   slip_plots[[pheno_of_int]] <- slip_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
   lmsz_plots[[pheno_of_int]] <- lmsz_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
 }
-p1_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p1 <- ggarrange(plotlist =  slip_plots, nrow = 1, legend = "none", common.legend = T)
-p2_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p2 <- ggarrange(plotlist =  lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
-p_fits <- ggarrange(p1_title, p1, 
-                p2_title, p2, 
-                nrow = 2, ncol = 2, widths = c(0.1,1.2),
-                legend = "bottom", common.legend = T)
+
+#p1_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+#                                  x = 0.5, hjust = 0.5, fontface = "bold")
+#p1 <- ggarrange(plotlist =  slip_plots, nrow = 1, legend = "none", common.legend = T)
+#p2_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+#                                  x = 0.5, hjust = 0.5, fontface = "bold")
+#p2 <- ggarrange(plotlist =  lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
+# p_fits <- ggarrange(p1_title, p1, 
+#                 p2_title, p2, 
+#                 nrow = 2, ncol = 2, widths = c(0.1,1.2),
+#                 legend = "bottom", common.legend = T)
 
 ```
 
@@ -606,29 +721,38 @@ overlap_plots_male <- list()
 overlap_plots_female <- list()
 overlap_plots_deriv <- list()
 out_fans_plot <- out_fans_slip
-for (pheno_of_int in c("eTIV","Ventricles","GMV","Cerebellum.all",
-                       "sGMV","totalSA","WMV","meanCT",
-                       "SA.medialorbitofrontal", "SA.lateraloccipital",
-                       "SA.postcentral","SA.superiorparietal",
-                       "SA.transversetemporal","SA.rostralanteriorcingulate")) {
-  df_plot <- df
-  df_plot$pheno <- df_plot[[glue("{pheno_of_int}Transformed.normalised")]]
-  if (grepl("SA",pheno_of_int)) {
+for (pheno_of_int in c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
+                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
+                       "global_MeanThickness")) {
+  df_plot <- df_vpm
+  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.zscore")]]
+  df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
+  if (grepl("SurfaceArea",pheno_of_int)) {
     ylab_text <- bquote('Surface Area')
-    mult <- 1
-  } else if (grepl("CT",pheno_of_int)) {
+  } else if (grepl("MeanThickness",pheno_of_int)) {
     ylab_text <- bquote('Thickness')
-    mult <- 1
+    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
   } else {
     ylab_text <- bquote('Volume')
-    mult <- 1
   }
-  if (pheno_of_int == "eTIV") {
-    pheno_renamed <- "Intracranial Volume"
-  } else if (pheno_of_int == "Cerebellum.all") {
-    pheno_renamed <- "Cerebellum"
+  if(pheno_of_int == "global_SurfaceArea") {
+    pheno_label <- "Cortical Surface Area"
+  } else if (pheno_of_int == "meanCT") {
+    pheno_label <- "global_MeanThickness"
+  } else if (pheno_of_int == "global_eTIV") {
+    pheno_label <- "Intracranial Volume"
+  } 
+  #else if (pheno_of_int == "Cerebellum.all") {
+    #pheno_label <- "Cerebellum"
+  #} 
+  else if (pheno_of_int == "global_CortexVol") {
+    pheno_label <- "Gray Matter Volume"
+  } else if (pheno_of_int == "global_SubCortGrayVol") {
+    pheno_label <- "Subcortical Gray Matter Volume"
+  } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
+    pheno_label <- "White Matter Volume"
   } else {
-    pheno_renamed <- pheno_of_int
+    pheno_label <- pheno_of_int
   }
   
   out_fans_plot <- out_fans_slip %>% 

@@ -8,6 +8,7 @@ editor_options:
 params:
   output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/"
   centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_median_centiles.csv"
+  participants_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/participants_allvars_useable.csv"
   slip_release_folder: "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/"
   type: "median"  
 ---
@@ -18,6 +19,7 @@ if (!exists("params")) {
   params <- list(
   output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/",
   centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_median_centiles.csv",
+  participants_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/participants_allvars_useable.csv",
   slip_release_folder = "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/",
   type = "median"
   )
@@ -39,14 +41,13 @@ set.seed(42)
 
 output_folder <- params$output_folder
 centiles_path <- params$centiles_path
+participants_path <- params$participants_path
 slip_release_folder <- params$slip_release_folder
 type <- params$type
 ```
 
 # Load packages
 ```{r}
-source(paste0(code_path,"slip_data_utils.R"))
-
 #Load libraries
 library(dplyr)
 library(magrittr)
@@ -75,7 +76,7 @@ knitr::opts_chunk$set(echo = TRUE)
 #define paths
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
 qc_metrics_path <- glue("{slip_release_folder}derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv")
-participants_path <- glue("{slip_release_folder}BIDS/participants.tsv")
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 
 ## output/save paths
 if (!dir.exists(output_folder)) dir.create(output_folder)
@@ -83,17 +84,14 @@ csv_save_path <- glue("{output_folder}data_clean/")
 if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
 plot_save_path <- paste0(output_folder, "plots/data-cleanup-plots/")
 if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
+
+#load custom data transform and bw/ga qc functions
+source(paste0(code_path,"slip_data_utils.R"))
 ```
 
 # Load Data
 ```{r, echo = FALSE}
-participants <- read.table(participants_path,
-                 sep = "\t",
-                 header = TRUE,
-                 stringsAsFactors = FALSE,
-                 quote = "",
-                 comment.char = "")
-
+participants <- read.csv(participants_path)
 qc_metrics <- read.csv(qc_metrics_path) %>% filter(euler_mean > -60 &
                                                      qc_general_white_matter > 0.65 &
                                                      qc_general_grey_matter > 0.65 &
@@ -107,6 +105,14 @@ qc_metrics <- read.csv(qc_metrics_path) %>% filter(euler_mean > -60 &
 centiles <- read.csv(centiles_path) %>% select(-X)
 ```
 
+#Load Phenotype Var Names
+```{r}
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+```
 # QC inter-variable correlations
 ```{r}
 #correlation matrix and visualization
@@ -183,15 +189,16 @@ participants <- participants %>%
 
 ## check for extra variables in the centiles df
 ```{r}
-vars_to_select <- c(all_vars, "participant_id", "session_id", "site", "sex", "age_days", "avg_grade", "dx")
+vars_to_select <- c(full_vars, "participant_id", "session_id", "site", "sex", "age_days", "avg_grade", "dx")
 vars_extra <- names(centiles)[!(names(centiles) %in% vars_to_select)]
 print(glue("Additional variables in the centiles csv provided: {vars_extra}"))
 ```
+
 ## run data cleanup
 ```{r}
 print(glue("ALL Centiles DF dimensions before 'cleanup' script: {c(dim(centiles))}"))
 
-centiles <- centiles %>% select(all_of(vars_to_select))
+centiles <- centiles %>% select(any_of(vars_to_select))
 clean_centiles <- slip_centdf_clean(centiles, participants, qc_metrics, type = type)
 centiles_distinct <- clean_centiles$distinct
 centiles_all <- clean_centiles$all

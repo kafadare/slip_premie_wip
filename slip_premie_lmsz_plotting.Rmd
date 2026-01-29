@@ -1,0 +1,1516 @@
+---
+title: "slip_premie_lmsz_plotting"
+author: "Eren Kafadar"
+date: "2026-01-29"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+## controls
+```{r, echo = TRUE}
+set.seed(42)
+#set command
+save_tables <- TRUE
+plot <- TRUE
+save_figs <- TRUE
+```
+
+## Load Packages
+```{r, echo = FALSE}
+# Load libraries
+require(dplyr)
+require(magrittr)
+require(readr)
+require(stringr)
+require(tidyr)
+require(gamlssTools) # Margaret's package
+require(tibble)
+require(glue)
+# For figures/plotting
+require(ggplot2)
+# For figures/plotting
+require(gridExtra)
+require(ggsegDKT)
+require(ggseg)
+# require(ggpubr)
+require(ggcorrplot)
+require(cowplot)
+require(egg)
+require(interactions)
+require(growthstandards)
+require(gtsummary)
+require(svglite)
+```
+
+## Define Paths
+```{r, echo = TRUE}
+# set folder paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
+
+# raw data paths
+raw_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/slip_median.csv"
+
+centiles_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-29.csv"
+models_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
+
+# output folder
+save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_25.11/"
+
+##  output subfolder paths
+csv_save_path <-  paste0(save_path, "results_csv/")
+if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
+plot_save_path <- paste0(save_path, "plots/")
+if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
+```
+
+## Load custom functions
+```{r, echo = FALSE}
+panel_save <- function(plot, filename, extension, folder){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300)
+}
+
+source(glue("{code_path}R_util_lmsz.R"))
+```
+
+# Load Phenotype Variable Names
+```{r}
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+```
+# Load Clean Data
+```{r}
+df <- read.csv(centiles_data_path) %>% select(-"X") #%>%
+  #rename_with(~paste0(.x, ".cent"), all_of(full_vars))
+```
+
+# Load Raw Data and merge
+```{r}
+df_raw <- read.csv(raw_data_path) %>% select(all_of(c(full_vars, "participant_id", "session_id", "sex", "age_days",
+                                                      "site", "avg_grade", "age_at_scan"))) %>%
+  mutate(across(all_of(full_vars), ~c(scale(.)), .names = "{.col}.raw_normalised")) %>%
+  rename_with(~paste0(.x, ".raw"), all_of(full_vars))
+
+shared_names <- intersect(names(df_raw), names(df))
+
+df <- merge(df, df_raw, by = shared_names, all.x = FALSE, all.y = FALSE)
+```
+
+# Z-score Centiles, remove Inf Cells
+
+## zscore centiles (new df)
+```{r}
+#zscore centiles and other variables of interest
+df <- df %>%
+  mutate(across(all_of(full_vars), qnorm,
+                         .names = "{.col}.zscore"))
+#set sex and preterm as factor
+df$sex <- as.factor(df$sex)
+df$preterm <- as.factor(df$preterm)
+zscore_vars_names <- paste0(full_vars, ".zscore")
+```
+
+## find Inf cells, make a table of N per phenotype, then convert to NaN
+```{r}
+inf_nan_table <- as.data.frame(t(sapply(df[zscore_vars_names], function(x){
+  c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
+})))
+max(inf_nan_table$inf)
+max(inf_nan_table$nan)
+
+inf_nan_table %>% filter(inf > 0)
+```
+
+## set Inf cells to NaN
+```{r}
+df <- df %>% 
+  mutate(across(all_of(zscore_vars_names), ~ replace(., is.infinite(.), NaN)))
+```
+
+#Load LMSz dfs and model paths
+```{r}
+models_vpm <- read.csv(glue("{csv_save_path}lmsz_models_vpm.csv"))
+df_vpm <- read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_vpm.csv"))
+models_vpm_path <- glue("{save_path}lmsz_models_vpm/")
+
+models_vpm <- models_vpm %>% mutate(across(names(models_vpm)[grepl("coef", names(models_vpm))],
+                                as.numeric(.), .names = "{.col}"))
+
+models_lpm <- read.csv(glue("{csv_save_path}lmsz_models_lpm.csv"))
+df_lpm <- read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_lpm.csv"))
+models_lpm_path <- glue("{save_path}lmsz_models_lpm/")
+
+#fix columns of type logical to avoid plotting errors
+vpm_col_fix <- models_vpm %>% select(names(models_vpm)[grepl("coef", names(models_vpm))] & is.logical) %>% colnames()
+models_vpm[,vpm_col_fix] <- NA_real_
+
+lpm_col_fix <- models_lpm %>% select(names(models_lpm)[grepl("coef", names(models_lpm))] & is.logical) %>% colnames()
+models_lpm[,lpm_col_fix] <- NA_real_
+```
+
+# Visualize Model Output on Brain Maps
+## Plots specifications
+```{r, echo = TRUE}
+limits = c(-3, 3)
+low_color = "#4878CF"
+mid_color = "white"
+high_color = "#D65F5F"
+```
+## add label column to match to ggseg
+```{r, echo = FALSE}
+#models vpm
+models_vpm$domain <- ifelse(grepl("global", models_vpm$feature), "global",
+                            ifelse(grepl("GrayVol", models_vpm$feature), "vol",
+                            ifelse(grepl("SurfArea", models_vpm$feature), "sa",
+                                   ifelse(grepl("ThickAvg", models_vpm$feature), "th",
+                                          ifelse(grepl("aseg", models_vpm$feature), "aseg", NA)))))
+cols_edit <- grepl("aseg(?!_CC)", models_vpm$feature, perl = TRUE)
+
+models_vpm$label <- models_vpm$feature %>% 
+  sub("aparc_GrayVol_", "", .) %>%
+  sub("aparc_SurfArea_", "", .) %>%
+  sub("aparc_ThickAvg_", "", .) %>%
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%
+  sub("th_Ventricle", "th_ventricle", .) %>%
+  sub("Thalamus", "Thalamus-Proper", .)
+  
+models_vpm$label[cols_edit] <- gsub("_", "-", models_vpm$label[cols_edit])
+
+#models lpm
+models_lpm$domain <- ifelse(grepl("global", models_lpm$feature), "global",
+                            ifelse(grepl("GrayVol", models_lpm$feature), "vol",
+                            ifelse(grepl("SurfArea", models_lpm$feature), "sa",
+                                   ifelse(grepl("ThickAvg", models_lpm$feature), "th",
+                                          ifelse(grepl("aseg", models_lpm$feature), "aseg", NA)))))
+cols_edit <- grepl("aseg(?!_CC)", models_lpm$feature, perl = TRUE)
+
+models_lpm$label <- models_lpm$feature %>% 
+  sub("aparc_GrayVol_", "", .) %>%
+  sub("aparc_SurfArea_", "", .) %>%
+  sub("aparc_ThickAvg_", "", .) %>%
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%
+  sub("th_Ventricle", "th_ventricle", .) %>%
+  sub("Thalamus", "Thalamus-Proper", .)
+  
+models_lpm$label[cols_edit] <- gsub("_", "-", models_lpm$label[cols_edit])
+```
+
+## Plot mu intercept value of all phenotypes
+### VPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(vpm_vol_mu_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void()+
+  labs(title = "VPM Volume Mu Intercept"))
+
+(vpm_vol_mu_intercept_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void() +
+  labs(title = "VPM Volume Mu Intercept"))
+
+(vpm_sa_mu_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void()+
+  labs(title = "VPM SA Mu Intercept"))
+
+(vpm_th_mu_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void()+
+  labs(title = "VPM Thickness Mu Intercept"))
+
+if(save_figs == TRUE){
+panel_save(vpm_vol_mu_intercept_dk_plot, "vpm-vol-mu-intercept-dk", "pdf", plot_save_path)
+panel_save(vpm_vol_mu_intercept_aseg_plot, "vpm-vol-mu-intercept-aseg", "pdf", plot_save_path)
+panel_save(vpm_sa_mu_intercept_dk_plot, "vpm-sa-mu-intercept-dk", "pdf", plot_save_path)
+panel_save(vpm_th_mu_intercept_dk_plot, "vpm-th-mu-intercept-dk", "pdf", plot_save_path)
+}
+```
+### LPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_lpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_lpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_lpm_noplot <- models_lpm[!(models_lpm$label %in% plot_data_dkt$label) & !(models_lpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(lpm_vol_mu_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void()+
+  labs(title = "LPM Volume Mu Intercept"))
+
+(lpm_vol_mu_intercept_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void() +
+  labs(title = "LPM Volume Mu Intercept"))
+
+(lpm_sa_mu_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void()+
+  labs(title = "LPM SA Mu Intercept"))
+
+(lpm_th_mu_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+  theme_void()+
+  labs(title = "LPM Thickness Mu Intercept"))
+
+if(save_figs == TRUE){
+panel_save(lpm_vol_mu_intercept_dk_plot, "lpm-vol-mu-intercept-dk", "pdf", plot_save_path)
+panel_save(lpm_vol_mu_intercept_aseg_plot, "lpm-vol-mu-intercept-aseg", "pdf", plot_save_path)
+panel_save(lpm_sa_mu_intercept_dk_plot, "lpm-sa-mu-intercept-dk", "pdf", plot_save_path)
+panel_save(lpm_th_mu_intercept_dk_plot, "lpm-th-mu-intercept-dk", "pdf", plot_save_path)
+}
+```
+## Plot coefficient of age in mu
+### VPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(vpm_vol_mu_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void()+
+  labs(title = "VPM Volume Mu age"))
+
+(vpm_vol_mu_age_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void() +
+  labs(title = "VPM Volume Mu age"))
+
+(vpm_sa_mu_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void()+
+  labs(title = "VPM SA Mu age"))
+
+(vpm_th_mu_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void()+
+  labs(title = "VPM Thickness Mu age"))
+
+if(save_figs == TRUE){
+panel_save(vpm_vol_mu_age_dk_plot, "vpm-vol-mu-age-dk", "pdf", plot_save_path)
+panel_save(vpm_vol_mu_age_aseg_plot, "vpm-vol-mu-age-aseg", "pdf", plot_save_path)
+panel_save(vpm_sa_mu_age_dk_plot, "vpm-sa-mu-age-dk", "pdf", plot_save_path)
+panel_save(vpm_th_mu_age_dk_plot, "vpm-th-mu-age-dk", "pdf", plot_save_path)
+}
+```
+### LPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_lpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_lpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_lpm_noplot <- models_lpm[!(models_lpm$label %in% plot_data_dkt$label) & !(models_lpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(lpm_vol_mu_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void()+
+  labs(title = "LPM Volume Mu age"))
+
+(lpm_vol_mu_age_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void() +
+  labs(title = "LPM Volume Mu age"))
+
+(lpm_sa_mu_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void()+
+  labs(title = "LPM SA Mu age"))
+
+(lpm_th_mu_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.35, 0.35)) +
+  theme_void()+
+  labs(title = "LPM Thickness Mu age"))
+
+if(save_figs == TRUE){
+panel_save(lpm_vol_mu_age_dk_plot, "lpm-vol-mu-age-dk", "pdf", plot_save_path)
+panel_save(lpm_vol_mu_age_aseg_plot, "lpm-vol-mu-age-aseg", "pdf", plot_save_path)
+panel_save(lpm_sa_mu_age_dk_plot, "lpm-sa-mu-age-dk", "pdf", plot_save_path)
+panel_save(lpm_th_mu_age_dk_plot, "lpm-th-mu-age-dk", "pdf", plot_save_path)
+}
+```
+## Plot coefficient of sex in mu
+### VPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(vpm_vol_mu_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void()+
+  labs(title = "VPM Volume Mu sex"))
+
+(vpm_vol_mu_sex_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void() +
+  labs(title = "VPM Volume Mu sex"))
+
+(vpm_sa_mu_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void()+
+  labs(title = "VPM SA Mu sex"))
+
+(vpm_th_mu_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void()+
+  labs(title = "VPM Thickness Mu sex"))
+
+if(save_figs == TRUE){
+panel_save(vpm_vol_mu_sex_dk_plot, "vpm-vol-mu-sex-dk", "pdf", plot_save_path)
+panel_save(vpm_vol_mu_sex_aseg_plot, "vpm-vol-mu-sex-aseg", "pdf", plot_save_path)
+panel_save(vpm_sa_mu_sex_dk_plot, "vpm-sa-mu-sex-dk", "pdf", plot_save_path)
+panel_save(vpm_th_mu_sex_dk_plot, "vpm-th-mu-sex-dk", "pdf", plot_save_path)
+}
+```
+### LPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_lpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_lpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_lpm_noplot <- models_lpm[!(models_lpm$label %in% plot_data_dkt$label) & !(models_lpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(lpm_vol_mu_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void()+
+  labs(title = "LPM Volume Mu sex"))
+
+(lpm_vol_mu_sex_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void() +
+  labs(title = "LPM Volume Mu sex"))
+
+(lpm_sa_mu_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void()+
+  labs(title = "LPM SA Mu sex"))
+
+(lpm_th_mu_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.4, 0.4)) +
+  theme_void()+
+  labs(title = "LPM Thickness Mu sex"))
+
+if(save_figs == TRUE){
+panel_save(lpm_vol_mu_sex_dk_plot, "lpm-vol-mu-sex-dk", "pdf", plot_save_path)
+panel_save(lpm_vol_mu_sex_aseg_plot, "lpm-vol-mu-sex-aseg", "pdf", plot_save_path)
+panel_save(lpm_sa_mu_sex_dk_plot, "lpm-sa-mu-sex-dk", "pdf", plot_save_path)
+panel_save(lpm_th_mu_sex_dk_plot, "lpm-th-mu-sex-dk", "pdf", plot_save_path)
+}
+```
+## Plot intercept in sigma
+### VPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(vpm_vol_sigma_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void()+
+  labs(title = "VPM Volume sigma Intercept"))
+
+(vpm_vol_sigma_intercept_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void() +
+  labs(title = "VPM Volume sigma Intercept"))
+
+(vpm_sa_sigma_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void()+
+  labs(title = "VPM SA sigma Intercept"))
+
+(vpm_th_sigma_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void()+
+  labs(title = "VPM Thickness sigma Intercept"))
+
+if(save_figs == TRUE){
+panel_save(vpm_vol_sigma_intercept_dk_plot, "vpm-vol-sigma-intercept-dk", "pdf", plot_save_path)
+panel_save(vpm_vol_sigma_intercept_aseg_plot, "vpm-vol-sigma-intercept-aseg", "pdf", plot_save_path)
+panel_save(vpm_sa_sigma_intercept_dk_plot, "vpm-sa-sigma-intercept-dk", "pdf", plot_save_path)
+panel_save(vpm_th_sigma_intercept_dk_plot, "vpm-th-sigma-intercept-dk", "pdf", plot_save_path)
+}
+```
+### LPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_lpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_lpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_lpm_noplot <- models_lpm[!(models_lpm$label %in% plot_data_dkt$label) & !(models_lpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(lpm_vol_sigma_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void()+
+  labs(title = "LPM Volume sigma Intercept"))
+
+(lpm_vol_sigma_intercept_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void() +
+  labs(title = "LPM Volume sigma Intercept"))
+
+(lpm_sa_sigma_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void()+
+  labs(title = "LPM SA sigma Intercept"))
+
+(lpm_th_sigma_intercept_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = intercept_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-1.75, 1.75)) +
+  theme_void()+
+  labs(title = "LPM Thickness sigma Intercept"))
+
+if(save_figs == TRUE){
+panel_save(lpm_vol_sigma_intercept_dk_plot, "lpm-vol-sigma-intercept-dk", "pdf", plot_save_path)
+panel_save(lpm_vol_sigma_intercept_aseg_plot, "lpm-vol-sigma-intercept-aseg", "pdf", plot_save_path)
+panel_save(lpm_sa_sigma_intercept_dk_plot, "lpm-sa-sigma-intercept-dk", "pdf", plot_save_path)
+panel_save(lpm_th_sigma_intercept_dk_plot, "lpm-th-sigma-intercept-dk", "pdf", plot_save_path)
+}
+```
+## Plot coefficient of age in sigma
+### VPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(vpm_vol_sigma_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void()+
+  labs(title = "VPM Volume sigma age"))
+
+(vpm_vol_sigma_age_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void() +
+  labs(title = "VPM Volume sigma age"))
+
+(vpm_sa_sigma_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void()+
+  labs(title = "VPM SA sigma age"))
+
+(vpm_th_sigma_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void()+
+  labs(title = "VPM Thickness sigma age"))
+
+if(save_figs == TRUE){
+panel_save(vpm_vol_sigma_age_dk_plot, "vpm-vol-sigma-age-dk", "pdf", plot_save_path)
+panel_save(vpm_vol_sigma_age_aseg_plot, "vpm-vol-sigma-age-aseg", "pdf", plot_save_path)
+panel_save(vpm_sa_sigma_age_dk_plot, "vpm-sa-sigma-age-dk", "pdf", plot_save_path)
+panel_save(vpm_th_sigma_age_dk_plot, "vpm-th-sigma-age-dk", "pdf", plot_save_path)
+}
+```
+### LPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_lpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_lpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_lpm_noplot <- models_lpm[!(models_lpm$label %in% plot_data_dkt$label) & !(models_lpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(lpm_vol_sigma_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void()+
+  labs(title = "LPM Volume sigma age"))
+
+(lpm_vol_sigma_age_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void() +
+  labs(title = "LPM Volume sigma age"))
+
+(lpm_sa_sigma_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void()+
+  labs(title = "LPM SA sigma age"))
+
+(lpm_th_sigma_age_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = age_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.25, 0.25)) +
+  theme_void()+
+  labs(title = "LPM Thickness sigma age"))
+
+if(save_figs == TRUE){
+panel_save(lpm_vol_sigma_age_dk_plot, "lpm-vol-sigma-age-dk", "pdf", plot_save_path)
+panel_save(lpm_vol_sigma_age_aseg_plot, "lpm-vol-sigma-age-aseg", "pdf", plot_save_path)
+panel_save(lpm_sa_sigma_age_dk_plot, "lpm-sa-sigma-age-dk", "pdf", plot_save_path)
+panel_save(lpm_th_sigma_age_dk_plot, "lpm-th-sigma-age-dk", "pdf", plot_save_path)
+}
+```
+## Plot coefficient of sex in sigma
+### VPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(vpm_vol_sigma_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void()+
+  labs(title = "VPM Volume sigma sex"))
+
+(vpm_vol_sigma_sex_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void() +
+  labs(title = "VPM Volume sigma sex"))
+
+(vpm_sa_sigma_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void()+
+  labs(title = "VPM SA sigma sex"))
+
+(vpm_th_sigma_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void()+
+  labs(title = "VPM Thickness sigma sex"))
+
+if(save_figs == TRUE){
+panel_save(vpm_vol_sigma_sex_dk_plot, "vpm-vol-sigma-sex-dk", "pdf", plot_save_path)
+panel_save(vpm_vol_sigma_sex_aseg_plot, "vpm-vol-sigma-sex-aseg", "pdf", plot_save_path)
+panel_save(vpm_sa_sigma_sex_dk_plot, "vpm-sa-sigma-sex-dk", "pdf", plot_save_path)
+panel_save(vpm_th_sigma_sex_dk_plot, "vpm-th-sigma-sex-dk", "pdf", plot_save_path)
+}
+```
+### LPM
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(models_lpm, ggseg::dk, by = "label")
+plot_data_aseg <- merge(models_lpm, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+#print(models_lpm_noplot <- models_lpm[!(models_lpm$label %in% plot_data_dkt$label) & !(models_lpm$label %in% plot_data_aseg$label),"label"], n = 100)
+
+# plots
+(lpm_vol_sigma_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void()+
+  labs(title = "LPM Volume sigma sex"))
+
+(lpm_vol_sigma_sex_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+  geom_brain(atlas = aseg,
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void() +
+  labs(title = "LPM Volume sigma sex"))
+
+(lpm_sa_sigma_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void()+
+  labs(title = "LPM SA sigma sex"))
+
+(lpm_th_sigma_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = sex_sigma_coef)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-0.5, 0.5)) +
+  theme_void()+
+  labs(title = "LPM Thickness sigma sex"))
+
+if(save_figs == TRUE){
+panel_save(lpm_vol_sigma_sex_dk_plot, "lpm-vol-sigma-sex-dk", "pdf", plot_save_path)
+panel_save(lpm_vol_sigma_sex_aseg_plot, "lpm-vol-sigma-sex-aseg", "pdf", plot_save_path)
+panel_save(lpm_sa_sigma_sex_dk_plot, "lpm-sa-sigma-sex-dk", "pdf", plot_save_path)
+panel_save(lpm_th_sigma_sex_dk_plot, "lpm-th-sigma-sex-dk", "pdf", plot_save_path)
+}
+```
+
+## Backtransform Centiles VPM
+```{r}
+##simulation frames, log days age and sex
+#between 280 days (40 weeks gestation) and 21 years
+sim_list_slip <- list()
+sim_list_slip$Male <- expand.grid(adjusted_age_days_log = seq(log(280),log(365.25*21+280),0.01),
+                                  sex = c("Male"))
+sim_list_slip$Female <- expand.grid(adjusted_age_days_log = seq(log(280),log(365.25*21+280),0.01),
+                                    sex = c("Female"))
+
+#| results: false
+for (pheno in full_vars) {
+  print(pheno)
+  tmp <-  backtransform_centile_fans(pheno, 
+                                     glue("{save_path}lmsz_models_vpm/"), 
+                                     sim_list_slip, 
+                                     df_vpm)
+  if (pheno == full_vars[1]) {
+    out_fans_slip <- tmp
+  } else {
+    out_fans_slip <- bind_rows(out_fans_slip, tmp)
+  }
+}
+```
+
+## Save centile fans calculated
+```{r}
+write_csv(out_fans_slip, glue("{csv_save_path}lmsz_centfans_vpm.csv"))
+```
+
+```{r}
+# CT scale is off and eTIV fans are doubled. Provide manual correction
+out_fans_slip <- out_fans_slip %>% 
+                          mutate(SLIP_input_fans = ifelse(grepl("Thick",pheno),
+                                                          SLIP_input_fans*1000,
+                                                          SLIP_input_fans),
+                                 LMSz_fans = ifelse(grepl("Thick",pheno),
+                                                          LMSz_fans*1000,
+                                                          LMSz_fans)) %>% 
+                          mutate(SLIP_input_fans = ifelse(pheno == "eTIV",
+                                                          SLIP_input_fans/2,
+                                                          SLIP_input_fans),
+                                 LMSz_fans = ifelse(pheno == "eTIV",
+                                                          LMSz_fans/2,
+                                                          LMSz_fans))
+```
+
+# Generate Plots
+
+## Plot SLIP and LMSz Global Trajectories
+
+```{r}
+x_breaks <- log(c(280, 365.25*1+280, 365.25*2+280, 
+                  365.25*6+280, 365.25*21+280))
+x_labs <- c("0y","1y","2y","6y","21y")
+```
+
+```{r, fig.height = 7.5, fig.width = 11}
+#| output: false
+pheno_list_to_plot <- c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
+                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
+                       "global_MeanThickness")
+pheno_vpm_sig <- models_vpm %>% filter(!grepl("0", m_model) & !grepl("0", s_model)) %>% select(feature) %>% pull(feature)
+
+pheno_vpm_age_mu <- models_vpm %>% filter(grepl("age", m_model)) %>% select(feature) %>% pull(feature)
+pheno_vpm_age_sigma <- models_vpm %>% filter(grepl("age", s_model)) %>% select(feature) %>% pull(feature)
+
+pheno_list_to_plot <- pheno_vpm_age_mu
+
+slip_plots <- list()
+lmsz_plots <- list()
+mult <- 1
+out_fans_plot <- out_fans_slip
+for (pheno_of_int in pheno_list_to_plot) {
+  df_plot <- df_vpm
+  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.zscore")]]
+  df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
+  if (grepl("SurfaceArea",pheno_of_int)) {
+    ylab_text <- bquote('Surface Area')
+  } else if (grepl("MeanThickness",pheno_of_int)) {
+    ylab_text <- bquote('Thickness')
+    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
+  } else {
+    ylab_text <- bquote('Volume')
+  }
+  if(pheno_of_int == "global_SurfaceArea") {
+    pheno_label <- "Cortical Surface Area"
+  } else if (pheno_of_int == "meanCT") {
+    pheno_label <- "global_MeanThickness"
+  } else if (pheno_of_int == "global_eTIV") {
+    pheno_label <- "Intracranial Volume"
+  } 
+  #else if (pheno_of_int == "Cerebellum.all") {
+    #pheno_label <- "Cerebellum"
+  #} 
+  else if (pheno_of_int == "global_CortexVol") {
+    pheno_label <- "Gray Matter Volume"
+  } else if (pheno_of_int == "global_SubCortGrayVol") {
+    pheno_label <- "Subcortical Gray Matter Volume"
+  } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
+    pheno_label <- "White Matter Volume"
+  } else {
+    pheno_label <- pheno_of_int
+  }
+  out_fans_plot <- out_fans_slip %>% 
+                    filter(pheno == pheno_of_int,
+                           !(centile_cat %in% c("cent_0.25", "cent_0.75"))) %>%
+                    mutate(SLIP_input_fans = SLIP_input_fans*mult,
+                           LMSz_fans = LMSz_fans*mult)
+  # CT data is questionable at 0y. Limit to 2 years
+  if (grepl("global_MeanThickness",pheno_of_int)) {
+    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280)
+    out_fans_plot <- out_fans_plot %>% filter(adjusted_age_days_log >= log(2*365.25+280))
+  }
+  slip_plots[[pheno_of_int]] <- ggplot(out_fans_plot) +
+                                    geom_point(data = df_plot, aes(y = pheno,
+                                               x = adjusted_age_days_log, fill=sex), 
+                                               alpha=0.5, shape=21, size = 0.5) +
+                                    geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
+                                                  group = interaction(centile_cat, sex),
+                                                  color = sex,
+                                                  linewidth = line_size,
+                                                  linetype = line_type)) +
+                                    scale_linewidth_identity() +
+                                    scale_linetype_identity() +
+                                    scale_colour_manual(values = c("firebrick","royalblue")) +
+                                    scale_x_continuous(breaks = x_breaks, labels = x_labs) +
+                                    ggtitle(pheno_label) + theme_classic() +
+                                    xlab("") + ylab(ylab_text) +
+                                  theme(plot.title = element_text(size = 12),
+                                        axis.title = element_text(size = 10),
+                                        axis.text = element_text(size = 8))
+
+  lmsz_plots[[pheno_of_int]] <- ggplot(out_fans_plot) +
+                                    geom_point(data = df_plot, aes(y = pheno,
+                                               x = adjusted_age_days_log, fill=sex), 
+                                               alpha=0.5, shape=21, size = 0.5) +
+                                    geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
+                                                  group = interaction(centile_cat, sex),
+                                                  color = sex,
+                                                  linewidth = line_size,
+                                                  linetype = line_type)) +
+                                    scale_linewidth_identity() +
+                                    scale_linetype_identity() +
+                                    scale_colour_manual(values = c("firebrick","royalblue")) +
+                                    scale_x_continuous(breaks = x_breaks, labels = x_labs) +
+                                    theme_classic() +
+                                    xlab("") + ylab(ylab_text) +
+                                  theme(plot.title = element_text(size = 12),
+                                        axis.title = element_text(size = 10),
+                                        axis.text = element_text(size = 8))
+  
+  # Equalize Axes
+  p_y_min <- min(layer_scales(slip_plots[[pheno_of_int]])$y$range$range[1],
+                 layer_scales(lmsz_plots[[pheno_of_int]])$y$range$range[1])
+  p_y_max <- max(layer_scales(slip_plots[[pheno_of_int]])$y$range$range[2],
+                 layer_scales(lmsz_plots[[pheno_of_int]])$y$range$range[2])
+
+  slip_plots[[pheno_of_int]] <- slip_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
+  lmsz_plots[[pheno_of_int]] <- lmsz_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
+}
+
+#p1_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+#                                  x = 0.5, hjust = 0.5, fontface = "bold")
+#p1 <- ggarrange(plotlist =  slip_plots, nrow = 1, legend = "none", common.legend = T)
+#p2_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+#                                  x = 0.5, hjust = 0.5, fontface = "bold")
+#p2 <- ggarrange(plotlist =  lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
+# p_fits <- ggarrange(p1_title, p1, 
+#                 p2_title, p2, 
+#                 nrow = 2, ncol = 2, widths = c(0.1,1.2),
+#                 legend = "bottom", common.legend = T)
+
+```
+
+```{r, fig.height = 7.5, fig.width = 11}
+p_fits
+```
+
+## Plot Overlaid Trajectories
+
+```{r}
+#| output: false
+# eTIV, WMV, GMV, sGMV, totalSA, meanCT
+
+overlap_plots_male <- list()
+overlap_plots_female <- list()
+overlap_plots_deriv <- list()
+out_fans_plot <- out_fans_slip
+for (pheno_of_int in c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
+                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
+                       "global_MeanThickness")) {
+  df_plot <- df_vpm
+  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.zscore")]]
+  df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
+  if (grepl("SurfaceArea",pheno_of_int)) {
+    ylab_text <- bquote('Surface Area')
+  } else if (grepl("MeanThickness",pheno_of_int)) {
+    ylab_text <- bquote('Thickness')
+    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
+  } else {
+    ylab_text <- bquote('Volume')
+  }
+  if(pheno_of_int == "global_SurfaceArea") {
+    pheno_label <- "Cortical Surface Area"
+  } else if (pheno_of_int == "meanCT") {
+    pheno_label <- "global_MeanThickness"
+  } else if (pheno_of_int == "global_eTIV") {
+    pheno_label <- "Intracranial Volume"
+  } 
+  #else if (pheno_of_int == "Cerebellum.all") {
+    #pheno_label <- "Cerebellum"
+  #} 
+  else if (pheno_of_int == "global_CortexVol") {
+    pheno_label <- "Gray Matter Volume"
+  } else if (pheno_of_int == "global_SubCortGrayVol") {
+    pheno_label <- "Subcortical Gray Matter Volume"
+  } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
+    pheno_label <- "White Matter Volume"
+  } else {
+    pheno_label <- pheno_of_int
+  }
+  
+  out_fans_plot <- out_fans_slip %>% 
+                    filter(pheno == pheno_of_int,
+                           !(centile_cat %in% c("cent_0.25", "cent_0.75"))) %>%
+                    mutate(SLIP_input_fans = SLIP_input_fans*mult,
+                           LMSz_fans = LMSz_fans*mult)
+  if (grepl("CT",pheno_of_int)) {
+    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280)
+    out_fans_plot <- out_fans_plot %>% filter(adjusted_age_days_log >= log(2*365.25+280))
+  }
+  overlap_plots_male[[pheno_of_int]] <- ggplot(out_fans_plot %>% filter(sex == "Male")) +
+                                    geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
+                                                  group = centile_cat,
+                                                  color = "SLIP",
+                                                  linewidth = line_size,
+                                                  linetype = line_type)) +
+                                    geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
+                                                  group = centile_cat,
+                                                  color = "LMSz",
+                                                  linewidth = line_size,
+                                                  linetype = line_type)) +
+                                    scale_linewidth_identity() +
+                                    scale_linetype_identity() +
+                                    scale_x_continuous(breaks = x_breaks, labels = x_labs) +
+                                    ggtitle(pheno_of_int) + theme_classic() +
+                                    xlab("") + ylab(ylab_text) +
+                                    scale_colour_manual(values = c("black", "grey")) +
+                                    theme(plot.title = element_text(size = 12),
+                                          axis.title = element_text(size = 10),
+                                          axis.text = element_text(size = 8))
+  
+  overlap_plots_female[[pheno_of_int]] <- ggplot(out_fans_plot %>% filter(sex == "Female")) +
+                                      geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
+                                                    group = centile_cat,
+                                                    color = "SLIP",
+                                                    linewidth = line_size,
+                                                    linetype = line_type)) +
+                                      geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
+                                                    group = centile_cat,
+                                                    color = "LMSz",
+                                                    linewidth = line_size,
+                                                    linetype = line_type)) +
+                                      scale_linewidth_identity() +
+                                      scale_linetype_identity() +
+                                      scale_x_continuous(breaks = x_breaks, labels = x_labs) +
+                                      ggtitle(pheno_of_int) + theme_classic() +
+                                      xlab("") + ylab(ylab_text) +
+                                      scale_colour_manual(values = c("black", "grey")) +
+                                      theme(plot.title = element_text(size = 12),
+                                            axis.title = element_text(size = 10),
+                                            axis.text = element_text(size = 8))
+  out_fans_plot_avg <-   out_fans_plot %>% 
+                          filter(grepl(str_replace_all(pheno_of_int,"SA.","SA.*"),pheno),
+                                 !(centile_cat %in% c("cent_0.25", "cent_0.75"))) %>%
+                          mutate(SLIP_input_fans = SLIP_input_fans*mult,
+                                 LMSz_fans = LMSz_fans*mult) %>%
+                          group_by(model, adjusted_age_days_log, 
+                                   centile_cat, line_size, line_type) %>%
+                          summarize(across(contains("fans"), ~mean(.x, na.rm = T)))
+  
+  overlap_plots_deriv[[pheno_of_int]] <- ggplot(out_fans_plot_avg) +
+                                    geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
+                                                  group = centile_cat,
+                                                  color = "SLIP",
+                                                  linewidth = line_size*2,
+                                                  linetype = line_type)) +
+                                    geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
+                                                  group = centile_cat,
+                                                  color = "LMSz",
+                                                  linewidth = line_size,
+                                                  linetype = line_type)) +
+                                    scale_linewidth_identity() +
+                                    scale_linetype_identity() +
+                                    scale_x_continuous(breaks = x_breaks, labels = x_labs) +
+                                    ggtitle(pheno_renamed) + theme_classic() +
+                                    xlab("") + ylab(ylab_text) + labs(colour = "Model") +
+                                    scale_colour_manual(values = c("black", "grey")) +
+                                    theme(plot.title = element_text(size = 12),
+                                          axis.title = element_text(size = 10),
+                                          axis.text = element_text(size = 8))
+  
+}
+p1_title <- ggdraw() + draw_label("Males", 
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p1 <- ggarrange(plotlist =  overlap_plots_male[!grepl("SA\\.",overlap_plots_male)], 
+                nrow = 1, legend = "none", common.legend = T)
+p2_title <- ggdraw() + draw_label("Females", 
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p2 <- ggarrange(plotlist =  overlap_plots_female[!grepl("SA\\.",overlap_plots_male)], 
+                nrow = 1, legend = "none", common.legend = T)
+p_traj_by_sex <- ggarrange(p1_title, p1, 
+                p2_title, p2, 
+                nrow = 4, heights = c(0.1,1,0.1,1.2),
+                legend = "bottom", common.legend = T)
+
+
+
+p_traj_collapsed <- ggarrange(plotlist =  overlap_plots_deriv[!grepl("SA\\.",overlap_plots_deriv)], 
+                nrow = 1, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Overlaid Traj.", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+
+p_traj_collapsed <- ggarrange(p_traj_collapsed_title, p_traj_collapsed, 
+                nrow = 1, ncol = 2, widths = c(0.1,1.2),
+                legend = "bottom", common.legend = T)
+```
+
+```{r, fig.height = 7.5, fig.width = 11}
+p_traj_by_sex
+```
+
+```{r, fig.height = 7.5, fig.width = 11}
+p_traj_collapsed
+```
+
+## Plot Effects
+
+#### Mu
+
+```{r, fig.height = 4.5, fig.width = 7.5}
+
+models_vpm$label <- models_vpm$feature
+
+lim <- models_vpm %>% select(age_coef, sex_coef) %>% abs() %>% max(na.rm = T)
+lim <- ceiling(lim*10)/10
+plot_lims <- c(-lim,lim)
+
+p_age_effects <- plot_outliers_single(models_vpm, 
+                           fill_col = "age_coef", 
+                           color_scheme = c("royalblue","white","firebrick"),
+                           plot_lims = plot_lims, fill_name = "",
+                           colorbar_title = "Beta",
+                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
+                           cort_only = F, add_colorbar = F, add_fillbar = T,
+                           exclude_y_label = F, formatted = T, percent = F)
+
+p_sex_effects <- plot_outliers_single(models_vpm, 
+                           fill_col = "sex_coef", 
+                           color_scheme = c("royalblue","white","firebrick"),
+                           plot_lims = plot_lims, fill_name = "",
+                           colorbar_title = "Beta",
+                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
+                           cort_only = F, add_colorbar = F, add_fillbar = T,
+                           exclude_y_label = F, formatted = T, percent = F)
+
+
+p_int_effects <- plot_outliers_single(models_vpm, 
+                           fill_col = "intercept_coef", 
+                           color_scheme = c("royalblue","white","firebrick"),
+                           plot_lims = plot_lims, fill_name = "",
+                           colorbar_title = "Beta",
+                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
+                           cort_only = F, add_colorbar = F, add_fillbar = T,
+                           exclude_y_label = F, formatted = T, percent = F)
+
+p_age_title <- ggdraw() + draw_label("Age", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_sex_title <- ggdraw() + draw_label("Sex", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_int_title <- ggdraw() + draw_label("Intercept", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+
+p_age_effects <- ggarrange(p_age_title, p_age_effects, 
+                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
+                            legend = "bottom", common.legend = T)
+
+p_sex_effects <- ggarrange(p_sex_title, p_sex_effects, 
+                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
+                            legend = "bottom", common.legend = T)
+
+p_int_effects <- ggarrange(p_int_title, p_int_effects, 
+                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
+                            legend = "bottom", common.legend = T)
+
+p_effects_mu <- ggarrange(p_age_effects, p_sex_effects, nrow = 2, ncol = 1, 
+                            heights = c(1,1), common.legend = T, legend = "bottom")
+p_effects_mu
+```
+
+#### Sigma
+
+```{r, fig.height = 4.5, fig.width = 8.5}
+models_vpm$label <- models_vpm$feature
+
+lim <- models_vpm %>% select(age_sigma_coef, sex_sigma_coef) %>% abs() %>% max(na.rm = T)
+lim <- ceiling(lim*10)/10
+
+plot_lims <- c(-lim,lim)
+
+p_age_effects <- plot_outliers_single(models_vpm, 
+                           fill_col = "age_sigma_coef", 
+                           color_scheme = c("royalblue","white","firebrick"),
+                           plot_lims = plot_lims, fill_name = "",
+                           colorbar_title = "Beta",
+                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
+                           cort_only = F, add_colorbar = F, add_fillbar = T,
+                           exclude_y_label = F, formatted = T, percent = F)
+
+p_sex_effects <- plot_outliers_single(models_vpm, 
+                           fill_col = "sex_sigma_coef", 
+                           color_scheme = c("royalblue","white","firebrick"),
+                           plot_lims = plot_lims, fill_name = "",
+                           colorbar_title = "Beta",
+                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
+                           cort_only = F, add_colorbar = F, add_fillbar = T,
+                           exclude_y_label = F, formatted = T, percent = F)
+
+
+p_int_effects <- plot_outliers_single(models_vpm, 
+                           fill_col = "intercept_sigma_coef", 
+                           color_scheme = c("royalblue","white","firebrick"),
+                           plot_lims = plot_lims, fill_name = "",
+                           colorbar_title = "Beta",
+                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
+                           cort_only = F, add_colorbar = F, add_fillbar = T,
+                           exclude_y_label = F, formatted = T, percent = F)
+
+p_age_title <- ggdraw() + draw_label("Age", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_sex_title <- ggdraw() + draw_label("Sex", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_int_title <- ggdraw() + draw_label("Intercept", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+
+p_age_effects <- ggarrange(p_age_title, p_age_effects, 
+                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
+                            legend = "bottom", common.legend = T)
+
+p_sex_effects <- ggarrange(p_sex_title, p_sex_effects, 
+                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
+                            legend = "bottom", common.legend = T)
+
+p_int_effects <- ggarrange(p_int_title, p_int_effects, 
+                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
+                            legend = "bottom", common.legend = T)
+
+p_effects_sigma <- ggarrange(p_age_effects, p_sex_effects, nrow = 2, ncol = 1, 
+                            heights = c(1,1), common.legend = T, legend = "bottom")
+
+p_effects_sigma
+```
+
+```{r, fig.height = 8.5, fig.width = 8.5}
+t1 <- ggdraw() + 
+              draw_label(glue('Mu Effects'))
+t2 <- ggdraw() + 
+              draw_label(glue('Sigma Effects'))
+ggarrange(t1, p_effects_mu, t2, p_effects_sigma, nrow = 4, heights = c(0.3,4.2,0.3,4.2))
+ggsave("figures/figure_s08_regional_eff.png", bg = "white")
+```
+
+## Final Formatted Plot
+
+```{r, fig.height= 12, fig.width=8}
+# 4 x 6 plot
+  # 4 rows (IDPs)
+  # 3 cols (orig, adjusted, overlaid)
+  # repeat
+# bottom row: exploratory{r, fig.height = 12, fig.width = 12}
+
+leg1 <- get_legend(slip_plots$eTIV + theme(legend.title=element_blank())) %>% as_ggplot()
+leg2 <- get_legend(overlap_plots_deriv$eTIV + theme(legend.title=element_blank())) %>% as_ggplot()
+
+plots_final <- list()
+
+for (pheno_of_int in c("eTIV","GMV","sGMV","WMV",
+                       "Ventricles","Cerebellum.all",
+                       "totalSA","meanCT")) {
+  if (pheno_of_int == "eTIV") {
+    pheno_label <- "Intracranial Volume"
+  } else if (pheno_of_int == "Cerebellum.all") {
+    pheno_label <- "Cerebellum"
+  } else if (pheno_of_int == "totalSA") {
+    pheno_label <- "Cortical Surface Area"
+  } else if (pheno_of_int == "meanCT") {
+    pheno_label <- "Mean Cortical Thickness"
+  } else if (pheno_of_int == "GMV") {
+    pheno_label <- "Gray Matter Volume"
+  } else if (pheno_of_int == "sGMV") {
+    pheno_label <- "Subcortical Gray Matter Volume"
+  } else if (pheno_of_int == "WMV") {
+    pheno_label <- "White Matter Volume"
+  } else {
+    pheno_label <- pheno_of_int
+  }
+  y_scale <- layer_scales(slip_plots[[pheno_of_int]])$y$range$range
+  plots <- list(slip_plots[[pheno_of_int]] + ggtitle("Reference"), 
+                lmsz_plots[[pheno_of_int]] + ggtitle("22q Adjusted"),
+                overlap_plots_deriv[[pheno_of_int]] + ggtitle("Overlap") + scale_y_continuous(limits = y_scale))
+  p1 <- ggarrange(plotlist = plots, nrow = 1, ncol = 3, common.legend = T, legend = "none")
+  p_title <- ggdraw() + draw_label(pheno_label, fontface = "bold")
+  plots_final[[pheno_of_int]] <- ggarrange(p_title, p1, nrow = 2, ncol = 1, heights = c(0.1,1))
+}
+
+p1A <- ggarrange(plotlist = plots_final[1:4], nrow = 4, ncol = 1, common.legend = T, 
+                 legend = "none")
+p1B <- ggarrange(plotlist = plots_final[5:8], nrow = 4, ncol = 1, common.legend = T, 
+                 legend = "none")
+p1 <- ggarrange(p1A, NULL, p1B, widths = c(1,0.1,1), ncol = 3)
+
+p2 <- ggarrange(NULL, leg1, leg2, NULL, nrow = 1, ncol = 4)
+
+```
+
+```{r, fig.height= 12, fig.width=12}
+library(grid)
+p <- ggarrange(p1,p2, heights = c(1,0.08), nrow = 2, ncol = 1)
+x = c(0.5, 0.5)
+y = c(0.08, 0.98)
+id = c(1,1)
+
+p
+grid.polygon(x,y,id,
+             gp = gpar(lty = "solid", lwd = 1, col = "black"))
+save(p, file = "additional_plots/lmsz_v2.rdata")
+```
+
+## Save Table
+
+```{r}
+models_fmt <- models %>% select(-c(m_model, s_model)) %>%
+                  mutate(label = case_match(feature,
+                                            "Cerebellum.all" ~ "Cerebellum",
+                                            "SUBC.Left_Accumbens.area" ~ "SUBC.Left_Accumbens",
+                                            "SUBC.Right_Accumbens.area" ~ "SUBC.Right_Accumbens",
+                                            .default = feature)) %>%
+                  relocate(label, .before = feature) %>%
+                  separate_wider_delim(label, delim = ".", names = c("IDP Group", "IDP"),
+                                       too_few = "align_end") %>%
+                  mutate(`IDP Group` = ifelse(is.na(`IDP Group`), "Global", `IDP Group`),
+                         `IDP Group` = factor(`IDP Group`, levels = c("Global","SUBC","GM","SA","CT")),
+                         across(contains("_coef"), ~ round(.x, 2)),
+                         across(ends_with("IC"), ~ round(.x, 0))) %>%
+                  select(-feature, contains("interaction")) %>%
+                  arrange(`IDP Group`, IDP)
+flextable(models_fmt)
+write_csv(models_fmt, "tables/table_s08_lmsz_models.csv")
+```
+
+## Plot Global Worm Plots
+
+```{r, fig.height = 6, fig.width = 12}
+
+glob_wps <- slip_worm_plots[global_measures]
+for (i in 1:length(global_measures)) {
+  glob_wps[[global_measures[i]]] <- glob_wps[[global_measures[i]]] + ggtitle(global_measure_names[i])
+}
+
+ggarrange(plotlist = glob_wps, nrow = 2, ncol = 4)
+ggsave("figures/figure_s12_wp.png", bg = "white")
+```
+
+## Plot All Worm Plots
+
+```{r}
+final_worm_plots <- list()
+
+glob_subc_feat <- features[grepl("SUBC\\.",features) | !grepl("GM\\.|SA\\.|CT\\.",features)]
+glob_subc_feat <- glob_subc_feat[order(grepl("SUBC\\.",glob_subc_feat))]
+
+for (feature in glob_subc_feat) {
+  final_worm_plots[[feature]] <- slip_worm_plots[[feature]] + ggtitle(feature)
+}
+
+feat <- unique(str_remove_all(features[!(features %in% glob_subc_feat)],"GM\\.|SA\\.|CT\\.|lh_|rh_"))
+# (GM, SA, CT) x (lh, rh) * 4 per page
+for (i in feat) {
+  for (j in c("GM","SA","CT")) {
+    for (k in c("lh","rh")) {
+      feat_name <- glue("{j}.{k}_{i}")
+      final_worm_plots[[feat_name]] <- slip_worm_plots[[feat_name]] + ggtitle(feat_name)
+    }
+  }
+}
+
+```
+
+```{r}
+#| output: false
+library(gridExtra)
+
+ggsave(
+   filename = glue("additional_plots/lmsz_worm_plots.pdf"), 
+   plot = marrangeGrob(final_worm_plots, nrow=8, ncol=6),
+   width = 8.5, height = 11
+)
+```
+
+# Plot All LMSz Charts
+
+```{r, fig.height = 7.5, fig.width = 11}
+PLOTS <- list()
+features_order <- c("eTIV","GMV","sGMV","WMV","Ventricles","Cerebellum.all","totalSA","meanCT",
+                       features[startsWith(features,"GM.")],
+                       features[startsWith(features,"SUBC.")],
+                       features[startsWith(features,"SA.")],
+                       features[startsWith(features,"CT.")])
+for (pheno_of_int in features_order) {
+  
+  if (grepl("CT",pheno_of_int)) {
+    x_breaks <- log(c(365.25*2+280, 
+                      365.25*6+280, 365.25*21+280))
+    x_labs <- c("2y","6y","21y")
+    x_lims <- log(c(365.25*2+280, 365.25*21+280))
+  } else {
+    x_breaks <- log(c(280, 365.25*1+280, 365.25*2+280, 
+                      365.25*6+280, 365.25*21+280))
+    x_labs <- c("0y","1y","2y","6y","21y")
+    x_lims <- log(c(280, 365.25*21+280))
+  }
+  out_fans_plot <- out_fans_slip %>% filter(pheno == pheno_of_int) %>% filter(adjusted_age_days_log >= x_lims[1],adjusted_age_days_log <= x_lims[2])
+  # print(pheno_of_int)
+  p1 <- ggplot(out_fans_plot) +
+            geom_point(data = df, aes(y = get(glue("{pheno_of_int}Transformed.q.zscore")),
+                                      x = adjusted_age_days_log, color=sex, fill=sex), alpha=0.3) +
+            geom_line(aes(x = adjusted_age_days_log, y = LMSz_input_fans,
+                          group = interaction(centile_cat, sex),
+                          color = sex,
+                          linewidth = line_size,
+                          linetype = line_type)) +
+            scale_linewidth_identity() +
+            scale_linetype_identity() +
+            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
+            ggtitle("22q LMSz Trajectory") + ylab("Z-Score") +
+            theme_pubr() +
+            theme(plot.title = element_text(size = 12),
+                  axis.title = element_text(size = 10),
+                  axis.text = element_text(size = 8))
+  
+  p2 <- ggplot(out_fans_plot) +
+            geom_point(data = df, aes(y = get(glue("{pheno_of_int}Transformed.normalised")),
+                                      x = adjusted_age_days_log, color=sex, fill=sex), alpha=0.3) +
+            geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
+                          group = interaction(centile_cat, sex),
+                          color = sex,
+                          linewidth = line_size,
+                          linetype = line_type)) +
+            scale_linewidth_identity() +
+            scale_linetype_identity() +
+            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
+            ggtitle("Original Model") + ylab("Normalized Value") +
+            theme_pubr() +
+            theme(plot.title = element_text(size = 12),
+                  axis.title = element_text(size = 10),
+                  axis.text = element_text(size = 8))
+  
+  p3 <- ggplot(out_fans_plot) +
+            geom_point(data = df, aes(y = get(glue("{pheno_of_int}Transformed.normalised")),
+                                      x = adjusted_age_days_log, color=sex, fill=sex), alpha=0.3) +
+            geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
+                          group = interaction(centile_cat, sex),
+                          color = sex,
+                          linewidth = line_size*1.5,
+                          linetype = line_type)) +
+            scale_linewidth_identity() +
+            scale_linetype_identity() +
+            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
+            ggtitle("LMSz Backtransformed") + ylab("Normalized Value") +
+            theme_pubr() +
+            theme(plot.title = element_text(size = 12),
+                  axis.title = element_text(size = 10),
+                  axis.text = element_text(size = 8))
+  
+  olap_plot <- out_fans_plot %>% 
+                  filter(pheno == pheno_of_int,
+                         centile_cat == "cent_0.5") %>%
+                  pivot_longer(c(SLIP_input_fans, LMSz_fans), 
+                               names_to = "Model", values_to = "Fans") %>%
+                  mutate(Model = str_remove_all(Model, "_input_fans|_fans"))
+  
+  p4 <- ggplot(olap_plot) +
+            geom_line(aes(x = adjusted_age_days_log, y = Fans,
+                          group = interaction(sex, Model),
+                          color = interaction(sex, Model),
+                          linewidth = line_size*1.5,
+                          linetype = line_type)) +
+            scale_linewidth_identity() +
+            scale_linetype_identity() +
+            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
+            scale_color_manual(values = c("#F8766D","#00BFC4","firebrick","royalblue")) +
+            ggtitle("Median Lines") + ylab("Normalized Value") +
+            theme_classic() +
+            theme(plot.title = element_text(size = 12),
+                  axis.title = element_text(size = 10),
+                  axis.text = element_text(size = 8)) +
+            labs(color="")
+  
+  p5 <- slip_worm_plots[[pheno_of_int]]
+  p6 <- ggarrange(p1, p2, p3, ncol = 1, legend = "bottom", common.legend = T)
+  p_title <- ggdraw() + draw_label(pheno_of_int, fontface = "bold")
+  p7 <- ggarrange(p4, p5,ncol = 1, legend = "bottom", common.legend = F)
+  p8 <- ggarrange(p6, p7, ncol = 2)
+  PLOTS[[pheno_of_int]] <- ggarrange(p_title, p8, ncol = 1, heights = c(0.05,1))
+}
+```
+
+```{r}
+library(gridExtra)
+
+ggsave(
+   filename = glue("additional_plots/LMSz_curve_plots.pdf"), 
+   plot = marrangeGrob(PLOTS, nrow=1, ncol=1),
+   width = 11, height = 8.5
+)
+```

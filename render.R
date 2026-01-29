@@ -73,7 +73,7 @@ if(length(args) > 4){
 }
 
 # add date to output filename
-output_file <- paste0(save_markdown_name, "_", Sys.Date(), ".html")
+output_file <- paste0(tools::file_path_sans_ext(rmd_script), "_", save_markdown_name, "_", Sys.Date(), ".html")
 
 # handle markdown saving based on flag
 if(save_markdown_flag == 1){

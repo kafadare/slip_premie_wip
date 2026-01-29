@@ -1,6 +1,6 @@
 output/
 data/
-markdown_output/X
+markdown_output/
 SLIP_25_11/
 *.err
 *.out

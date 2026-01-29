@@ -5,14 +5,16 @@ output:
     df_print: paged
 params:
   output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/"
-  centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/CSV/centile_csv/slip_median_centiles.csv"
+  clean_centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-29.csv"
+  slip_release_folder: "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/"
 ---
 # Define params if they do not exist
 ```{r}
 if (!exists("params")) {
   params <- list(
   output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/",
-  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-27.csv" 
+  clean_centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-27.csv", 
+  slip_release_folder = "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/"
   )
 }
 ``` 
@@ -34,7 +36,8 @@ global_measure_th <- "global_MeanThickness"
 set.seed(42)
 
 output_folder <- params$output_folder
-centiles_path <- params$centiles_path
+clean_centiles_path <- params$clean_centiles_path
+slip_release_folder <- params$slip_release_folder
 ```
 
 # Define Paths
@@ -44,7 +47,7 @@ code_path <- "/mcd dnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
 vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 
 # data paths
-qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
+qc_metrics_path <- glue("{slip_release_folder}derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv")
 gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/mpr/DATA.rds"
 
 # output folder
@@ -276,7 +279,7 @@ vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
 sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
 th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
 
-full_df <- read.csv(centiles_path) %>% select(-("X"))
+full_df <- read.csv(clean_centiles_path) %>% select(-("X"))
 full_df <-  full_df %>% select(-(grep("_Z", names(full_df))))
 if (gamlss_models == TRUE) {
   gamlss_data <- readRDS(gamlss_data_path)

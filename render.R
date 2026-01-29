@@ -88,10 +88,11 @@ if(save_markdown_flag == 1){
     output_file = output_file,
     output_dir  = markdown_output_dir,
     clean       = TRUE,
-    params = params_pass
+    params = params_pass,
+    quiet = FALSE
   )
   
-  print("Markdown rendered, output file saved to: ", file.path(markdown_output_dir, output_file))
+  print("Markdown rendered, output file saved to: ", paste0(markdown_output_dir, output_file))
   
 } else if (save_markdown_flag == 0){
   # Render R Markdown
@@ -100,7 +101,8 @@ if(save_markdown_flag == 1){
     output_format = "html_document",
     output_file = output_file,
     clean = TRUE,
-    params = params_pass
+    params = params_pass,
+    quiet = FALSE
   )
   file.remove(output_file)
   print("Markdown rendered, output file deleted as per save_markdown_flag == 0.")

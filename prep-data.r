@@ -7,6 +7,11 @@ main_data_folder <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_rel
 #Read in raw participants file
 slip_participants <- read.csv(paste0(main_data_folder,"BIDS/participants.tsv"), sep='\t') 
 
+#Deal with BW/GA encoding
+slip_participants$gestational_age <- as.numeric(slip_participants$gestational_age)
+slip_participants$birth_weight_kg <- as.numeric(slip_participants$birth_weight_kg)
+slip_participants$birth_length_cm <- as.numeric(slip_participants$birth_length_cm)
+
 #Check BW/GA missing values
 slip_participants %>%
   group_by(participant_id) %>%
@@ -52,7 +57,8 @@ slip_participants <- slip_participants %>%
         age_days = ifelse(is.na(gestational_age), age_at_scan + 280, age_at_scan + (gestational_age * 7))
     ) %>%
     filter(useable) %>%
-    select(participant_id, subject_id, session_id, sex, age_days, device_serial_number, magnetic_field_strength, avg_grade)
+    select(participant_id, subject_id, session_id, sex, age_days, 
+           device_serial_number, magnetic_field_strength, avg_grade, age_at_scan)
 
 #Read QC data
 qc = read.csv(paste0(main_data_folder,"derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv")) %>%
@@ -99,12 +105,6 @@ slip_scans <- slip_qc_participants %>%
     global_SurfaceArea = rowSums(select(., starts_with("aparc_SurfArea")), na.rm = TRUE)
   )
 
-regions <- colnames(slip_scans)[9:1455]
-regions2 <- colnames(slip_scans)[1454:1455]
-
-write.table(regions, 'data-prep/regions.txt', quote=F, row.names=F)
-write.table(regions2, 'data-prep/regions2.txt', quote=F, row.names=F)
-
 
 slip_median <- slip_scans %>%
   filter(sex != 'Unknown')%>%
@@ -139,7 +139,7 @@ slip_median2 <- slip_median %>%
 slip_mpr2 <- slip_mpr %>%
   filter(avg_grade == 2)
 
-write.csv(slip_median, 'CSV/slip_median.csv', row.names=F)
-write.csv(slip_mpr, 'CSV/slip_mpr.csv', row.names=F)
-write.csv(slip_median2, 'CSV/slip_median2.csv', row.names=F)
-write.csv(slip_mpr2, 'CSV/slip_mpr2.csv', row.names=F)
+write.csv(slip_median, 'raw_csv/slip_median.csv', row.names=F)
+write.csv(slip_mpr, 'raw_csv/slip_mpr.csv', row.names=F)
+write.csv(slip_median2, 'raw_csv/slip_median2.csv', row.names=F)
+write.csv(slip_mpr2, 'raw_csv/slip_mpr2.csv', row.names=F)

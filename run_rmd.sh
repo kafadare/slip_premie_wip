@@ -12,19 +12,16 @@ module load R
 
 INPUT_RMD=$1
 OUTPUT_DIR=$2
+SAVE_MARKDOWN_FLAG=$3
+SAVE_MARKDOWN_NAME=$4
 
-#if no arg supplied, then uses defaults defined inside render.R and input script
-PARAMS_CENTILE=${3:-""}
-OUTPUT_BASE=${4:-""}
+shift 4
 
-#conda init
-#conda activate slip_premie
+echo "Running R script: $R_SCRIPT"
+echo "Output Directory: $OUTPUT_DIR"
+echo "Save Markdown Flag: $SAVE_MARKDOWN_FLAG"
+echo "Save Markdown Name: $SAVE_MARKDOWN_NAME"
+echo "Additional arguments: $@"
 
-# --- Build command depending on which args are supplied ---
-if [ -n "$PARAMS_CENTILE" ] && [ -n "$OUTPUT_BASE" ]; then
-Rscript render.R "$INPUT_RMD" "$OUTPUT_DIR" "$PARAMS_CENTILE" "$OUTPUT_BASE"
-elif [ -n "$PARAMS_CENTILE" ]; then
-Rscript render.R "$INPUT_RMD" "$OUTPUT_DIR" "$PARAMS_CENTILE"
-else
-  Rscript render.R "$INPUT_RMD" "$OUTPUT_DIR"
-fi
+Rscript render.R "$INPUT_RMD" "$OUTPUT_DIR" $SAVE_MARKDOWN_FLAG $SAVE_MARKDOWN_NAME $@
+

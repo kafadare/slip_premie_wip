@@ -19,31 +19,25 @@ set.seed(42)
 ```{r}
 #set folder paths
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
-vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/data_processed_csv/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
+centiles_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/"
 
 #raw data paths
 data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
-qc_metrics_path <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_03_release/derivatives/recon-all-clinical/fs7.4.1-clinical-reconall-qc.csv"
 gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/mpr/DATA.rds"
 #processed data path
-distinct_centiles_data_path <- paste0(vars_path,"liza_median_distinct_clean_2026-01-08.csv")
-all_centiles_data_path <- paste0(vars_path,"liza_median_all_clean_2026-01-08.csv")
+distinct_centiles_data_path <- paste0(centiles_path,"centiles_distinct_2026-01-29.csv")
+all_centiles_data_path <- paste0(centiles_path,"centiles_all_2026-01-29.csv")
 #output folder
-save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-liza/"
+save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/"
 
 ## output subfolder paths
 csv_save_path <-  paste0(save_path, "results_csv/")
-plot_save_path <- paste0(save_path, "plots/")
-betas_folder <- paste0(csv_save_path, "full_betas/")
-if (!dir.exists(betas_folder)) dir.create(betas_folder)
-dkt_folder <- paste0(csv_save_path, "dkt_betas/")
-if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
-
+plot_save_path <- paste0(save_path, "plots/distribution_plots/")
+if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
 ```
 #Load custom functions
 ```{r}
-source(paste0(code_path,"sliding_window.R"))
-
 panel_save <- function(plot, filename, extension, folder){
   save_name <- paste0(folder, filename, ".", extension)
   ggsave(save_name, plot = plot, dpi = 300)
@@ -80,174 +74,13 @@ low_color = "#4878CF"
 mid_color = "white"
 high_color = "#D65F5F"
 ```
-#Plotting helper vectors, name-mapping
-```{r}
-#df to map variable names onto names displayed on figures
-name_mapping <- data.frame(
-  abbreviation = c(
-     "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_cdk_total",   
-     "totalWM_cb", "totalWM_crb", "totalGM_crb",
-     
-    "smri_vol_scs_cbwmatterlh", "smri_vol_scs_ltventriclelh", "smri_vol_scs_inflatventlh",
-    "smri_vol_scs_crbwmatterlh", "smri_vol_scs_crbcortexlh", "smri_vol_scs_tplh",
-    "smri_vol_scs_caudatelh", "smri_vol_scs_putamenlh", "smri_vol_scs_pallidumlh",
-    "smri_vol_scs_3rdventricle", "smri_vol_scs_4thventricle", "smri_vol_scs_bstem",
-    "smri_vol_scs_hpuslh", "smri_vol_scs_amygdalalh", "smri_vol_scs_csf",
-    "smri_vol_scs_lesionlh", "smri_vol_scs_aal", "smri_vol_scs_vedclh",
-    
-    "smri_vol_scs_cbwmatterrh", "smri_vol_scs_ltventriclerh", "smri_vol_scs_inflatventrh",
-    "smri_vol_scs_crbwmatterrh", "smri_vol_scs_crbcortexrh", "smri_vol_scs_tprh",
-    "smri_vol_scs_caudaterh", "smri_vol_scs_putamenrh", "smri_vol_scs_pallidumrh",
-    "smri_vol_scs_hpusrh", "smri_vol_scs_amygdalarh", "smri_vol_scs_lesionrh",
-    "smri_vol_scs_aar", "smri_vol_scs_vedcrh", 
-    
-    "smri_vol_scs_wmhint",
-    "smri_vol_scs_wmhintlh", "smri_vol_scs_wmhintrh", 
-    
-    "smri_vol_scs_ccps",
-    "smri_vol_scs_ccmidps", "smri_vol_scs_ccct", "smri_vol_scs_ccmidat",
-    "smri_vol_scs_ccat", 
-    
-    "smri_vol_scs_wholeb", "smri_vol_scs_latventricles",
-    "smri_vol_scs_allventricles", "smri_vol_scs_intracranialv", "smri_vol_scs_suprateialv",
-    "smri_vol_scs_subcorticalgv",
-    
-    "smri_vol_cdk_banksstslh", "smri_vol_cdk_cdacatelh", "smri_vol_cdk_cdmdfrlh",
-    "smri_vol_cdk_cuneuslh", "smri_vol_cdk_ehinallh", "smri_vol_cdk_fusiformlh",
-    "smri_vol_cdk_ifpllh", "smri_vol_cdk_iftmlh", "smri_vol_cdk_ihcatelh",
-    "smri_vol_cdk_locclh", "smri_vol_cdk_lobfrlh", "smri_vol_cdk_linguallh",
-    "smri_vol_cdk_mobfrlh", "smri_vol_cdk_mdtmlh", "smri_vol_cdk_parahpallh",
-    "smri_vol_cdk_paracnlh", "smri_vol_cdk_parsopclh", "smri_vol_cdk_parsobislh",
-    "smri_vol_cdk_parstgrislh", "smri_vol_cdk_pericclh", "smri_vol_cdk_postcnlh",
-    "smri_vol_cdk_ptcatelh", "smri_vol_cdk_precnlh", "smri_vol_cdk_pclh",
-    "smri_vol_cdk_rracatelh", "smri_vol_cdk_rrmdfrlh", "smri_vol_cdk_sufrlh",
-    "smri_vol_cdk_supllh", "smri_vol_cdk_sutmlh", "smri_vol_cdk_smlh",
-    "smri_vol_cdk_frpolelh", "smri_vol_cdk_tmpolelh", "smri_vol_cdk_trvtmlh",
-    "smri_vol_cdk_insulalh",
-    
-     "smri_vol_cdk_banksstsrh", "smri_vol_cdk_cdacaterh", "smri_vol_cdk_cdmdfrrh",
-    "smri_vol_cdk_cuneusrh", "smri_vol_cdk_ehinalrh", "smri_vol_cdk_fusiformrh",
-    "smri_vol_cdk_ifplrh", "smri_vol_cdk_iftmrh", "smri_vol_cdk_ihcaterh",
-    "smri_vol_cdk_loccrh", "smri_vol_cdk_lobfrrh", "smri_vol_cdk_lingualrh",
-    "smri_vol_cdk_mobfrrh", "smri_vol_cdk_mdtmrh", "smri_vol_cdk_parahpalrh",
-    "smri_vol_cdk_paracnrh", "smri_vol_cdk_parsopcrh", "smri_vol_cdk_parsobisrh",
-    "smri_vol_cdk_parstgrisrh", "smri_vol_cdk_periccrh", "smri_vol_cdk_postcnrh",
-    "smri_vol_cdk_ptcaterh", "smri_vol_cdk_precnrh", "smri_vol_cdk_pcrh",
-    "smri_vol_cdk_rracaterh", "smri_vol_cdk_rrmdfrrh", "smri_vol_cdk_sufrrh",
-    "smri_vol_cdk_suplrh", "smri_vol_cdk_sutmrh", "smri_vol_cdk_smrh",
-    "smri_vol_cdk_frpolerh", "smri_vol_cdk_tmpolerh", "smri_vol_cdk_trvtmrh",
-    "smri_vol_cdk_insularh"
-  ),
-  region_name = c(
-    "Left-Cerebral_Cortex", "Right-Cerebral-Cortex", "Total-Cerebral-Cortex",
-    "Total_Cerebral-WM", "Total_Cerebellum-WM", "Total-Cerebellum-Cortex",
-    
-    "Left-Cerebral-White-Matter", "Left-Lateral-Ventricle", "Left-Inf-Lat-Vent",
-    "Left-Cerebellum-White-Matter", "Left-Cerebellum-Cortex", "Left-Thalamus-Proper",
-    "Left-Caudate", "Left-Putamen", "Left-Pallidum",
-    "x3rd-ventricle", "x4th-ventricle", "Brain-Stem",
-    "Left-Hippocampus", "Left-Amygdala", "Cerebrospinal-Fluid",
-    "Left-Lesion", "Left-Accumbens-Area", "Left-VentralDC",
-    
-   "Right-Cerebral-White-Matter", "Right-Lateral-Ventricle", "Right-Inf-Lat-Vent",
-    "Right-Cerebellum-White-Matter", "Right-Cerebellum-Cortex", "Right-Thalamus-Proper",
-    "Right-Caudate", "Right-Putamen", "Right-Pallidum",
-    "Right-Hippocampus", "Right-Amygdala",
-    "Right-Lesion", "Right-Accumbens-Area", "Right-VentralDC",
-    
-    "WM-Hypointensities","Left-WM-Hypointensities", "Right-WM-Hypointensities",
-   
-   "CC_Posterior","CC_Mid_Posterior", "CC_Central", "CC_Mid_Anterior",
-    "CC_Anterior", 
-   
-   "WholeBrain", "LatVentricles","AllVentricles", "IntracranialVolume", 
-   "SupratentorialVolume", "SubcorticalGrayVolume",
-   
-     "lh_bankssts", "lh_caudalanteriorcingulate", "lh_caudalmiddlefrontal",
-    "lh_cuneus", "lh_entorhinal", "lh_fusiform",
-    "lh_inferiorparietal", "lh_inferiortemporal", "lh_isthmuscingulate",
-    "lh_lateraloccipital", "lh_lateralorbitofrontal", "lh_lingual",
-    "lh_medialorbitofrontal", "lh_middletemporal", "lh_parahippocampal",
-    "lh_paracentral", "lh_parsopercularis", "lh_parsorbitalis",
-    "lh_parstriangularis", "lh_pericalcarine", "lh_postcentral",
-    "lh_posteriorcingulate", "lh_precentral", "lh_precuneus", "lh_rostralanteriorcingulate",
-    "lh_rostralmiddlefrontal", "lh_superiorfrontal", "lh_superiorparietal",
-    "lh_superiortemporal", "lh_supramarginal", "lh_frontalpole",
-    "lh_temporalpole", "lh_transversetemporal", "lh_insula",
-   
-     "rh_bankssts", "rh_caudalanteriorcingulate", "rh_caudalmiddlefrontal",
-    "rh_cuneus", "rh_entorhinal", "rh_fusiform",
-    "rh_inferiorparietal", "rh_inferiortemporal", "rh_isthmuscingulate",
-    "rh_lateraloccipital", "rh_lateralorbitofrontal", "rh_lingual",
-    "rh_medialorbitofrontal", "rh_middletemporal", "rh_parahippocampal",
-    "rh_paracentral", "rh_parsopercularis", "rh_parsorbitalis",
-    "rh_parstriangularis", "rh_pericalcarine", "rh_postcentral",
-    "rh_posteriorcingulate", "rh_precentral", "rh_precuneus", "rh_rostralanteriorcingulate",
-    "rh_rostralmiddlefrontal", "rh_superiorfrontal", "rh_superiorparietal",
-    "rh_superiortemporal", "rh_supramarginal", "rh_frontalpole",
-    "rh_temporalpole", "rh_transversetemporal", "rh_insula"
-    )
-)
-
-phenotypes_for_MC <- c(
-    "smri_vol_scs_ltventriclelh", "smri_vol_scs_inflatventlh",
-    "smri_vol_scs_crbwmatterlh", "smri_vol_scs_crbcortexlh", "smri_vol_scs_tplh",
-    "smri_vol_scs_caudatelh", "smri_vol_scs_putamenlh", "smri_vol_scs_pallidumlh",
-    "smri_vol_scs_3rdventricle", "smri_vol_scs_4thventricle", "smri_vol_scs_bstem",
-    "smri_vol_scs_hpuslh", "smri_vol_scs_amygdalalh", "smri_vol_scs_aal", "smri_vol_scs_vedclh",
-    
-    "smri_vol_scs_ltventriclerh", "smri_vol_scs_inflatventrh",
-    "smri_vol_scs_crbwmatterrh", "smri_vol_scs_crbcortexrh", "smri_vol_scs_tprh",
-    "smri_vol_scs_caudaterh", "smri_vol_scs_putamenrh", "smri_vol_scs_pallidumrh",
-    "smri_vol_scs_hpusrh", "smri_vol_scs_amygdalarh",
-    "smri_vol_scs_aar", "smri_vol_scs_vedcrh", 
-    
-    "smri_vol_scs_ccps",
-    "smri_vol_scs_ccmidps", "smri_vol_scs_ccct", "smri_vol_scs_ccmidat",
-    "smri_vol_scs_ccat",
-    
-    "smri_vol_cdk_banksstslh", "smri_vol_cdk_cdacatelh", "smri_vol_cdk_cdmdfrlh",
-    "smri_vol_cdk_cuneuslh", "smri_vol_cdk_ehinallh", "smri_vol_cdk_fusiformlh",
-    "smri_vol_cdk_ifpllh", "smri_vol_cdk_iftmlh", "smri_vol_cdk_ihcatelh",
-    "smri_vol_cdk_locclh", "smri_vol_cdk_lobfrlh", "smri_vol_cdk_linguallh",
-    "smri_vol_cdk_mobfrlh", "smri_vol_cdk_mdtmlh", "smri_vol_cdk_parahpallh",
-    "smri_vol_cdk_paracnlh", "smri_vol_cdk_parsopclh", "smri_vol_cdk_parsobislh",
-    "smri_vol_cdk_parstgrislh", "smri_vol_cdk_pericclh", "smri_vol_cdk_postcnlh",
-    "smri_vol_cdk_ptcatelh", "smri_vol_cdk_precnlh", "smri_vol_cdk_pclh",
-    "smri_vol_cdk_rracatelh", "smri_vol_cdk_rrmdfrlh", "smri_vol_cdk_sufrlh",
-    "smri_vol_cdk_supllh", "smri_vol_cdk_sutmlh", "smri_vol_cdk_smlh",
-    "smri_vol_cdk_frpolelh", "smri_vol_cdk_tmpolelh", "smri_vol_cdk_trvtmlh",
-    "smri_vol_cdk_insulalh",
-    
-     "smri_vol_cdk_banksstsrh", "smri_vol_cdk_cdacaterh", "smri_vol_cdk_cdmdfrrh",
-    "smri_vol_cdk_cuneusrh", "smri_vol_cdk_ehinalrh", "smri_vol_cdk_fusiformrh",
-    "smri_vol_cdk_ifplrh", "smri_vol_cdk_iftmrh", "smri_vol_cdk_ihcaterh",
-    "smri_vol_cdk_loccrh", "smri_vol_cdk_lobfrrh", "smri_vol_cdk_lingualrh",
-    "smri_vol_cdk_mobfrrh", "smri_vol_cdk_mdtmrh", "smri_vol_cdk_parahpalrh",
-    "smri_vol_cdk_paracnrh", "smri_vol_cdk_parsopcrh", "smri_vol_cdk_parsobisrh",
-    "smri_vol_cdk_parstgrisrh", "smri_vol_cdk_periccrh", "smri_vol_cdk_postcnrh",
-    "smri_vol_cdk_ptcaterh", "smri_vol_cdk_precnrh", "smri_vol_cdk_pcrh",
-    "smri_vol_cdk_rracaterh", "smri_vol_cdk_rrmdfrrh", "smri_vol_cdk_sufrrh",
-    "smri_vol_cdk_suplrh", "smri_vol_cdk_sutmrh", "smri_vol_cdk_smrh",
-    "smri_vol_cdk_frpolerh", "smri_vol_cdk_tmpolerh", "smri_vol_cdk_trvtmrh",
-    "smri_vol_cdk_insularh"
-  )
-
-global_phenotypes <- c("smri_vol_cdk_total", "totalWM_cb", "smri_vol_scs_allventricles", "smri_vol_scs_subcorticalgv")
-
-phenotypes_to_fit <- (c(phenotypes_for_MC, global_phenotypes, "smri_vol_scs_wholeb", "smri_vol_scs_wholeb", "totalWM_crb", "totalGM_crb", "smri_vol_scs_csf", "smri_vol_cdk_totallh", "smri_vol_cdk_totalrh", "smri_vol_scs_cbwmatterlh", "smri_vol_scs_cbwmatterrh"))
-
-#save phenotypes not plotted with ggseg surface plots
-plot_data_dkt <- merge(name_mapping, ggseg::dk, by.x = "region_name", by.y = "label")
-plot_data_aseg <- merge(name_mapping, ggseg::aseg, by.x = "region_name", by.y = "label")
-```
 #Read in data files
 ```{r, echo = FALSE}
-all_vars <- read.csv(paste0(vars_path,"all_vars2025-12-05.csv")) %>% pull(x)
-global_vars <- read.csv(paste0(vars_path,"global_vars2025-12-05.csv")) %>% pull(x)
-vol_vars <- read.csv(paste0(vars_path,"vol_vars2025-12-05.csv")) %>% pull(x)
-sa_vars <- read.csv(paste0(vars_path,"sa_vars2025-12-05.csv")) %>% pull(x)
-th_vars <- read.csv(paste0(vars_path,"th_vars2025-12-05.csv")) %>% pull(x)
+all_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
 
 cent_distinct <- read.csv(distinct_centiles_data_path) %>% select(-("X"))
 cent_all <- read.csv(all_centiles_data_path) %>% select(-("X"))
@@ -274,8 +107,8 @@ sum(!is.na(cent_distinct$birth_weight_kg))
 sum(!is.na(cent_distinct$gestational_age))
 sum(!is.na(cent_distinct$birth_weight_kg) & !is.na(cent_distinct$gestational_age))
 
-cent_distinct <- cent_distinct %>% filter(adjusted_age_years <= 21)
-cent_all <- cent_all %>% filter(adjusted_age_years <= 21)
+#cent_distinct <- cent_distinct %>% filter(adjusted_age_years <= 21)
+#cent_all <- cent_all %>% filter(adjusted_age_years <= 21)
 
 #GA/BW Numbers after removing > 21
 sum(!is.na(cent_distinct$birth_weight_kg))
@@ -345,7 +178,7 @@ N_none <- sum(is.na(cent_distinct$gestational_age) & is.na(cent_distinct$birth_w
 
 
 (age_dist_all_plot <- ggplot(cent_distinct, aes(x = adjusted_age_years)) +
-  geom_histogram(binwidth = 0.1, fill = "grey70", color = "white") +
+  geom_histogram(binwidth = 0.1, fill = "#B3B3B3", color = "white", linewidth = 0.1) +
   labs(
     x = paste0("Adjusted Age (years),  N = ", N_all),
     y = NULL,
@@ -356,6 +189,7 @@ N_none <- sum(is.na(cent_distinct$gestational_age) & is.na(cent_distinct$birth_w
     panel.grid = element_blank(),
     plot.title = element_text(hjust = 0.5)
   ))
+
 
 if(save_figs == TRUE){
 panel_save(age_dist_all_plot, "age-dist-all", "pdf", plot_save_path)
@@ -379,7 +213,7 @@ df_age <- cent_distinct %>%
   )))
 
 (age_dist_gabw_plot <- ggplot(df_age, aes(x = adjusted_age_years, fill = group)) +
-  geom_histogram(binwidth = 0.1, color = "white") +
+  geom_histogram(binwidth = 0.1, color = "white", linewidth = 0.1) +
   scale_fill_manual(
     values = c(
       "Only GA Known" = "#9EC3D2",
@@ -417,7 +251,7 @@ panel_save(age_dist_gabw_plot, "age-dist-gabw_all", "pdf", plot_save_path)
 N_age_ga <- sum(!is.na(cent_distinct$gestational_age))
 
 (age_dist_ga_plot <- ggplot(cent_distinct %>% filter(!is.na(gestational_age)), aes(x = adjusted_age_years)) +
-  geom_histogram(binwidth = 0.1, fill = "#9EC3D2", color = "white") +
+  geom_histogram(binwidth = 0.1, fill = "#9EC3D2", color = "white", linewidth = 0.1) +
   labs(
     x = paste0("Adjusted Age (years),  N = ", N_age_ga),
     y = NULL,
@@ -437,7 +271,7 @@ panel_save(age_dist_ga_plot, "age-dist-ga", "pdf", plot_save_path)
 N_age_bw <- sum(!is.na(cent_distinct$birth_weight_kg))
 
 (age_dist_bw_plot <- ggplot(cent_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = adjusted_age_years)) +
-  geom_histogram(binwidth = 0.1, fill = "#D6B8A8", color = "white") +
+  geom_histogram(binwidth = 0.1, fill = "#D6B8A8", color = "white", linewidth = 0.1) +
   labs(
     x = paste0("Adjusted Age (years),  N = ", N_age_bw),
     y = NULL,

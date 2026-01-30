@@ -82,7 +82,7 @@ if (!dir.exists(output_folder)) dir.create(output_folder)
 ##  output subfolder paths
 csv_output_folder <-  paste0(output_folder, "results_csv/")
 if (!dir.exists(csv_output_folder)) dir.create(csv_output_folder)
-plot_output_folder <- paste0(output_folder, "plots/")
+plot_output_folder <- paste0(output_folder, "plots/centile_reg_plots/")
 if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
 betas_folder <- paste0(csv_output_folder, "full_betas/")
 if (!dir.exists(betas_folder)) dir.create(betas_folder)

@@ -92,7 +92,7 @@ if(save_markdown_flag == 1){
     quiet = FALSE
   )
   
-  print("Markdown rendered, output file saved to: ", paste0(markdown_output_dir, output_file))
+  print(paste0("Markdown rendered, output file saved to: ", markdown_output_dir, output_file))
   
 } else if (save_markdown_flag == 0){
   # Render R Markdown

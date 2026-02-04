@@ -220,15 +220,17 @@ print(glue("Within DISTINCT participants; participants with GA available {sum(!i
 ## exclusions
 ```{r}
 ##set bw > 1000kg to NA
-bw_absurd <- sum(centiles_distinct$birth_weight_kg  > 1000, na.rm = TRUE)
+bw_absurd <- sum(centiles_distinct$birth_weight_kg  > 10 | centiles_distinct$birth_weight_kg < 0.3, na.rm = TRUE)
 print(paste0("WITHIN DISTINCT DF: Number of data points set to NA for recorded BW > 1000kg: ", bw_absurd))
-centiles_distinct$birth_weight_kg[centiles_distinct$birth_weight_kg>1000] <- NA
+centiles_distinct$birth_weight_kg[centiles_distinct$birth_weight_kg  > 10 | centiles_distinct$birth_weight_kg < 0.3] <- NA
 ##remove >4SDs
 bw_mean <- mean(centiles_distinct$birth_weight_kg, na.rm = TRUE)
 bw_sd <- sd(centiles_distinct$birth_weight_kg, na.rm = TRUE)
 #apply QC function
-centiles_distinct <- slip_bwga_qc(cent_df = centiles_distinct, bw_mean = bw_mean, bw_sd = bw_sd,  bw_sd_limit = 4)
-centiles_all <- slip_bwga_qc(cent_df = centiles_all, bw_mean = bw_mean, bw_sd = bw_sd, bw_sd_limit = 4)
+centiles_distinct <- slip_bwga_qc(cent_df = centiles_distinct, bw_mean = bw_mean, bw_sd = bw_sd,
+                                  bw_sd_limit = 4, ga_low_limit = 21, ga_high_limit = 42)
+centiles_all <- slip_bwga_qc(cent_df = centiles_all, bw_mean = bw_mean, bw_sd = bw_sd, 
+                             bw_sd_limit = 4, ga_low_limit = 22, ga_high_limit = 42)
 ```
 
 ## BW/GA numbers after exclusions

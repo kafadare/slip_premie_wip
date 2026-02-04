@@ -5,16 +5,13 @@ slip_centdf_clean <- function (cent_df, participant_df, qc_df, type = c("median"
                                                           "session_id", 
                                                           "age_at_scan", 
                                                           "adjusted_age_in_days",
+                                                          "gestational_age",
+                                                          "birth_weight_kg",
+                                                          "birth_length_cm",
                                                           "avg_grade",
                                                           "height_at_enc",
                                                           "weight_at_enc",
                                                           "year_of_scan")), by = c("participant_id", "session_id"), 
-                     all.x = TRUE, all.y = FALSE)
-  
-  cent_df <- merge(cent_df, participant_df %>% select(c("participant_id",
-                                                          "gestational_age",
-                                                          "birth_weight_kg",
-                                                          "birth_length_cm")), by = c("participant_id"), 
                      all.x = TRUE, all.y = FALSE)
   
   ##Merge centile tables with QC metrics

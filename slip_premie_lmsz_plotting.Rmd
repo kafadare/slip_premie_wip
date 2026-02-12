@@ -135,7 +135,7 @@ inf_nan_table %>% filter(inf > 0)
 df <- df %>% mutate(across(all_of(zscore_vars_names), ~ replace(., is.infinite(.), NaN)))
 ```
 
-#Load LMSz dfs and model paths
+# Load LMSz dfs and model paths
 ```{r}
 models_vpm <- read.csv(glue("{csv_save_path}lmsz_models_vpm.csv"))
 df_vpm <- read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_vpm.csv"))

@@ -55,7 +55,7 @@ centiles_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output
 models_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
 
 # output folder
-save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_25.11/"
+save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_25.11_new/"
 
 ##  output subfolder paths
 csv_save_path <-  paste0(save_path, "results_csv/")
@@ -81,6 +81,9 @@ global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
 vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
 sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
 th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+
+## remove aseg_CC_Central and "aseg_CC_Mid_Posterior" from the features because there is one NaN value in the centiles causing issues. In the future will edit the functions to deal with this and/or figure out why there is this NaN value.
+full_vars <- full_vars[!(full_vars %in% c("aseg_CC_Central", "aseg_CC_Mid_Posterior"))]
 ```
 # Load Clean Data
 ```{r}
@@ -92,7 +95,7 @@ df <- read.csv(centiles_data_path) %>% select(-"X") #%>%
 ```{r}
 df_raw <- read.csv(raw_data_path) %>% select(all_of(c(full_vars, "participant_id", "session_id", "sex", "age_days",
                                                       "site", "avg_grade", "age_at_scan"))) %>%
-  mutate(across(all_of(full_vars), ~c(scale(.)), .names = "{.col}.raw_normalised")) %>%
+  #mutate(across(all_of(full_vars), ~c(scale(.)), .names = "{.col}.raw_normalised")) %>%
   rename_with(~paste0(.x, ".raw"), all_of(full_vars))
 
 shared_names <- intersect(names(df_raw), names(df))
@@ -112,6 +115,8 @@ df <- df %>%
 df$sex <- as.factor(df$sex)
 df$preterm <- as.factor(df$preterm)
 zscore_vars_names <- paste0(full_vars, ".zscore")
+raw_vars_names <- paste0(full_vars, ".raw")
+#rawnorm_vars_names <- paste0(full_vars, ".raw_normalised")
 ```
 
 ## find Inf cells, make a table of N per phenotype, then convert to NaN
@@ -127,18 +132,14 @@ inf_nan_table %>% filter(inf > 0)
 
 ## set Inf cells to NaN
 ```{r}
-df <- df %>% 
-  mutate(across(all_of(zscore_vars_names), ~ replace(., is.infinite(.), NaN)))
+df <- df %>% mutate(across(all_of(zscore_vars_names), ~ replace(., is.infinite(.), NaN)))
 ```
 
-#Load LMSz dfs and model paths
+# Load LMSz dfs and model paths
 ```{r}
 models_vpm <- read.csv(glue("{csv_save_path}lmsz_models_vpm.csv"))
 df_vpm <- read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_vpm.csv"))
 models_vpm_path <- glue("{save_path}lmsz_models_vpm/")
-
-models_vpm <- models_vpm %>% mutate(across(names(models_vpm)[grepl("coef", names(models_vpm))],
-                                as.numeric(.), .names = "{.col}"))
 
 models_lpm <- read.csv(glue("{csv_save_path}lmsz_models_lpm.csv"))
 df_lpm <- read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_lpm.csv"))
@@ -150,12 +151,15 @@ models_vpm[,vpm_col_fix] <- NA_real_
 
 lpm_col_fix <- models_lpm %>% select(names(models_lpm)[grepl("coef", names(models_lpm))] & is.logical) %>% colnames()
 models_lpm[,lpm_col_fix] <- NA_real_
+
+## Load previously calculated centile fans
+out_fans_slip <- read.csv(glue("{csv_save_path}lmsz_centfans_vpm_uncorrected.csv"))
 ```
 
 # Visualize Model Output on Brain Maps
 ## Plots specifications
 ```{r, echo = TRUE}
-limits = c(-3, 3)
+#limits = c(-3, 3)
 low_color = "#4878CF"
 mid_color = "white"
 high_color = "#D65F5F"
@@ -786,57 +790,32 @@ panel_save(lpm_th_sigma_sex_dk_plot, "lpm-th-sigma-sex-dk", "pdf", plot_save_pat
 }
 ```
 
-## Backtransform Centiles VPM
-```{r}
-##simulation frames, log days age and sex
-#between 280 days (40 weeks gestation) and 21 years
-sim_list_slip <- list()
-sim_list_slip$Male <- expand.grid(adjusted_age_days_log = seq(log(280),log(365.25*21+280),0.01),
-                                  sex = c("Male"))
-sim_list_slip$Female <- expand.grid(adjusted_age_days_log = seq(log(280),log(365.25*21+280),0.01),
-                                    sex = c("Female"))
 
-#| results: false
-for (pheno in full_vars) {
-  print(pheno)
-  tmp <-  backtransform_centile_fans(pheno, 
-                                     glue("{save_path}lmsz_models_vpm/"), 
-                                     sim_list_slip, 
-                                     df_vpm)
-  if (pheno == full_vars[1]) {
-    out_fans_slip <- tmp
-  } else {
-    out_fans_slip <- bind_rows(out_fans_slip, tmp)
-  }
-}
-```
+# Trajectory Plots 
 
-## Save centile fans calculated
+## Fix scale of out_fans (need to check which scales are really off first)
 ```{r}
-write_csv(out_fans_slip, glue("{csv_save_path}lmsz_centfans_vpm.csv"))
-```
-
-```{r}
-# CT scale is off and eTIV fans are doubled. Provide manual correction
+#Scale all phenotypes by 1000
 out_fans_slip <- out_fans_slip %>% 
-                          mutate(SLIP_input_fans = ifelse(grepl("Thick",pheno),
-                                                          SLIP_input_fans*1000,
-                                                          SLIP_input_fans),
-                                 LMSz_fans = ifelse(grepl("Thick",pheno),
-                                                          LMSz_fans*1000,
-                                                          LMSz_fans)) %>% 
-                          mutate(SLIP_input_fans = ifelse(pheno == "eTIV",
-                                                          SLIP_input_fans/2,
-                                                          SLIP_input_fans),
-                                 LMSz_fans = ifelse(pheno == "eTIV",
-                                                          LMSz_fans/2,
-                                                          LMSz_fans))
+                          mutate(SLIP_input_fans = SLIP_input_fans*1000,
+                                 LMSz_fans = LMSz_fans*1000)
+# CT scale is off and eTIV fans are doubled. Provide manual correction
+# out_fans_slip <- out_fans_slip %>% 
+#                           mutate(SLIP_input_fans = ifelse(grepl("Thick",pheno),
+#                                                           SLIP_input_fans*1000,
+#                                                           SLIP_input_fans),
+#                                  LMSz_fans = ifelse(grepl("Thick",pheno),
+#                                                           LMSz_fans*1000,
+#                                                           LMSz_fans)) #%>% 
+                          # mutate(SLIP_input_fans = ifelse(pheno == "eTIV",
+                          #                                 SLIP_input_fans/2,
+                          #                                 SLIP_input_fans),
+                          #        LMSz_fans = ifelse(pheno == "eTIV",
+                          #                                 LMSz_fans/2,
+                          #                                 LMSz_fans))
 ```
 
-# Generate Plots
-
-## Plot SLIP and LMSz Global Trajectories
-
+## Plot SLIP and LMSz trajectories
 ```{r}
 x_breaks <- log(c(280, 365.25*1+280, 365.25*2+280, 
                   365.25*6+280, 365.25*21+280))
@@ -861,35 +840,36 @@ mult <- 1
 out_fans_plot <- out_fans_slip
 for (pheno_of_int in pheno_list_to_plot) {
   df_plot <- df_vpm
-  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.zscore")]]
+  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.raw")]]
   df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
-  if (grepl("SurfaceArea",pheno_of_int)) {
-    ylab_text <- bquote('Surface Area')
-  } else if (grepl("MeanThickness",pheno_of_int)) {
-    ylab_text <- bquote('Thickness')
-    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
-  } else {
-    ylab_text <- bquote('Volume')
-  }
-  if(pheno_of_int == "global_SurfaceArea") {
-    pheno_label <- "Cortical Surface Area"
-  } else if (pheno_of_int == "meanCT") {
-    pheno_label <- "global_MeanThickness"
-  } else if (pheno_of_int == "global_eTIV") {
-    pheno_label <- "Intracranial Volume"
-  } 
+  # if (grepl("SurfaceArea",pheno_of_int)) {
+  #   ylab_text <- bquote('Surface Area')
+  # } else if (grepl("MeanThickness",pheno_of_int)) {
+  #   ylab_text <- bquote('Thickness')
+  #   df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
+  # } else {
+  #   ylab_text <- bquote('Volume')
+  # }
+  # if(pheno_of_int == "global_SurfaceArea") {
+  #   pheno_label <- "Cortical Surface Area"
+  # } else if (pheno_of_int == "meanCT") {
+  #   pheno_label <- "global_MeanThickness"
+  # } else if (pheno_of_int == "global_eTIV") {
+  #   pheno_label <- "Intracranial Volume"
+  # } 
   #else if (pheno_of_int == "Cerebellum.all") {
     #pheno_label <- "Cerebellum"
   #} 
-  else if (pheno_of_int == "global_CortexVol") {
-    pheno_label <- "Gray Matter Volume"
-  } else if (pheno_of_int == "global_SubCortGrayVol") {
-    pheno_label <- "Subcortical Gray Matter Volume"
-  } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
-    pheno_label <- "White Matter Volume"
-  } else {
-    pheno_label <- pheno_of_int
-  }
+  # else if (pheno_of_int == "global_CortexVol") {
+  #   pheno_label <- "Gray Matter Volume"
+  # } else if (pheno_of_int == "global_SubCortGrayVol") {
+  #   pheno_label <- "Subcortical Gray Matter Volume"
+  # } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
+  #   pheno_label <- "White Matter Volume"
+  # } else {
+  #   pheno_label <- pheno_of_int
+  # }
+  pheno_label <- pheno_of_int
   out_fans_plot <- out_fans_slip %>% 
                     filter(pheno == pheno_of_int,
                            !(centile_cat %in% c("cent_0.25", "cent_0.75"))) %>%
@@ -948,12 +928,13 @@ for (pheno_of_int in pheno_list_to_plot) {
   lmsz_plots[[pheno_of_int]] <- lmsz_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
 }
 
-#p1_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
-#                                  x = 0.5, hjust = 0.5, fontface = "bold")
-#p1 <- ggarrange(plotlist =  slip_plots, nrow = 1, legend = "none", common.legend = T)
-#p2_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
-#                                  x = 0.5, hjust = 0.5, fontface = "bold")
-#p2 <- ggarrange(plotlist =  lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
+p1_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p1 <- ggarrange(plots =  slip_plots, nrow = 5, legend = "none", common.legend = T)
+
+p2_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p2 <- ggarrange(plots =  lmsz_plots, nrow = 5, legend = "bottom", common.legend = T)
 # p_fits <- ggarrange(p1_title, p1, 
 #                 p2_title, p2, 
 #                 nrow = 2, ncol = 2, widths = c(0.1,1.2),
@@ -969,45 +950,43 @@ p_fits
 
 ```{r}
 #| output: false
-# eTIV, WMV, GMV, sGMV, totalSA, meanCT
-
 overlap_plots_male <- list()
 overlap_plots_female <- list()
 overlap_plots_deriv <- list()
 out_fans_plot <- out_fans_slip
-for (pheno_of_int in c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
-                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
-                       "global_MeanThickness")) {
+for (pheno_of_int in pheno_list_to_plot) {
   df_plot <- df_vpm
-  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.zscore")]]
+  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.raw")]]
   df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
-  if (grepl("SurfaceArea",pheno_of_int)) {
-    ylab_text <- bquote('Surface Area')
-  } else if (grepl("MeanThickness",pheno_of_int)) {
-    ylab_text <- bquote('Thickness')
-    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
-  } else {
-    ylab_text <- bquote('Volume')
-  }
-  if(pheno_of_int == "global_SurfaceArea") {
-    pheno_label <- "Cortical Surface Area"
-  } else if (pheno_of_int == "meanCT") {
-    pheno_label <- "global_MeanThickness"
-  } else if (pheno_of_int == "global_eTIV") {
-    pheno_label <- "Intracranial Volume"
-  } 
-  #else if (pheno_of_int == "Cerebellum.all") {
-    #pheno_label <- "Cerebellum"
-  #} 
-  else if (pheno_of_int == "global_CortexVol") {
-    pheno_label <- "Gray Matter Volume"
-  } else if (pheno_of_int == "global_SubCortGrayVol") {
-    pheno_label <- "Subcortical Gray Matter Volume"
-  } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
-    pheno_label <- "White Matter Volume"
-  } else {
-    pheno_label <- pheno_of_int
-  }
+  # if (grepl("SurfaceArea",pheno_of_int)) {
+  #   ylab_text <- bquote('Surface Area')
+  # } else if (grepl("MeanThickness",pheno_of_int)) {
+  #   ylab_text <- bquote('Thickness')
+  #   df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
+  # } else {
+  #   ylab_text <- bquote('Volume')
+  # }
+  # if(pheno_of_int == "global_SurfaceArea") {
+  #   pheno_label <- "Cortical Surface Area"
+  # } else if (pheno_of_int == "meanCT") {
+  #   pheno_label <- "global_MeanThickness"
+  # } else if (pheno_of_int == "global_eTIV") {
+  #   pheno_label <- "Intracranial Volume"
+  # } 
+  # #else if (pheno_of_int == "Cerebellum.all") {
+  #   #pheno_label <- "Cerebellum"
+  # #} 
+  # else if (pheno_of_int == "global_CortexVol") {
+  #   pheno_label <- "Gray Matter Volume"
+  # } else if (pheno_of_int == "global_SubCortGrayVol") {
+  #   pheno_label <- "Subcortical Gray Matter Volume"
+  # } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
+  #   pheno_label <- "White Matter Volume"
+  # } else {
+  #   pheno_label <- pheno_of_int
+  # }
+  
+  pheno_label <- pheno_of_int
   
   out_fans_plot <- out_fans_slip %>% 
                     filter(pheno == pheno_of_int,
@@ -1082,7 +1061,7 @@ for (pheno_of_int in c("global_eTIV","global_VentricleChoroidVol","global_Cortex
                                     scale_linewidth_identity() +
                                     scale_linetype_identity() +
                                     scale_x_continuous(breaks = x_breaks, labels = x_labs) +
-                                    ggtitle(pheno_renamed) + theme_classic() +
+                                    ggtitle(pheno_label) + theme_classic() +
                                     xlab("") + ylab(ylab_text) + labs(colour = "Model") +
                                     scale_colour_manual(values = c("black", "grey")) +
                                     theme(plot.title = element_text(size = 12),
@@ -1092,12 +1071,12 @@ for (pheno_of_int in c("global_eTIV","global_VentricleChoroidVol","global_Cortex
 }
 p1_title <- ggdraw() + draw_label("Males", 
                                   x = 0.5, hjust = 0.5, fontface = "bold")
-p1 <- ggarrange(plotlist =  overlap_plots_male[!grepl("SA\\.",overlap_plots_male)], 
-                nrow = 1, legend = "none", common.legend = T)
+p1 <- ggarrange(plots =  overlap_plots_male[!grepl("SurfaceArea\\.",overlap_plots_male)], 
+                nrow = 5, legend = "none", common.legend = T)
 p2_title <- ggdraw() + draw_label("Females", 
                                   x = 0.5, hjust = 0.5, fontface = "bold")
-p2 <- ggarrange(plotlist =  overlap_plots_female[!grepl("SA\\.",overlap_plots_male)], 
-                nrow = 1, legend = "none", common.legend = T)
+p2 <- ggarrange(plots =  overlap_plots_female[!grepl("SurfaceArea\\.",overlap_plots_male)], 
+                nrow = 5, legend = "none", common.legend = T)
 p_traj_by_sex <- ggarrange(p1_title, p1, 
                 p2_title, p2, 
                 nrow = 4, heights = c(0.1,1,0.1,1.2),
@@ -1105,7 +1084,7 @@ p_traj_by_sex <- ggarrange(p1_title, p1,
 
 
 
-p_traj_collapsed <- ggarrange(plotlist =  overlap_plots_deriv[!grepl("SA\\.",overlap_plots_deriv)], 
+p_traj_collapsed <- ggarrange(plots =  overlap_plots_deriv[!grepl("SurfaceArea\\.",overlap_plots_deriv)], 
                 nrow = 1, legend = "bottom", common.legend = T)
 
 p_traj_collapsed_title <- ggdraw() + draw_label("Overlaid Traj.", angle = 90,
@@ -1123,143 +1102,6 @@ p_traj_by_sex
 ```{r, fig.height = 7.5, fig.width = 11}
 p_traj_collapsed
 ```
-
-## Plot Effects
-
-#### Mu
-
-```{r, fig.height = 4.5, fig.width = 7.5}
-
-models_vpm$label <- models_vpm$feature
-
-lim <- models_vpm %>% select(age_coef, sex_coef) %>% abs() %>% max(na.rm = T)
-lim <- ceiling(lim*10)/10
-plot_lims <- c(-lim,lim)
-
-p_age_effects <- plot_outliers_single(models_vpm, 
-                           fill_col = "age_coef", 
-                           color_scheme = c("royalblue","white","firebrick"),
-                           plot_lims = plot_lims, fill_name = "",
-                           colorbar_title = "Beta",
-                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
-                           cort_only = F, add_colorbar = F, add_fillbar = T,
-                           exclude_y_label = F, formatted = T, percent = F)
-
-p_sex_effects <- plot_outliers_single(models_vpm, 
-                           fill_col = "sex_coef", 
-                           color_scheme = c("royalblue","white","firebrick"),
-                           plot_lims = plot_lims, fill_name = "",
-                           colorbar_title = "Beta",
-                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
-                           cort_only = F, add_colorbar = F, add_fillbar = T,
-                           exclude_y_label = F, formatted = T, percent = F)
-
-
-p_int_effects <- plot_outliers_single(models_vpm, 
-                           fill_col = "intercept_coef", 
-                           color_scheme = c("royalblue","white","firebrick"),
-                           plot_lims = plot_lims, fill_name = "",
-                           colorbar_title = "Beta",
-                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
-                           cort_only = F, add_colorbar = F, add_fillbar = T,
-                           exclude_y_label = F, formatted = T, percent = F)
-
-p_age_title <- ggdraw() + draw_label("Age", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p_sex_title <- ggdraw() + draw_label("Sex", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p_int_title <- ggdraw() + draw_label("Intercept", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-
-p_age_effects <- ggarrange(p_age_title, p_age_effects, 
-                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
-                            legend = "bottom", common.legend = T)
-
-p_sex_effects <- ggarrange(p_sex_title, p_sex_effects, 
-                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
-                            legend = "bottom", common.legend = T)
-
-p_int_effects <- ggarrange(p_int_title, p_int_effects, 
-                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
-                            legend = "bottom", common.legend = T)
-
-p_effects_mu <- ggarrange(p_age_effects, p_sex_effects, nrow = 2, ncol = 1, 
-                            heights = c(1,1), common.legend = T, legend = "bottom")
-p_effects_mu
-```
-
-#### Sigma
-
-```{r, fig.height = 4.5, fig.width = 8.5}
-models_vpm$label <- models_vpm$feature
-
-lim <- models_vpm %>% select(age_sigma_coef, sex_sigma_coef) %>% abs() %>% max(na.rm = T)
-lim <- ceiling(lim*10)/10
-
-plot_lims <- c(-lim,lim)
-
-p_age_effects <- plot_outliers_single(models_vpm, 
-                           fill_col = "age_sigma_coef", 
-                           color_scheme = c("royalblue","white","firebrick"),
-                           plot_lims = plot_lims, fill_name = "",
-                           colorbar_title = "Beta",
-                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
-                           cort_only = F, add_colorbar = F, add_fillbar = T,
-                           exclude_y_label = F, formatted = T, percent = F)
-
-p_sex_effects <- plot_outliers_single(models_vpm, 
-                           fill_col = "sex_sigma_coef", 
-                           color_scheme = c("royalblue","white","firebrick"),
-                           plot_lims = plot_lims, fill_name = "",
-                           colorbar_title = "Beta",
-                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
-                           cort_only = F, add_colorbar = F, add_fillbar = T,
-                           exclude_y_label = F, formatted = T, percent = F)
-
-
-p_int_effects <- plot_outliers_single(models_vpm, 
-                           fill_col = "intercept_sigma_coef", 
-                           color_scheme = c("royalblue","white","firebrick"),
-                           plot_lims = plot_lims, fill_name = "",
-                           colorbar_title = "Beta",
-                           sig_col = NA, cats = c("GM", "SA","CT", "SUBC"),
-                           cort_only = F, add_colorbar = F, add_fillbar = T,
-                           exclude_y_label = F, formatted = T, percent = F)
-
-p_age_title <- ggdraw() + draw_label("Age", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p_sex_title <- ggdraw() + draw_label("Sex", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p_int_title <- ggdraw() + draw_label("Intercept", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-
-p_age_effects <- ggarrange(p_age_title, p_age_effects, 
-                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
-                            legend = "bottom", common.legend = T)
-
-p_sex_effects <- ggarrange(p_sex_title, p_sex_effects, 
-                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
-                            legend = "bottom", common.legend = T)
-
-p_int_effects <- ggarrange(p_int_title, p_int_effects, 
-                            nrow = 1, ncol = 2, widths = c(0.1,1.2),
-                            legend = "bottom", common.legend = T)
-
-p_effects_sigma <- ggarrange(p_age_effects, p_sex_effects, nrow = 2, ncol = 1, 
-                            heights = c(1,1), common.legend = T, legend = "bottom")
-
-p_effects_sigma
-```
-
-```{r, fig.height = 8.5, fig.width = 8.5}
-t1 <- ggdraw() + 
-              draw_label(glue('Mu Effects'))
-t2 <- ggdraw() + 
-              draw_label(glue('Sigma Effects'))
-ggarrange(t1, p_effects_mu, t2, p_effects_sigma, nrow = 4, heights = c(0.3,4.2,0.3,4.2))
-ggsave("figures/figure_s08_regional_eff.png", bg = "white")
-```
-
 ## Final Formatted Plot
 
 ```{r, fig.height= 12, fig.width=8}
@@ -1325,6 +1167,7 @@ grid.polygon(x,y,id,
              gp = gpar(lty = "solid", lwd = 1, col = "black"))
 save(p, file = "additional_plots/lmsz_v2.rdata")
 ```
+
 
 ## Save Table
 

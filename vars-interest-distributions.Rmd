@@ -3,8 +3,10 @@ title: "vars-interest-distributions"
 author: "Eren Kafadar"
 date: "2025-11-18"
 output: html_document
+output_dir: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.1/markdown_output/"
 editor_options: 
   chunk_output_type: console
+  
 ---
 
 #Controls
@@ -26,8 +28,8 @@ centiles_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/medi
 data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/OUT/eren/"
 gamlss_data_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/mpr/DATA.rds"
 #processed data path
-distinct_centiles_data_path <- paste0(centiles_path,"centiles_distinct_2026-01-29.csv")
-all_centiles_data_path <- paste0(centiles_path,"centiles_all_2026-01-29.csv")
+distinct_centiles_data_path <- paste0(centiles_path,"centiles_distinct_2026-01-30.csv")
+all_centiles_data_path <- paste0(centiles_path,"centiles_all_2026-01-30.csv")
 #output folder
 save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/"
 

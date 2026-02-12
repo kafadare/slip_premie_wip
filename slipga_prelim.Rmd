@@ -9,14 +9,15 @@ params:
   slip_release_folder: "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/"
 ---
 # Define params if they do not exist
-```{r}
+```{r, echo = FALSE}
 if (!exists("params")) {
   params <- list(
-  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/",
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-ThMPR-distinct-allgrades-25.11/",
   clean_centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-27.csv", 
   slip_release_folder = "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/"
   )
 }
+print(params)
 ``` 
 
 # Controls
@@ -82,6 +83,8 @@ if (!dir.exists(output_folder)) dir.create(output_folder)
 ##  output subfolder paths
 csv_output_folder <-  paste0(output_folder, "results_csv/")
 if (!dir.exists(csv_output_folder)) dir.create(csv_output_folder)
+plot_output_folder <- paste0(output_folder, "plots/")
+if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
 plot_output_folder <- paste0(output_folder, "plots/centile_reg_plots/")
 if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
 betas_folder <- paste0(csv_output_folder, "full_betas/")
@@ -110,7 +113,7 @@ high_color = "#D65F5F"
 ```
 
 # Read in data files
-```{r, echo = FALSE, echo = FALSE}
+```{r, echo = FALSE}
 full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
 global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
 vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
@@ -733,7 +736,9 @@ ga_vol$label <- rownames(ga_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>% 
+  sub("th_Ventricle", "th_ventricle", .) %>% 
+  sub("Thalamus", "Thalamus-Proper", .)
 
 ga_vol$label[cols_edit] <- gsub("_", "-", ga_vol$label[cols_edit])
 
@@ -851,7 +856,7 @@ gabyage_vol$label <- rownames(gabyage_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 gabyage_vol$label[cols_edit] <- gsub("_", "-", gabyage_vol$label[cols_edit])
 
@@ -1483,7 +1488,7 @@ bw_vol$label <- rownames(bw_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 bw_vol$label[cols_edit] <- gsub("_", "-", bw_vol$label[cols_edit])
 
@@ -1601,7 +1606,7 @@ bwbyage_vol$label <- rownames(bwbyage_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 bwbyage_vol$label[cols_edit] <- gsub("_", "-", bwbyage_vol$label[cols_edit])
 
@@ -2233,7 +2238,7 @@ ga.qc_vol$label <- rownames(ga.qc_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 ga.qc_vol$label[cols_edit] <- gsub("_", "-", ga.qc_vol$label[cols_edit])
 
@@ -2351,7 +2356,7 @@ gabyage.qc_vol$label <- rownames(gabyage.qc_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 gabyage.qc_vol$label[cols_edit] <- gsub("_", "-", gabyage.qc_vol$label[cols_edit])
 
@@ -2986,7 +2991,7 @@ bw.qc_vol$label <- rownames(bw.qc_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 bw.qc_vol$label[cols_edit] <- gsub("_", "-", bw.qc_vol$label[cols_edit])
 
@@ -3104,7 +3109,7 @@ bwbyage.qc_vol$label <- rownames(bwbyage.qc_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 bwbyage.qc_vol$label[cols_edit] <- gsub("_", "-", bwbyage.qc_vol$label[cols_edit])
 
@@ -3737,7 +3742,7 @@ ga.qc.global_vol$label <- rownames(ga.qc.global_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 ga.qc.global_vol$label[cols_edit] <- gsub("_", "-", ga.qc.global_vol$label[cols_edit])
 
@@ -3855,7 +3860,7 @@ gabyage.qc.global_vol$label <- rownames(gabyage.qc.global_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 gabyage.qc.global_vol$label[cols_edit] <- gsub("_", "-", gabyage.qc.global_vol$label[cols_edit])
 
@@ -4490,7 +4495,7 @@ bw.qc.global_vol$label <- rownames(bw.qc.global_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 bw.qc.global_vol$label[cols_edit] <- gsub("_", "-", bw.qc.global_vol$label[cols_edit])
 
@@ -4608,7 +4613,7 @@ bwbyage.qc.global_vol$label <- rownames(bwbyage.qc.global_vol) %>%
   sub("aparc_GrayVol_", "", .) %>% 
   sub("aseg_", "", .) %>%
   sub("X", "x", .) %>%
-  sub("rd_ventricle", "rd_ventricle", .) %>%     sub("th_ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
 
 bwbyage.qc.global_vol$label[cols_edit] <- gsub("_", "-", bwbyage.qc.global_vol$label[cols_edit])
 

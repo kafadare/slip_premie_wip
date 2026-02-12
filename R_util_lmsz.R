@@ -188,8 +188,8 @@ backtransform_centiles <- function(NEWData, FITParam,
 #paths adapted for lmsz premie adaptation EK Jan 2026
 backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
   # Load data
-  #pheno_name <- glue("{pheno}Transformed.q.wre")
-  #norm_name <- glue("{pheno}Transformed.normalised")
+  pheno_name <- pheno
+  raw_name <- glue("{pheno}.raw")
   zscore_name <- glue("{pheno}.zscore")
   
   #old_pheno <- slip_features$old_pheno[slip_features$new_pheno == pheno]
@@ -208,9 +208,9 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
   orig_fit <- readRDS(fit_file)
   
   df_tmp <- df %>%
-    select(participant_id, adjusted_age_days_log, sex, !!pheno, !!zscore_name) %>%
-    rename(pheno = !!pheno,
-           zscore = !!zscore_name) %>%
+    select(participant_id, adjusted_age_days_log, sex, !!pheno, !!raw_name) %>%
+  rename(pheno = !!pheno,
+         normalised_value = !!raw_name) %>%
     na.omit()
   
   # Simulate centiles

@@ -1,0 +1,1671 @@
+---
+title: "slip_swyc"
+output: html_document
+date: "2026-02-03"
+editor_options: 
+  chunk_output_type: console
+---
+
+# Controls
+```{r setup, echo = TRUE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+save_figs = TRUE
+```
+
+# Load packages
+```{r}
+#Load packages. Install these packages with install.packages("pkg_name") if they are not installed.
+library(bigrquery) #package to import SQL tables into R
+library(tidyverse) #package suite for data manipulation, reading data into R, and plotting (ggplot2)
+library(glue) #package to use expressions with strings
+
+panel_save <- function(plot, filename, extension, folder){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300)
+}
+```
+
+# Define paths
+```{r}
+save_path <-  "/mnt/arcus/lab/users/kafadare/swyc_results/"
+if(!dir.exists(save_path)) dir.create(save_path)
+
+plot_output_folder <- paste(save_path, "plots/")
+if(!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
+```
+# Load SWYC table from Arcus
+```{r}
+require(bigrquery)
+bq_auth()
+proj_id <- if (exists('proj_id')) proj_id else bq_projects()[1]
+
+#Download SWYC table
+query <- glue("SELECT * FROM lab.swyc_normative_scores_20260129") #the string here is the SQL query
+swyc <- bq_project_query(proj_id, query) %>% bq_table_download(., page_size=3500) #assign the name of the dataframe in R here
+print(paste0("Arcus lab.SWYC table, dimensions: ", dim(swyc))) #pastes the dimensions of the table downloaded
+```
+
+# Load centiles and slip participant tables
+```{r}
+centiles_distinct_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/median_Th-MPR_2511_distinct.csv"
+centiles_distinct <- read.csv(centiles_distinct_path)
+
+centiles_all_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/median_Th-MPR_2511_all.csv"
+centiles_all <- read.csv(centiles_all_path)
+```
+
+# Load vars names
+```{r}
+vars_path <- "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+```
+
+# Data Availability - Distinct (1 scan per participant)
+
+## Distinct Pat_id centiles overlap with swyc timing
+```{r}
+length(unique(swyc$pat_id))
+centiles_distinct$participant_id_modified <- sub("sub-", "", centiles_distinct$participant_id)
+sum(centiles_distinct$participant_id_modified %in% swyc$pat_id) #869
+swyc_subset <- swyc %>% filter(pat_id %in% centiles_distinct$participant_id_modified)
+swyc_subset <- merge(swyc_subset, centiles_distinct %>% select(c("participant_id_modified", "age_at_scan")), 
+                     by.x = "pat_id", by.y = "participant_id_modified", all.x = TRUE, all.y = FALSE)
+swyc_subset$age_diff <- swyc_subset$age_at_scan - swyc_subset$effective_age
+
+hist(swyc_subset$age_diff)
+summary(swyc_subset$age_diff)
+sum(swyc_subset$age_diff <= 0)
+(swyc_overlap_plot <- ggplot(swyc_subset, aes(y = pat_id, group = pat_id)) +
+  geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
+  geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
+  geom_point(data = swyc_subset %>% 
+              filter(age_at_scan <= max(effective_age) | age_at_scan >= min(effective_age)), 
+            aes(x = age_at_scan), color = "black", size = 0.1, alpha = 0.5) +
+  theme(axis.text.y  = element_blank())) 
+
+(swyc_overlap_scanb4swyc_plot <- ggplot(swyc_subset %>% filter(age_diff <= 0),  aes(y = pat_id, group = pat_id)) +
+  geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
+  geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
+  geom_point(aes(x = age_at_scan), color = "black", size = 0.1, alpha = 0.5) +
+  theme(axis.text.y  = element_blank())) 
+```
+
+### Assess # of repeated measures in SWYC
+```{r}
+swyc_subset %>%
+  count(pat_id) %>%
+  count(n)
+```
+Ideas
+- get an average swyc score per participant and correlate with 4 global phenotypes + meanthickness + total SA + domain-based CMD & calculate 4 global phenotypes CMD
+- try to figure out how to get a "trajectory" per participant
+- try to figure out how to match up "dates"
+- try to 
+
+# Prep Data for Analysis
+
+## Get mean/median within each subject for DQ
+```{r}
+swyc_subset_avg <- swyc_subset %>% 
+  group_by(pat_id) %>%
+  summarise(
+    mean_dq = mean(norm_devo_quotient),
+    median_dq = median(norm_devo_quotient)
+  )
+hist(swyc_subset_avg$mean_dq)
+hist(swyc_subset_avg$median_dq)
+```
+
+## Merge swyc and centiles df
+```{r}
+swyc_subset_avg <- merge(swyc_subset_avg, centiles_distinct %>% select(all_of(c("participant_id_modified", "preterm",
+                                                                        "birth_weight_kg","gestational_age", "bweight_percentile",
+                                                                        "sex", "adjusted_age_in_days","median_euler_mean",
+                                                                        full_vars))), 
+                     by.x = "pat_id", by.y = "participant_id_modified", all.x = TRUE, all.y = FALSE)
+```
+
+## zscore variables of interest
+```{r, echo = FALSE}
+# zscore centiles and other variables of interest
+df.zscore <- swyc_subset_avg %>%
+  mutate(across(all_of(c(full_vars, "bweight_percentile")), qnorm)) %>%
+  mutate(across(all_of(c("gestational_age", "birth_weight_kg", "adjusted_age_in_days", 
+                         "median_euler_mean", "mean_dq", "median_dq")), scale))
+# set sex and preterm as factor
+df.zscore$sex <- as.factor(df.zscore$sex)
+df.zscore$preterm <- as.factor(df.zscore$preterm)
+```
+
+## find Inf cells, make a table of N per phenotype, then convert to NaN
+```{r, echo = FALSE}
+inf_nan_table <- as.data.frame(t(sapply(df.zscore[c(full_vars, "bweight_percentile")], function(x){
+  c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
+})))
+max(inf_nan_table$inf)
+max(inf_nan_table$nan)
+
+inf_nan_table %>% filter(inf > 0)
+```
+
+## set Inf cells to NaN
+```{r, echo = FALSE}
+df.zscore <- df.zscore %>% 
+  mutate(across(all_of(c(full_vars, "bweight_percentile")), ~ replace(., is.infinite(.), NaN)))
+```
+
+# Associate SWYC with perinatal information
+
+## BW
+```{r}
+bw_N <- sum(!is.na(swyc_subset$birth_weight_kg))
+cor.test(df.zscore$birth_weight_kg, df.zscore$mean_dq)
+lm_swyc_bw <- lm(mean_dq ~ birth_weight_kg, data = df.zscore)
+lm_swyc_bw_stats <- summary(lm_swyc_bw)
+swyc_bw_beta <- lm_swyc_bw_stats$coefficients[2,1]
+swyc_bw_p <- lm_swyc_bw_stats$coefficients[2,4]
+
+(swyc_bw_plot <- ggplot(df.zscore, aes(x = birth_weight_kg, y = mean_dq)) +
+  geom_point(color = "#9B7A8F", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#9B7A8F") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_bw_beta,3), "; p=", signif(swyc_bw_p,3))) +
+  labs(
+    x = paste0("Birth Weight (z-scored), N = ", bw_N),
+    y = "Mean SWYC Score (z-scored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+if(save_figs == TRUE){
+panel_save(swyc_bw_plot, "swyc_bw_all-available", "pdf", plot_output_folder)
+}
+```
+
+## GA
+```{r}
+ga_N <- sum(!is.na(swyc_subset$gestational_age))
+cor.test(df.zscore$gestational_age, df.zscore$mean_dq)
+lm_swyc_ga <- lm(mean_dq ~ gestational_age, data = df.zscore)
+lm_swyc_ga_stats <- summary(lm_swyc_ga)
+swyc_ga_beta <- lm_swyc_ga_stats$coefficients[2,1]
+swyc_ga_p <- lm_swyc_ga_stats$coefficients[2,4]
+
+(swyc_ga_plot <- ggplot(df.zscore, aes(x = gestational_age, y = mean_dq)) +
+  geom_point(color = "#9B7A8F", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#9B7A8F") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_ga_beta,3), "; p=", signif(swyc_ga_p,3))) +
+  labs(
+    x = paste0("Gestational Age (z-scored), N = ", ga_N),
+    y = "Mean SWYC Score (z-scored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+if(save_figs == TRUE){
+panel_save(swyc_ga_plot, "swyc_ga_all-available", "pdf", plot_output_folder)
+}
+```
+
+# Associate with global variables
+
+## Define global vars of interest
+```{r, echo = TRUE}
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
+```
+
+## SWYC ~ global without QC
+```{r, echo = FALSE}
+swyc_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore$mean_dq)
+  summary <- summary(lm)
+  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
+})))
+
+swyc_reg_table_global$swyc_p_adj <- p.adjust(swyc_reg_table_global$swyc_p, method = "BH")
+
+swyc_reg_table_global %>% filter(swyc_p_adj < 0.05)
+range(swyc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
+```
+
+## SWYC ~ global with QC
+```{r, echo = FALSE}
+swyc.qc_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore$mean_dq + df.zscore$median_euler_mean)
+  summary <- summary(lm)
+  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
+})))
+
+swyc.qc_reg_table_global$swyc_p_adj <- p.adjust(swyc.qc_reg_table_global$swyc_p, method = "BH")
+
+swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05)
+range(swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
+```
+
+## GA without QC
+```{r, echo = FALSE}
+ga_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore$gestational_age)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
+})))
+
+ga_reg_table_global$ga_p_adj <- p.adjust(ga_reg_table_global$ga_p, method = "BH")
+
+ga_reg_table_global %>% filter(ga_p_adj < 0.05)
+range(ga_reg_table_global %>% filter(ga_p_adj < 0.05) %>% select(ga_beta))
+```
+
+## GA with QC
+```{r, echo = FALSE}
+ga.qc_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore$gestational_age + df.zscore$median_euler_mean)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
+})))
+
+ga.qc_reg_table_global$ga_p_adj <- p.adjust(ga.qc_reg_table_global$ga_p, method = "BH")
+
+ga.qc_reg_table_global %>% filter(ga_p_adj < 0.05)
+range(ga.qc_reg_table_global %>% filter(ga_p_adj < 0.05) %>% select(ga_beta))
+```
+
+## BW without QC
+```{r, echo = FALSE}
+bw_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore$birth_weight_kg)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw_reg_table_global$bw_p_adj <- p.adjust(bw_reg_table_global$bw_p, method = "BH")
+
+bw_reg_table_global %>% filter(bw_p_adj < 0.05)
+range(bw_reg_table_global %>% filter(bw_p_adj < 0.05) %>% select(bw_beta))
+```
+
+## BW with QC
+```{r, echo = FALSE}
+bw.qc_reg_table_global <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore$birth_weight_kg + df.zscore$median_euler_mean)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw.qc_reg_table_global$bw_p_adj <- p.adjust(bw.qc_reg_table_global$bw_p, method = "BH")
+
+bw.qc_reg_table_global %>% filter(bw_p_adj < 0.05)
+range(bw.qc_reg_table_global %>% filter(bw_p_adj < 0.05) %>% select(bw_beta))
+```
+
+## Visualize/Figure Panel without QC
+```{r, echo = FALSE}
+#  Add phenotype column from rownames
+ga_reg_table_global$phenotype <- rownames(ga_reg_table_global)
+bw_reg_table_global$phenotype <- rownames(bw_reg_table_global)
+swyc_reg_table_global$phenotype <- rownames(swyc_reg_table_global)
+
+#  Add model identifiers + rename to common column names
+ga_reg_table_global <- ga_reg_table_global %>%
+  mutate(model = "Gestational Age",
+         beta = ga_beta,
+         se   = ga_se,
+         p_adj    = ga_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+bw_reg_table_global <- bw_reg_table_global %>%
+  mutate(model = "Birthweight",
+         beta = bw_beta,
+         se   = bw_se,
+         p_adj    = bw_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+swyc_reg_table_global <- swyc_reg_table_global %>%
+  mutate(model = "SWYC",
+         beta = swyc_beta,
+         se   = swyc_se,
+         p_adj    = swyc_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+#  Combine and arrange by specific order of global phenotypes
+df <- bind_rows(ga_reg_table_global, bw_reg_table_global, swyc_reg_table_global) %>%
+  mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
+                                                  "global_SubCortGrayVol", "global_VentricleChoroidVol",
+                                                  "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
+
+#  Labeling for phenotypes on plot
+phenotype_labs <- c(
+ global_eTIV = "Intracranial Volume",
+ global_MeanThickness = "Mean Cortical Thickness",
+ global_VentricleChoroidVol = "Ventricular Volume",
+ global_SurfaceArea = "Total Surface Area",
+ global_CortexVol = "Cortical Gray Matter Volume",
+ global_CerebralWhiteMatterVol = "Cerebral White Matter Volume",
+ global_SubCortGrayVol = "Subcortical Gray Matter Volume"
+)
+
+#  Plot
+(global_betas_noqc_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
+    geom_point(aes(shape = model, color = color), size = 3) +
+    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
+    scale_shape_manual(values = c("Gestational Age" = 16, "Birthweight" = 17, "SWYC" = 8),
+                       name = "") +
+    scale_color_identity() +
+    scale_x_continuous(limits = c(-0.25, 0.35)) +
+    scale_y_discrete(limits = rev, labels = phenotype_labs) +
+    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
+    theme_minimal() +
+    theme_bw(base_size = 16) +
+    theme(
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.border = element_blank(),
+        axis.text.y  = element_text(color = "black"),
+        axis.line.x  = element_line(color = "black"),
+        axis.line.y  = element_blank(),
+        legend.justification = c("left", "top")
+    ) +
+    xlab("Standardized Beta Estimate, without QC covar") +
+    ylab(""))
+
+if(save_figs == TRUE){
+panel_save(global_betas_noqc_plot, "global-betas-noqc-gabwswyc", "pdf", plot_output_folder)
+}
+```
+
+
+
+## Visualize/Figure Panel with QC
+```{r, echo = FALSE}
+#  Add phenotype column from rownames
+ga.qc_reg_table_global$phenotype <- rownames(ga.qc_reg_table_global)
+bw.qc_reg_table_global$phenotype <- rownames(bw.qc_reg_table_global)
+swyc.qc_reg_table_global$phenotype <- rownames(swyc.qc_reg_table_global)
+
+#  Add model identifiers + rename to common column names
+ga.qc_reg_table_global <- ga.qc_reg_table_global %>%
+  mutate(model = "Gestational Age",
+         beta = ga_beta,
+         se   = ga_se,
+         p_adj    = ga_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+bw.qc_reg_table_global <- bw.qc_reg_table_global %>%
+  mutate(model = "Birthweight",
+         beta = bw_beta,
+         se   = bw_se,
+         p_adj    = bw_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+swyc.qc_reg_table_global <- swyc.qc_reg_table_global %>%
+  mutate(model = "SWYC",
+         beta = swyc_beta,
+         se   = swyc_se,
+         p_adj    = swyc_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+#  Combine and arrange by specific order of global phenotypes
+df <- bind_rows(ga.qc_reg_table_global, bw.qc_reg_table_global, swyc.qc_reg_table_global) %>%
+  mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
+                                                  "global_SubCortGrayVol", "global_VentricleChoroidVol",
+                                                  "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
+
+#  Labeling for phenotypes on plot
+phenotype_labs <- c(
+ global_eTIV = "Intracranial Volume",
+ global_MeanThickness = "Mean Cortical Thickness",
+ global_VentricleChoroidVol = "Ventricular Volume",
+ global_SurfaceArea = "Total Surface Area",
+ global_CortexVol = "Cortical Gray Matter Volume",
+ global_CerebralWhiteMatterVol = "Cerebral White Matter Volume",
+ global_SubCortGrayVol = "Subcortical Gray Matter Volume"
+)
+
+#  Plot
+(global_betas_withqc_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
+    geom_point(aes(shape = model, color = color), size = 3) +
+    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
+    scale_shape_manual(values = c("Gestational Age" = 16, "Birthweight" = 17, "SWYC" = 8),
+                       name = "") +
+    scale_color_identity() +
+    scale_x_continuous(limits = c(-0.25, 0.35)) +
+    scale_y_discrete(limits = rev, labels = phenotype_labs) +
+    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
+    theme_minimal() +
+    theme_bw(base_size = 16) +
+    theme(
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.border = element_blank(),
+        axis.text.y  = element_text(color = "black"),
+        axis.line.x  = element_line(color = "black"),
+        axis.line.y  = element_blank(),
+        legend.justification = c("left", "top")
+    ) +
+    xlab("Standardized Beta Estimate, with QC covar") +
+    ylab(""))
+
+if(save_figs == TRUE){
+panel_save(global_betas_withqc_plot, "global-betas-withqc-gabwswyc", "pdf", plot_output_folder)
+}
+```
+
+
+
+## Individual Scatterplots for SWYC
+```{r}
+swyc_N <- sum(!is.na(df.zscore$mean_dq) & !is.na(df.zscore$global_VentricleChoroidVol))
+
+#Ventricles
+swyc_vent_beta <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_VentricleChoroidVol") %>% 
+  select(swyc_beta) %>% pull(swyc_beta)
+swyc_vent_p_adj <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_VentricleChoroidVol") %>% 
+  select(swyc_p_adj) %>% pull(swyc_p_adj)
+(swyc_vent_plot <- ggplot(df.zscore, aes(x = mean_dq, y = global_VentricleChoroidVol)) +
+  geom_point(color = "#7293b0", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#7293b0") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_vent_beta,3), "; p-adj=", signif(swyc_vent_p_adj,3))) +
+  labs(
+    x = paste0("Mean SWYC Score (z-scored), N = ", swyc_N),
+    y = "Ventricle Volume Centile (z-scored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+if(save_figs == TRUE){
+panel_save(swyc_vent_plot, "swyc-ventricles-withqc", "pdf", plot_output_folder)
+}
+
+#Subcortical GMV
+swyc_scgmv_beta <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_SubCortGrayVol") %>% 
+  select(swyc_beta) %>% pull(swyc_beta)
+swyc_scgmv_p_adj <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_SubCortGrayVol") %>% 
+  select(swyc_p_adj) %>% pull(swyc_p_adj)
+(swyc_scgmv_plot <- ggplot(df.zscore, aes(x = mean_dq, y = global_SubCortGrayVol)) +
+  geom_point(color = "#c87a7a", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#c87a7a") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_scgmv_beta,3), "; p-adj=", signif(swyc_scgmv_p_adj,3))) +
+  labs(
+    x = paste0("Mean SWYC Score (z-scored), N = ", swyc_N),
+    y = "Subcortical Gray Volume Centile (z-scored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+if(save_figs == TRUE){
+panel_save(swyc_scgmv_plot, "swyc-scgmv-withqc", "pdf", plot_output_folder)
+}
+
+#Cortical GMV
+swyc_ctxgmv_beta <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_CortexVol") %>% 
+  select(swyc_beta) %>% pull(swyc_beta)
+swyc_ctxgmv_p_adj <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_CortexVol") %>% 
+  select(swyc_p_adj) %>% pull(swyc_p_adj)
+(swyc_ctxgmv_plot <- ggplot(df.zscore, aes(x = mean_dq, y = global_CortexVol)) +
+  geom_point(color = "#c87a7a", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#c87a7a") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_ctxgmv_beta,3), "; p-adj=", signif(swyc_ctxgmv_p_adj,3))) +
+  labs(
+    x = paste0("Mean SWYC ctxore (z-ctxored), N = ", swyc_N),
+    y = "Cortical Gray Volume Centile (z-ctxored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+if(save_figs == TRUE){
+panel_save(swyc_ctxgmv_plot, "swyc-ctxgmv-withqc", "pdf", plot_output_folder)
+}
+
+
+```
+# CMDs
+
+## Calculate CMDs
+```{r}
+vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
+length_names <- length(c(vol_vars_cortical, sa_vars, th_vars))
+names.global <- c("global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol")
+# Ensure all names are in the same order
+names_base <- names(df.zscore)[grep("aparc_GrayVol", names(df.zscore))] %>% sub("aparc_GrayVol_","",.) %>%
+  gsub("_Z", "", .)
+names.vol <- paste0("aparc_GrayVol_",names_base)
+names.sa <- paste0("aparc_SurfArea_",names_base)
+names.th <- paste0("aparc_ThickAvg_",names_base)
+# CMD Calculation
+## vol
+vol.center <- colMeans(df.zscore %>% select(all_of(names.vol)))
+vol.cov_matrix <- cov(df.zscore %>% select(all_of(names.vol)))
+vol.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(names.vol)), vol.center, vol.cov_matrix))
+df.zscore$vol.cmd <- vol.md
+## sa
+sa.center <- colMeans(df.zscore %>% select(all_of(names.sa)), na.rm = TRUE)
+sa.cov_matrix <- cov(df.zscore %>% select(all_of(names.sa)), use = "complete.obs")
+sa.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(names.sa)), sa.center, sa.cov_matrix))
+df.zscore$sa.cmd <- sa.md
+## th
+th.center <- colMeans(df.zscore %>% select(all_of(names.th)), na.rm = TRUE)
+th.cov_matrix <- cov(df.zscore %>% select(all_of(names.th)), use = "complete.obs")
+th.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(names.th)), th.center, th.cov_matrix))
+df.zscore$th.cmd <- th.md
+## global
+global.center <- colMeans(df.zscore %>% select(all_of(names.global)), na.rm = TRUE)
+global.cov_matrix <- cov(df.zscore %>% select(all_of(names.global)), use = "complete.obs")
+global.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(names.global)), global.center, global.cov_matrix))
+df.zscore$global.cmd <- global.md
+```
+
+## Cor.test CMDs
+```{r, echo = FALSE}
+# Exploratory
+cor.test(df.zscore$vol.cmd, df.zscore$gestational_age)
+cor.test(df.zscore$vol.cmd, df.zscore$birth_weight_kg)
+cor.test(df.zscore$vol.cmd, df.zscore$mean_dq)
+
+cor.test(df.zscore$sa.cmd, df.zscore$gestational_age)
+cor.test(df.zscore$sa.cmd, df.zscore$birth_weight_kg)
+cor.test(df.zscore$sa.cmd, df.zscore$mean_dq)
+
+cor.test(df.zscore$th.cmd, df.zscore$gestational_age)
+cor.test(df.zscore$th.cmd, df.zscore$birth_weight_kg)
+cor.test(df.zscore$th.cmd, df.zscore$bweight_percentile)
+cor.test(df.zscore$th.cmd, df.zscore$mean_dq)
+
+cor.test(df.zscore$global.cmd, df.zscore$gestational_age)
+cor.test(df.zscore$global.cmd, df.zscore$birth_weight_kg)
+cor.test(df.zscore$global.cmd, df.zscore$bweight_percentile)
+cor.test(df.zscore$global.cmd, df.zscore$mean_dq)
+```
+
+## CMD plots
+```{r}
+# Vol CMD
+cor_volCMD_swyc <- cor.test(df.zscore$vol.cmd, df.zscore$mean_dq)
+## plot
+volCMD_swyc_r <- signif(cor_volCMD_swyc$estimate, 3)
+volCMD_swyc_p <- signif(cor_volCMD_swyc$p.value, 3)
+
+(cor_volCMD_swyc_plot <- ggplot(df.zscore, aes(mean_dq, vol.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",volCMD_swyc_r, "; p=", volCMD_swyc_p)) +
+  labs(
+    x = paste0("Mean SWYC DQ, N = ", bw_N),
+    y = "Volume CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+# SA CMD
+cor_saCMD_swyc <- cor.test(df.zscore$sa.cmd, df.zscore$mean_dq)
+## plot
+saCMD_swyc_r <- signif(cor_saCMD_swyc$estimate, 3)
+saCMD_swyc_p <- signif(cor_saCMD_swyc$p.value, 3)
+
+(cor_saCMD_swyc_plot <- ggplot(df.zscore, aes(mean_dq, sa.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",saCMD_swyc_r, "; p=", saCMD_swyc_p)) +
+  labs(
+    x = paste0("Mean SWYC DQ, N = ", bw_N),
+    y = "Surface Area CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+# Thickness CMD
+cor_thCMD_swyc <- cor.test(df.zscore$th.cmd, df.zscore$mean_dq)
+## plot
+thCMD_swyc_r <- signif(cor_thCMD_swyc$estimate, 3)
+thCMD_swyc_p <- signif(cor_thCMD_swyc$p.value, 3)
+
+(cor_thCMD_swyc_plot <- ggplot(df.zscore, aes(mean_dq, th.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",thCMD_swyc_r, "; p=", thCMD_swyc_p)) +
+  labs(
+    x = paste0("Mean SWYC DQ, N = ", bw_N),
+    y = "Cortical Thickness CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+#Global CMD
+cor_globalCMD_swyc <- cor.test(df.zscore$global.cmd, df.zscore$mean_dq)
+## plot
+globalCMD_swyc_r <- signif(cor_globalCMD_swyc$estimate, 3)
+globalCMD_swyc_p <- signif(cor_globalCMD_swyc$p.value, 3)
+
+(cor_globalCMD_swyc_plot <- ggplot(df.zscore, aes(mean_dq, global.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",globalCMD_swyc_r, "; p=", globalCMD_swyc_p)) +
+  labs(
+    x = paste0("Mean SWYC DQ, N = ", bw_N),
+    y = "Global CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+```
+# Test Mediation
+
+## Brain covars with bw
+```{r}
+lm_swyc_bw_globalcmd <- lm(mean_dq ~ birth_weight_kg + global.cmd, data = df.zscore)
+lm_swyc_bw_subcort <- lm(mean_dq ~ birth_weight_kg + global_SubCortGrayVol, data = df.zscore)
+lm_swyc_bw_globalcmd_stats <- summary(lm_swyc_bw_globalcmd)
+lm_swyc_bw_subcort_stats <- summary(lm_swyc_bw_subcort)
+lm_swyc_bw_stats
+lm_swyc_bw_globalcmd_stats
+lm_swyc_bw_subcort_stats
+
+#plot
+
+df_plot_bw <- data.frame(
+  model = c("no covar BW", "global cmd covar", "subcort covar"),
+  estimate = c(summary(lm_swyc_bw)$coefficients[2, "Estimate"],
+               summary(lm_swyc_bw_globalcmd)$coefficients[2, "Estimate"],
+               summary(lm_swyc_bw_subcort)$coefficients[2, "Estimate"]),
+  se = c(summary(lm_swyc_bw)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_bw_globalcmd)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_bw_subcort)$coefficients[2, "Std. Error"])
+) %>%
+  mutate(
+    ymin = estimate - se,
+    ymax = estimate + se
+  )
+
+ggplot(df_plot_bw, aes(x = model, y = estimate)) +
+  geom_pointrange(aes(ymin = ymin, ymax = ymax), linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic()
+
+```
+
+## Brain covars with GA
+```{r}
+lm_swyc_ga_globalcmd <- lm(mean_dq ~ gestational_age + global.cmd, data = df.zscore)
+lm_swyc_ga_subcort <- lm(mean_dq ~ gestational_age + global_SubCortGrayVol, data = df.zscore)
+lm_swyc_ga_globalcmd_stats <- summary(lm_swyc_ga_globalcmd)
+lm_swyc_ga_subcort_stats <- summary(lm_swyc_ga_subcort)
+lm_swyc_ga_stats
+lm_swyc_ga_globalcmd_stats
+lm_swyc_ga_subcort_stats
+
+#plot
+
+df_plot_ga <- data.frame(
+  model = c("no covar GA", "global cmd covar", "subcort covar"),
+  estimate = c(summary(lm_swyc_ga)$coefficients[2, "Estimate"],
+               summary(lm_swyc_ga_globalcmd)$coefficients[2, "Estimate"],
+               summary(lm_swyc_ga_subcort)$coefficients[2, "Estimate"]),
+  se = c(summary(lm_swyc_ga)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_ga_globalcmd)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_ga_subcort)$coefficients[2, "Std. Error"])
+) %>%
+  mutate(
+    ymin = estimate - se,
+    ymax = estimate + se
+  )
+
+ggplot(df_plot_ga, aes(x = model, y = estimate)) +
+  geom_pointrange(aes(ymin = ymin, ymax = ymax), linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic()
+```
+
+# Data Availability - All (includes repeated scan measures)
+
+## First-Pass plots for scan-swyc timing
+```{r}
+centiles_all$participant_id_modified <- sub("sub-", "", centiles_all$participant_id)
+swyc_subset_all <- swyc %>% filter(pat_id %in% centiles_all$participant_id_modified)
+swyc_subset_all <- merge(swyc_subset_all, centiles_all %>% select(c("participant_id_modified", "age_at_scan", "gestational_age")), 
+                     by.x = "pat_id", by.y = "participant_id_modified", all.x = TRUE, all.y = FALSE)
+swyc_subset_all$age_diff <- swyc_subset_all$age_at_scan - swyc_subset_all$effective_age
+
+hist(swyc_subset_all$age_diff)
+summary(swyc_subset_all$age_diff)
+sum(swyc_subset_all$age_diff <= 0)
+(swyc_overlap_plot <- ggplot(swyc_subset_all, aes(y = pat_id, group = pat_id)) +
+  geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
+  geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
+  geom_point(data = swyc_subset_all %>% 
+              filter(age_at_scan <= max(effective_age) | age_at_scan >= min(effective_age)), 
+            aes(x = age_at_scan), color = "black", size = 0.1, alpha = 0.5) +
+  theme(axis.text.y  = element_blank())) 
+
+(swyc_overlap_scanb4swyc_plot <- ggplot(swyc_subset_all %>% filter(age_diff <= 0),  aes(y = pat_id, group = pat_id)) +
+  geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
+  geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
+  geom_point(aes(x = age_at_scan), color = "black", size = 0.1, alpha = 0.5) +
+  theme(axis.text.y  = element_blank())) 
+```
+
+## Determine availability of SWYC within 10% of age in days
+Ideas
+- get an average swyc score per participant and correlate with 4 global phenotypes + meanthickness + total SA + domain-based CMD & calculate 4 global phenotypes CMD
+- try to figure out how to get a "trajectory" per participant
+- try to figure out how to match up "dates"
+```{r}
+# adjust effective age and age at scan for prematurity
+swyc_subset_all$effective_age_months <- swyc_subset_all$effective_age/30.437
+swyc_subset_all$adj_effective_age_months <- ifelse(!is.na(swyc_subset_all$gestational_age),
+                                                 swyc_subset_all$effective_age_months + swyc_subset_all$gestational_age/4.35,
+                                                 swyc_subset_all$effective_age_months + 40/4.35)
+
+swyc_subset_all$age_at_scan_months <- swyc_subset_all$age_at_scan/30.437
+swyc_subset_all$adj_age_at_scan_months <- ifelse(!is.na(swyc_subset_all$gestational_age),
+                                                 swyc_subset_all$age_at_scan_months + swyc_subset_all$gestational_age/4.35,
+                                                 swyc_subset_all$age_at_scan_months + 40/4.35)
+
+swyc_subset_all$age_diff_months <- swyc_subset_all$age_at_scan_months - swyc_subset_all$adj_effective_age_months
+
+swyc_subset_all_matched <- swyc_subset_all %>% filter(abs(age_diff_months) < 0.1*age_at_scan_months)
+length(unique(swyc_subset_all_matched$pat_id))
+
+(swyc_all_matched_plot <- ggplot(swyc_subset_all_matched, aes(y = pat_id, group = pat_id)) +
+  geom_point(aes(x = adj_effective_age_months, color = form_friendly_name), size = 0.2) +
+  geom_line(aes(x = adj_effective_age_months, color = form_friendly_name),size = 0.1) + 
+  geom_point(aes(x = adj_age_at_scan_months), color = "black", size = 0.1, alpha = 0.5) +
+  theme(axis.text.y  = element_blank(),
+        panel.grid = element_blank(),
+        panel.background = element_blank()))
+```
+
+## Prep Data for Analysis
+
+### Merge swyc and centiles df
+```{r}
+swyc_subset_matched_merged <- merge(swyc_subset_all_matched, centiles_all %>% select(all_of(c("participant_id_modified",
+                                                                                                   "age_at_scan", "preterm",
+                                                                        "birth_weight_kg", "bweight_percentile",
+                                                                        "sex", "adjusted_age_in_days","median_euler_mean",
+                                                                        full_vars))), 
+                     by.x = c("pat_id", "age_at_scan"), by.y = c("participant_id_modified", "age_at_scan"), all.x = TRUE, all.y = FALSE)
+```
+
+### keep one row per participant id (for now)
+```{r}
+swyc_subset_matched_merged <- swyc_subset_matched_merged %>%
+  distinct(pat_id, .keep_all = TRUE)
+```
+
+### zscore variables of interest
+```{r, echo = FALSE}
+# zscore centiles and other variables of interest
+df_matched.zscore <- swyc_subset_matched_merged %>%
+  mutate(across(all_of(c(full_vars, "bweight_percentile")), qnorm)) %>%
+  mutate(across(all_of(c("gestational_age", "birth_weight_kg", "adjusted_age_in_days", 
+                         "median_euler_mean", "norm_devo_quotient")), scale))
+# set sex and preterm as factor
+df_matched.zscore$sex <- as.factor(df_matched.zscore$sex)
+df_matched.zscore$preterm <- as.factor(df_matched.zscore$preterm)
+```
+
+### find Inf cells, make a table of N per phenotype, then convert to NaN
+```{r, echo = FALSE}
+inf_nan_table <- as.data.frame(t(sapply(df_matched.zscore[c(full_vars, "bweight_percentile")], function(x){
+  c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
+})))
+max(inf_nan_table$inf)
+max(inf_nan_table$nan)
+
+inf_nan_table %>% filter(inf > 0)
+```
+
+### set Inf cells to NaN
+```{r, echo = FALSE}
+df_matched.zscore <- df_matched.zscore %>% 
+  mutate(across(all_of(c(full_vars, "bweight_percentile")), ~ replace(., is.infinite(.), NaN)))
+```
+
+## Associate with global variables
+
+### Define global vars of interest
+```{r, echo = TRUE}
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
+```
+
+### SWYC ~ global without QC
+```{r, echo = FALSE}
+swyc_reg_table_global <- as.data.frame(t(sapply(df_matched.zscore[, which(names(df_matched.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df_matched.zscore$norm_devo_quotient)
+  summary <- summary(lm)
+  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
+})))
+
+swyc_reg_table_global$swyc_p_adj <- p.adjust(swyc_reg_table_global$swyc_p, method = "BH")
+
+swyc_reg_table_global %>% filter(swyc_p_adj < 0.05)
+range(swyc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
+```
+
+### SWYC ~ global with QC
+```{r, echo = FALSE}
+swyc.qc_reg_table_global <- as.data.frame(t(sapply(df_matched.zscore[, which(names(df_matched.zscore) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df_matched.zscore$norm_devo_quotient + df_matched.zscore$median_euler_mean)
+  summary <- summary(lm)
+  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
+})))
+
+swyc.qc_reg_table_global$swyc_p_adj <- p.adjust(swyc.qc_reg_table_global$swyc_p, method = "BH")
+
+swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05)
+range(swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
+```
+
+### Visualize/Figure Panel without QC
+```{r, echo = FALSE}
+#  Add phenotype column from rownames
+swyc_reg_table_global$phenotype <- rownames(swyc_reg_table_global)
+
+#  Add model identifiers + rename to common column names
+swyc_reg_table_global <- swyc_reg_table_global %>%
+  mutate(model = "SWYC",
+         beta = swyc_beta,
+         se   = swyc_se,
+         p_adj    = swyc_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+#  Combine and arrange by specific order of global phenotypes
+df <- swyc_reg_table_global %>%
+  mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
+                                                  "global_SubCortGrayVol", "global_VentricleChoroidVol",
+                                                  "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
+
+#  Labeling for phenotypes on plot
+phenotype_labs <- c(
+ global_eTIV = "Intracranial Volume",
+ global_MeanThickness = "Mean Cortical Thickness",
+ global_VentricleChoroidVol = "Ventricular Volume",
+ global_SurfaceArea = "Total Surface Area",
+ global_CortexVol = "Cortical Gray Matter Volume",
+ global_CerebralWhiteMatterVol = "Cerebral White Matter Volume",
+ global_SubCortGrayVol = "Subcortical Gray Matter Volume"
+)
+
+#  Plot
+(global_betas_noqc_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
+    geom_point(aes(shape = model, color = color), size = 3) +
+    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
+    scale_shape_manual(values = c("SWYC" = 8),
+                       name = "") +
+    scale_color_identity() +
+    scale_x_continuous(limits = c(-0.25, 0.35)) +
+    scale_y_discrete(limits = rev, labels = phenotype_labs) +
+    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
+    theme_minimal() +
+    theme_bw(base_size = 16) +
+    theme(
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.border = element_blank(),
+        axis.text.y  = element_text(color = "black"),
+        axis.line.x  = element_line(color = "black"),
+        axis.line.y  = element_blank(),
+        legend.justification = c("left", "top")
+    ) +
+    xlab("Standardized Beta Estimate, without QC covar") +
+    ylab(""))
+```
+
+
+
+### Visualize/Figure Panel with QC
+```{r, echo = FALSE}
+#  Add phenotype column from rownames
+swyc.qc_reg_table_global$phenotype <- rownames(swyc.qc_reg_table_global)
+
+swyc.qc_reg_table_global <- swyc.qc_reg_table_global %>%
+  mutate(model = "SWYC",
+         beta = swyc_beta,
+         se   = swyc_se,
+         p_adj    = swyc_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+#  Combine and arrange by specific order of global phenotypes
+df <- swyc.qc_reg_table_global %>%
+  mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
+                                                  "global_SubCortGrayVol", "global_VentricleChoroidVol",
+                                                  "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
+
+#  Labeling for phenotypes on plot
+phenotype_labs <- c(
+ global_eTIV = "Intracranial Volume",
+ global_MeanThickness = "Mean Cortical Thickness",
+ global_VentricleChoroidVol = "Ventricular Volume",
+ global_SurfaceArea = "Total Surface Area",
+ global_CortexVol = "Cortical Gray Matter Volume",
+ global_CerebralWhiteMatterVol = "Cerebral White Matter Volume",
+ global_SubCortGrayVol = "Subcortical Gray Matter Volume"
+)
+
+#  Plot
+(global_betas_withqc_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
+    geom_point(aes(shape = model, color = color), size = 3) +
+    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
+    scale_shape_manual(values = c("SWYC" = 8),
+                       name = "") +
+    scale_color_identity() +
+    scale_x_continuous(limits = c(-0.25, 0.35)) +
+    scale_y_discrete(limits = rev, labels = phenotype_labs) +
+    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
+    theme_minimal() +
+    theme_bw(base_size = 16) +
+    theme(
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.border = element_blank(),
+        axis.text.y  = element_text(color = "black"),
+        axis.line.x  = element_line(color = "black"),
+        axis.line.y  = element_blank(),
+        legend.justification = c("left", "top")
+    ) +
+    xlab("Standardized Beta Estimate, with QC covar") +
+    ylab(""))
+```
+
+### Individual Scatterplots for SWYC
+```{r}
+swyc_N <- sum(!is.na(df_matched.zscore$norm_devo_quotient) & !is.na(df_matched.zscore$global_VentricleChoroidVol))
+
+#Ventricles
+swyc_vent_beta <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_VentricleChoroidVol") %>% 
+  select(swyc_beta) %>% pull(swyc_beta)
+swyc_vent_p_adj <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_VentricleChoroidVol") %>% 
+  select(swyc_p_adj) %>% pull(swyc_p_adj)
+(swyc_vent_plot <- ggplot(df_matched.zscore, aes(x = norm_devo_quotient, y = global_VentricleChoroidVol)) +
+  geom_point(color = "#7293b0", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#7293b0") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_vent_beta,3), "; p-adj=", signif(swyc_vent_p_adj,3))) +
+  labs(
+    x = paste0("Mean SWYC Score (z-scored), N = ", swyc_N),
+    y = "Ventricle Volume Centile (z-scored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+#Subcortical GMV
+swyc_scgmv_beta <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_SubCortGrayVol") %>% 
+  select(swyc_beta) %>% pull(swyc_beta)
+swyc_scgmv_p_adj <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_SubCortGrayVol") %>% 
+  select(swyc_p_adj) %>% pull(swyc_p_adj)
+(swyc_scgmv_plot <- ggplot(df_matched.zscore, aes(x = norm_devo_quotient, y = global_SubCortGrayVol)) +
+  geom_point(color = "#c87a7a", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#c87a7a") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_scgmv_beta,3), "; p-adj=", signif(swyc_scgmv_p_adj,3))) +
+  labs(
+    x = paste0("Mean SWYC Score (z-scored), N = ", swyc_N),
+    y = "Subcortical Gray Volume Centile (z-scored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+
+#Cortical GMV
+swyc_ctxgmv_beta <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_CortexVol") %>% 
+  select(swyc_beta) %>% pull(swyc_beta)
+swyc_ctxgmv_p_adj <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_CortexVol") %>% 
+  select(swyc_p_adj) %>% pull(swyc_p_adj)
+(swyc_ctxgmv_plot <- ggplot(df_matched.zscore, aes(x = norm_devo_quotient, y = global_CortexVol)) +
+  geom_point(color = "#c87a7a", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#c87a7a") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_ctxgmv_beta,3), "; p-adj=", signif(swyc_ctxgmv_p_adj,3))) +
+  labs(
+    x = paste0("Mean SWYC ctxore (z-ctxored), N = ", swyc_N),
+    y = "Cortical Gray Volume Centile (z-ctxored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+#Total Surface Area
+swyc_sa_beta <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_SurfaceArea") %>% 
+  select(swyc_beta) %>% pull(swyc_beta)
+swyc_sa_p_adj <- swyc.qc_reg_table_global %>% 
+  filter(phenotype == "global_SurfaceArea") %>% 
+  select(swyc_p_adj) %>% pull(swyc_p_adj)
+(swyc_sa_plot <- ggplot(df_matched.zscore, aes(x = norm_devo_quotient, y = global_SurfaceArea)) +
+  geom_point(color = "#c87a7a", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#c87a7a") +
+  annotate("label",
+           x = 0.5, y = 3.2,
+           label = paste0("std beta=", signif(swyc_sa_beta,3), "; p-adj=", signif(swyc_sa_p_adj,3))) +
+  labs(
+    x = paste0("Mean SWYC ctxore (z-scored), N = ", swyc_N),
+    y = "Total Surface Area Centile (z-scored)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+```
+
+## CMDs
+
+### Calculate CMDs
+```{r}
+vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
+length_names <- length(c(vol_vars_cortical, sa_vars, th_vars))
+names.global <- c("global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol")
+# Ensure all names are in the same order
+names_base <- names(df_matched.zscore)[grep("aparc_GrayVol", names(df_matched.zscore))] %>% sub("aparc_GrayVol_","",.) %>%
+  gsub("_Z", "", .)
+names.vol <- paste0("aparc_GrayVol_",names_base)
+names.sa <- paste0("aparc_SurfArea_",names_base)
+names.th <- paste0("aparc_ThickAvg_",names_base)
+# CMD Calculation
+## vol
+vol.center <- colMeans(df_matched.zscore %>% select(all_of(names.vol)))
+vol.cov_matrix <- cov(df_matched.zscore %>% select(all_of(names.vol)))
+vol.md <- sqrt(mahalanobis(df_matched.zscore %>% select(all_of(names.vol)), vol.center, vol.cov_matrix))
+df_matched.zscore$vol.cmd <- vol.md
+## sa
+sa.center <- colMeans(df_matched.zscore %>% select(all_of(names.sa)), na.rm = TRUE)
+sa.cov_matrix <- cov(df_matched.zscore %>% select(all_of(names.sa)), use = "complete.obs")
+sa.md <- sqrt(mahalanobis(df_matched.zscore %>% select(all_of(names.sa)), sa.center, sa.cov_matrix))
+df_matched.zscore$sa.cmd <- sa.md
+## th
+th.center <- colMeans(df_matched.zscore %>% select(all_of(names.th)), na.rm = TRUE)
+th.cov_matrix <- cov(df_matched.zscore %>% select(all_of(names.th)), use = "complete.obs")
+th.md <- sqrt(mahalanobis(df_matched.zscore %>% select(all_of(names.th)), th.center, th.cov_matrix))
+df_matched.zscore$th.cmd <- th.md
+## global
+global.center <- colMeans(df_matched.zscore %>% select(all_of(names.global)), na.rm = TRUE)
+global.cov_matrix <- cov(df_matched.zscore %>% select(all_of(names.global)), use = "complete.obs")
+global.md <- sqrt(mahalanobis(df_matched.zscore %>% select(all_of(names.global)), global.center, global.cov_matrix))
+df_matched.zscore$global.cmd <- global.md
+```
+
+### Cor.test CMDs
+```{r, echo = FALSE}
+# Exploratory
+cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$gestational_age)
+cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$birth_weight_kg)
+cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$norm_devo_quotient)
+
+cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$gestational_age)
+cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$birth_weight_kg)
+cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$norm_devo_quotient)
+
+cor.test(df_matched.zscore$th.cmd, df_matched.zscore$gestational_age)
+cor.test(df_matched.zscore$th.cmd, df_matched.zscore$birth_weight_kg)
+cor.test(df_matched.zscore$th.cmd, df_matched.zscore$bweight_percentile)
+cor.test(df_matched.zscore$th.cmd, df_matched.zscore$norm_devo_quotient)
+
+cor.test(df_matched.zscore$global.cmd, df_matched.zscore$gestational_age)
+cor.test(df_matched.zscore$global.cmd, df_matched.zscore$birth_weight_kg)
+cor.test(df_matched.zscore$global.cmd, df_matched.zscore$bweight_percentile)
+cor.test(df_matched.zscore$global.cmd, df_matched.zscore$norm_devo_quotient)
+```
+
+### CMD plots
+```{r}
+# Vol CMD
+cor_volCMD_swyc.matched <- cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$norm_devo_quotient)
+## plot
+volCMD_swyc.matched_r <- signif(cor_volCMD_swyc.matched$estimate, 3)
+volCMD_swyc.matched_p <- signif(cor_volCMD_swyc.matched$p.value, 3)
+
+(cor_volCMD_swyc.matched_plot <- ggplot(df_matched.zscore, aes(norm_devo_quotient, vol.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",volCMD_swyc.matched_r, "; p=", volCMD_swyc.matched_p)) +
+  labs(
+    x = paste0("SWYC DQ (age within 10% of scan), N = ", bw_N),
+    y = "Volume CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+# SA CMD
+cor_saCMD_swyc.matched <- cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$norm_devo_quotient)
+## plot
+saCMD_swyc.matched_r <- signif(cor_saCMD_swyc.matched$estimate, 3)
+saCMD_swyc.matched_p <- signif(cor_saCMD_swyc.matched$p.value, 3)
+
+(cor_saCMD_swyc.matched_plot <- ggplot(df_matched.zscore, aes(norm_devo_quotient, sa.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",saCMD_swyc.matched_r, "; p=", saCMD_swyc.matched_p)) +
+  labs(
+    x = paste0("SWYC DQ (age within 10% of scan), N = ", bw_N),
+    y = "Surface Area CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+# Thickness CMD
+cor_thCMD_swyc.matched <- cor.test(df_matched.zscore$th.cmd, df_matched.zscore$norm_devo_quotient)
+## plot
+thCMD_swyc.matched_r <- signif(cor_thCMD_swyc.matched$estimate, 3)
+thCMD_swyc.matched_p <- signif(cor_thCMD_swyc.matched$p.value, 3)
+
+(cor_thCMD_swyc.matched_plot <- ggplot(df_matched.zscore, aes(norm_devo_quotient, th.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",thCMD_swyc.matched_r, "; p=", thCMD_swyc.matched_p)) +
+  labs(
+    x = paste0("SWYC DQ (age within 10% of scan), N = ", bw_N),
+    y = "Cortical Thickness CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+
+#Global CMD
+cor_globalCMD_swyc.matched <- cor.test(df_matched.zscore$global.cmd, df_matched.zscore$norm_devo_quotient)
+## plot
+globalCMD_swyc.matched_r <- signif(cor_globalCMD_swyc.matched$estimate, 3)
+globalCMD_swyc.matched_p <- signif(cor_globalCMD_swyc.matched$p.value, 3)
+
+(cor_globalCMD_swyc.matched_plot <- ggplot(df_matched.zscore, aes(norm_devo_quotient, global.cmd)) +
+  geom_point(color = "#8C7FAF", alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+  annotate("label",
+           x = 2, y = 10,
+           label.size = 0,
+           label = paste0("r=",globalCMD_swyc.matched_r, "; p=", globalCMD_swyc.matched_p)) +
+  labs(
+    x = paste0("SWYC DQ (age within 10% of scan), N = ", bw_N),
+    y = "Global CMD"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_blank()
+  ))
+```
+## Test Mediation
+
+### Brain covars with bw
+```{r}
+sum(!is.na(df_matched.zscore$birth_weight_kg))
+
+lm_swyc_bw_matched <- lm(norm_devo_quotient ~ birth_weight_kg, data = df_matched.zscore)
+lm_swyc_bw_matched_stats <- summary(lm_swyc_bw_matched)
+lm_swyc_bw_thcmd <- lm(norm_devo_quotient ~ birth_weight_kg + th.cmd, data = df_matched.zscore)
+lm_swyc_bw_ctxvol <- lm(norm_devo_quotient ~ birth_weight_kg + global_CortexVol, data = df_matched.zscore)
+lm_swyc_bw_thcmd_stats <- summary(lm_swyc_bw_thcmd)
+lm_swyc_bw_ctxvol_stats <- summary(lm_swyc_bw_ctxvol)
+lm_swyc_bw_matched_stats
+lm_swyc_bw_thcmd_stats
+lm_swyc_bw_ctxvol_stats
+
+#plot
+
+df_plot_bw <- data.frame(
+  model = c("no covar BW", "thickness cmd covar", "ctxvol covar"),
+  estimate = c(summary(lm_swyc_bw_matched)$coefficients[2, "Estimate"],
+               summary(lm_swyc_bw_thcmd)$coefficients[2, "Estimate"],
+               summary(lm_swyc_bw_ctxvol)$coefficients[2, "Estimate"]),
+  se = c(summary(lm_swyc_bw_matched)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_bw_thcmd)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_bw_ctxvol)$coefficients[2, "Std. Error"])
+) %>%
+  mutate(
+    ymin = estimate - se,
+    ymax = estimate + se
+  )
+
+ggplot(df_plot_bw, aes(x = model, y = estimate)) +
+  geom_pointrange(aes(ymin = ymin, ymax = ymax), linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic()
+
+```
+
+### Brain covars with bw
+```{r}
+sum(!is.na(df_matched.zscore$gestational_age))
+
+lm_swyc_ga_matched <- lm(norm_devo_quotient ~ gestational_age, data = df_matched.zscore)
+lm_swyc_ga_matched_stats <- summary(lm_swyc_ga_matched)
+lm_swyc_ga_thcmd <- lm(norm_devo_quotient ~ gestational_age + th.cmd, data = df_matched.zscore)
+lm_swyc_ga_ctxvol <- lm(norm_devo_quotient ~ gestational_age + global_CortexVol, data = df_matched.zscore)
+lm_swyc_ga_thcmd_stats <- summary(lm_swyc_ga_thcmd)
+lm_swyc_ga_ctxvol_stats <- summary(lm_swyc_ga_ctxvol)
+lm_swyc_ga_matched_stats
+lm_swyc_ga_thcmd_stats
+lm_swyc_ga_ctxvol_stats
+
+#plot
+
+df_plot_ga <- data.frame(
+  model = c("no covar ga", "thickness cmd covar", "ctxvol covar"),
+  estimate = c(summary(lm_swyc_ga_matched)$coefficients[2, "Estimate"],
+               summary(lm_swyc_ga_thcmd)$coefficients[2, "Estimate"],
+               summary(lm_swyc_ga_ctxvol)$coefficients[2, "Estimate"]),
+  se = c(summary(lm_swyc_ga_matched)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_ga_thcmd)$coefficients[2, "Std. Error"],
+         summary(lm_swyc_ga_ctxvol)$coefficients[2, "Std. Error"])
+) %>%
+  mutate(
+    ymin = estimate - se,
+    ymax = estimate + se
+  )
+
+ggplot(df_plot_ga, aes(x = model, y = estimate)) +
+  geom_pointrange(aes(ymin = ymin, ymax = ymax), linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic()
+
+```
+
+
+# Look at SWYC trajectories
+
+## Plot trajectories
+```{r}
+(swyc_trajectory_plot <- ggplot(swyc, aes(y = norm_devo_quotient, group = pat_id)) +
+  geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
+  geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank()))
+```
+
+## Simple trajectory classification
+```{r}
+# subset for SWYC 2+
+swyc_rm <- swyc %>%
+   group_by(pat_id) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+# classify based on lm(dq ~ age)
+
+swyc_rm <- swyc_rm %>%
+  group_by(pat_id) %>%
+  arrange(effective_age, .by_group = TRUE) %>%
+  summarise(
+    lm_fit = list(lm(norm_devo_quotient ~ effective_age, data = cur_data())),
+    .groups = "drop"
+  ) 
+swyc_lms <- swyc_rm %>%
+  group_by(pat_id) %>%
+  arrange(effective_age, .by_group = TRUE) %>%
+  summarise(
+    n_obs = n(),
+    lm_fit = list(lm(norm_devo_quotient ~ effective_age, data = cur_data())),
+    .groups = "drop"
+  )
+
+swyc_lms_2plus <- swyc_lms %>%
+  rowwise() %>%
+  mutate(
+    beta = coef(lm_fit)[["effective_age"]],
+    classification = case_when(
+      beta > 0 ~ "positive",
+      beta < 0 ~ "negative",
+      beta == 0 ~ "zero")
+  ) %>%
+  select(pat_id, beta, n_obs, classification)
+
+swyc_trajplot_df <- merge(swyc, swyc_lms_2plus, by = "pat_id", all.x = FALSE)
+
+(swyc_trajectory_plot1 <- ggplot(swyc_trajplot_df, aes(y = norm_devo_quotient, 
+                                                      group = pat_id, color = classification)) +
+  geom_point(aes(x = effective_age), size = 0.2) +
+  geom_line(aes(x = effective_age),size = 0.1) + 
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank()))
+
+swyc_lms_3plus <- swyc_lms %>%
+  filter(n_obs > 2) %>%
+  rowwise() %>%
+  mutate(
+    beta = coef(lm_fit)[["effective_age"]],
+    pval = summary(lm_fit)$coefficients["effective_age", "Pr(>|t|)"],
+    classification = case_when(
+      pval < 0.05 & beta > 0 ~ "positive_significant",
+      pval < 0.05 & beta < 0 ~ "negative_significant",
+      TRUE ~ "not_significant"
+  )) %>%
+  select(pat_id, beta, pval, n_obs, classification)
+
+swyc_trajplot_df2 <- merge(swyc, swyc_lms_3plus, by = "pat_id", all.x = FALSE)
+
+(swyc_trajectory_plot2 <- ggplot(swyc_trajplot_df2, aes(y = norm_devo_quotient, 
+                                                      group = pat_id, color = classification)) +
+  geom_point(aes(x = effective_age), size = 0.2) +
+  geom_line(aes(x = effective_age),size = 0.1) + 
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank()))
+
+(swyc_trajectory_plot3 <- ggplot(swyc_trajplot_df2 %>% filter(classification != "not_significant"), aes(y = norm_devo_quotient, 
+                                                      group = pat_id, color = classification)) +
+  geom_point(aes(x = effective_age), size = 0.2) +
+  geom_line(aes(x = effective_age),size = 0.1) + 
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank()))
+```
+
+
+## Compare betas based on GA/Preterm
+```{r}
+swyc_lms_2plus_test <- merge(swyc_lms_2plus, swyc %>% select(pat_id, gestational_age_num), all.x = TRUE, all.y = FALSE)
+swyc_lms_2plus_test$gestational_age_num <- as.numeric(swyc_lms_2plus_test$gestational_age_num)
+
+cor.test(~ beta + gestational_age_num, data = swyc_lms_2plus_test)
+
+plot(swyc_lms_2plus_test$gestational_age_num, swyc_lms_2plus_test$beta)
+
+swyc_lms_2plus_test$preterm <- as.factor(cut(swyc_lms_2plus_test$gestational_age_num, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
+
+
+# PLOTS
+swyc_lms_2plus_summary <- swyc_lms_2plus_test %>% 
+  filter(!is.na(preterm))%>%
+  group_by(preterm) %>%
+  summarise(
+    mean_beta = mean(beta, na.rm = TRUE),
+    median_beta = median(beta, na.rm = TRUE)
+  )
+
+ggplot(swyc_lms_2plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
+                                                            y = beta, fill = preterm)) +
+  geom_boxplot() +
+    scale_fill_manual(values = c(
+    "VPM" = "#C86A5D",   # muted red
+    "LPM" = "#E1A159",   # muted orange
+    "Term" = "#A59F8F"   # muted reddish-gray
+  )) +
+  geom_text(data = swyc_lms_2plus_summary, aes(x = preterm,
+                                   y = -0.01,
+                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
+            inherit.aes = FALSE, vjust = 1) +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(),
+    legend.position = "none"
+  ) +
+  ylab("Beta of SWYC over time (2+ timepoints)")
+
+ggplot(swyc_lms_2plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
+                                                            y = beta, fill = preterm)) +
+  geom_boxplot(outliers = FALSE) +
+    scale_fill_manual(values = c(
+    "VPM" = "#C86A5D",   # muted red
+    "LPM" = "#E1A159",   # muted orange
+    "Term" = "#A59F8F"   # muted reddish-gray
+  ))  +
+  coord_cartesian(ylim = c(-0.0024, 0.0015)) + 
+  geom_text(data = swyc_lms_2plus_summary, aes(x = preterm,
+                                   y = -0.002,
+                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
+            inherit.aes = FALSE, vjust = 1) +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(),
+    legend.position = "none"
+  ) +
+  ylab("Beta of SWYC over time (2+ timepoints)")
+
+
+# Stats Testing
+anova_fit <- aov(beta ~ preterm, data = swyc_lms_2plus_test)
+summary(anova_fit)
+
+pairwise.t.test(swyc_lms_2plus_test$beta, swyc_lms_2plus_test$preterm, p.adjust.method = "bonferroni")
+```
+
+## Compare betas for significant traj based on GA/Preterm
+```{r}
+swyc_lms_3plus_test <- merge(swyc_lms_3plus %>% filter(classification != "not_significant"), swyc %>% select(pat_id, gestational_age_num), all.x = TRUE, all.y = FALSE)
+swyc_lms_3plus_test$gestational_age_num <- as.numeric(swyc_lms_3plus_test$gestational_age_num)
+
+cor.test(~ beta + gestational_age_num, data = swyc_lms_3plus_test)
+
+plot(swyc_lms_3plus_test$gestational_age_num, swyc_lms_3plus_test$beta)
+
+swyc_lms_3plus_test$preterm <- as.factor(cut(swyc_lms_3plus_test$gestational_age_num, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
+
+table(swyc_lms_3plus_test$preterm)
+
+# PLOTS
+swyc_lms_3plus_summary <- swyc_lms_3plus_test %>% 
+  filter(!is.na(preterm))%>%
+  group_by(preterm) %>%
+  summarise(
+    mean_beta = mean(beta, na.rm = TRUE),
+    median_beta = median(beta, na.rm = TRUE)
+  )
+
+ggplot(swyc_lms_3plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
+                                                            y = beta, fill = preterm)) +
+  geom_boxplot() +
+    scale_fill_manual(values = c(
+    "VPM" = "#C86A5D",   # muted red
+    "LPM" = "#E1A159",   # muted orange
+    "Term" = "#A59F8F"   # muted reddish-gray
+  )) +
+  geom_text(data = swyc_lms_3plus_summary, aes(x = preterm,
+                                   y = -0.005,
+                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
+            inherit.aes = FALSE, vjust = 1) +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(),
+    legend.position = "none"
+  ) +
+  ylab("Sig. Beta of SWYC over time (3+ timepoints)")
+
+ggplot(swyc_lms_3plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
+                                                            y = beta, fill = preterm)) +
+  geom_boxplot(outliers = FALSE) +
+    scale_fill_manual(values = c(
+    "VPM" = "#C86A5D",   # muted red
+    "LPM" = "#E1A159",   # muted orange
+    "Term" = "#A59F8F"   # muted reddish-gray
+  ))  +
+  coord_cartesian(ylim = c(-0.0045, 0.002)) + 
+  geom_text(data = swyc_lms_3plus_summary, aes(x = preterm,
+                                   y = -0.0035,
+                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
+            inherit.aes = FALSE, vjust = 1) +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(),
+    legend.position = "none"
+  ) +
+  ylab("Sig. Beta of SWYC over time (3+ timepoints)")
+
+
+# Stats Testing
+anova_fit <- aov(beta ~ preterm, data = swyc_lms_3plus_test)
+summary(anova_fit)
+
+pairwise.t.test(swyc_lms_3plus_test$beta, swyc_lms_3plus_test$preterm, p.adjust.method = "bonferroni")
+```
+
+# which of the folks with trajectories have brain centile scores
+```{r}
+swyc_lms_2plus_brain <- merge(swyc_lms_2plus, centiles_distinct, by.x = "pat_id", by.y = "participant_id_modified", all.x = FALSE, all.y = FALSE)
+swyc_lms_3plus_brain <- merge(swyc_lms_3plus, centiles_distinct, by.x = "pat_id", by.y = "participant_id_modified", all.x = FALSE, all.y = FALSE)
+```
+
+## check associations with global vars
+
+### Define global vars of interest
+```{r, echo = TRUE}
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
+```
+
+### SWYC ~ global without QC
+```{r, echo = FALSE}
+swyc_reg_table_global <- as.data.frame(t(sapply(swyc_lms_3plus_brain[, which(names(swyc_lms_3plus_brain) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ swyc_lms_3plus_brain$beta)
+  summary <- summary(lm)
+  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
+})))
+
+swyc_reg_table_global$swyc_p_adj <- p.adjust(swyc_reg_table_global$swyc_p, method = "BH")
+
+swyc_reg_table_global %>% filter(swyc_p_adj < 0.05)
+range(swyc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
+```
+
+### SWYC ~ global with QC
+```{r, echo = FALSE}
+swyc.qc_reg_table_global <- as.data.frame(t(sapply(swyc_lms_3plus_brain[, which(names(swyc_lms_3plus_brain) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ swyc_lms_3plus_brain$beta + swyc_lms_3plus_brain$median_euler_mean)
+  summary <- summary(lm)
+  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
+})))
+
+swyc.qc_reg_table_global$swyc_p_adj <- p.adjust(swyc.qc_reg_table_global$swyc_p, method = "BH")
+
+swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05)
+range(swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
+```
+
+### plot against centile scores
+```{r}
+cor.test(~ qnorm(global_eTIV) + scale(beta), data = swyc_lms_3plus_brain)
+ggplot(swyc_lms_3plus_brain, aes(x = global_eTIV, y = beta)) +
+  geom_point(color = "#8F8F8F") +
+  theme_minimal()
+```

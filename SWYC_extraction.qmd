@@ -1,0 +1,624 @@
+---
+title: "SWYC Processing"
+author: "Author: Benjamin Jung, PhD, jungb@chop.edu"
+date: "Last updated `r format(Sys.time(), '%d %B %Y')`"
+format: pdf
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Set up and Logistics
+
+```{r setup, include=FALSE, collapse=TRUE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center')
+options(kable_styling_bootstrap_options=c("striped","hover","condensed", "responsive"))
+
+print(getwd())
+```
+
+```{r, warning=FALSE, message=FALSE}
+#| output: false
+rm(list = ls())
+library(ggplot2)
+library(tidyverse)
+library(stringr)
+library(knitr)
+library(kableExtra)
+```
+
+### Authenticate Lab in SQL Big Query
+
+This code with authenticate to this Lab's Big Query project (must be run)
+
+```{r}
+library(bigrquery)
+bq_auth()
+project_id <- if (exists('project_id')) project_id else bq_projects()[1]
+```
+
+## Download and Clean SWYC Codes
+
+### Query SWYC forms
+
+First, let's extract qform data that contains `swyc` or `developmental milestones`. This will give us the individual question responses and the summary scores.
+
+```{r}
+dir.create("/mnt/arcus/lab/users/kafadare/swyc_output/queries", showWarnings = F)
+file <- "/mnt/arcus/lab/users/kafadare/swyc_output/queries/qforms_developmental_milestones.csv"
+if (file.exists(file) & FALSE) {
+  qforms.swyc <- read_csv(file,show_col_types = FALSE)
+} else {
+  # # Default
+  table_query <- "SELECT 
+                    enc.pat_id,
+                    pat.sex_abbr,
+                    pat.race,
+                    pat.ethnicity,
+                    pat.gestational_age_num,
+                    enc.encounter_id,
+                    enc.effective_age,
+                    qform.form_name,
+                    qform.form_friendly_name,
+                    qform.form_section_name,
+                    qform.form_section_friendly_name,
+                    qform.form_line,
+                    qform.quest_type_name,
+                    qform.quest_name,
+                    qform.quest_text,
+                    qform.answer_line,
+                    qform.numeric_answer,
+                    qform.text_answer,
+                    enc.enc_type_name,
+                    enc.appt_status_code,
+                    enc.appt_status_name,
+                    enc.appt_prc_name,
+                    pat.interpreter_needed,
+                    pat.birth_weight_kg
+                  FROM arcus.qform_answer qform
+                  INNER JOIN arcus.encounter enc on qform.encounter_id = enc.encounter_id
+                  INNER JOIN arcus.patient pat on qform.pat_id=pat.pat_id
+                  WHERE lower(form_friendly_name) LIKE '%developmental milestones%' OR
+                       lower(form_friendly_name) LIKE '%swyc%'"
+
+  
+  qforms.swyc <- bq_table_download(bq_project_query(project_id, table_query))
+    
+  write_csv(qforms.swyc,file)
+}
+```
+
+While the clinical interpretation of the SWYC is based on ages calculated using the specific month and day, this is not possible due to the removal of datetimes from this lab. Therefore, we will calculate it based on `effective age`. The SWYC also performs prematurity adjustments when the individual is less than 24 months old AND born 3 or more weeks premature, so we will calculate that here. Note that these prematurity adjustments will not be used for the normative scores.
+
+```{r}
+qforms.swyc$norm.age <- qforms.swyc$effective_age/30.437
+
+# Check for prematurity
+qforms.swyc$weeks_premature <- 40 - as.numeric(qforms.swyc$gestational_age_num)
+
+# Adjust for prematurity if swyc age is less than 24 months 
+qforms.swyc <- qforms.swyc %>%
+                  mutate(clin.age = case_when(
+                            is.na(weeks_premature) ~ norm.age,
+                            weeks_premature >= 3 & norm.age < 24 ~ norm.age - weeks_premature/4.35,
+                            .default = norm.age)) %>%
+                  mutate(norm.age = floor(norm.age),
+                         clin.age = floor(clin.age),)
+
+kable(table(qforms.swyc$weeks_premature >= 3, useNA = "always"), caption = "Premature Birth")
+```
+
+### Standardize SWYC Names
+
+Standardize SWYC Questionnaire names so that all individuals using the same questionnaire are grouped. This includes removing the specific age from the SWYC name and replacing it with the SWYC's target age.
+
+```{r}
+library(stringr)
+qforms.swyc <- qforms.swyc %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, " \\(\\d*\\)", "")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, "month", "Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, "Months", "Month")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, "  "," ")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Survey of Well-being of Young Children: ",
+                              "SWYC ")) %>%  
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\(4 Month\\)",
+                              "Developmental Milestones: 4 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((6|7|8) Month\\)",
+                              "Developmental Milestones: 6 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((9|10|11) Month\\)",
+                              "Developmental Milestones: 9 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((12|13|14) Month\\)",
+                              "Developmental Milestones: 12 Month")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((15|16) Month\\)",
+                              "Developmental Milestones: 15 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((17|18|19|22) Month\\)",
+                              "Developmental Milestones: 18 Month")) %>%   
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((24|26) Month\\)",
+                              "Developmental Milestones: 24 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((29|30|34) Month\\)",
+                              "Developmental Milestones: 30 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((35|36|46) Month\\)",
+                              "Developmental Milestones: 36 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\((48|49) Month\\)",
+                              "Developmental Milestones: 48 Month")) %>% 
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                              "Developmental Milestones \\(60 Month\\)",
+                              "Developmental Milestones: 60 Month")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                                    "Developmental Milestones", "")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                                    ": 4 Month", ": 04 Month")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                                    ": 6 Month", ": 06 Month")) %>%
+        mutate(form_friendly_name = str_replace_all(form_friendly_name, 
+                                    ": 9 Month", ": 09 Month"))
+
+qforms.swyc.counts <- qforms.swyc %>%
+                        dplyr::select(c(pat_id, form_friendly_name)) %>%
+                        distinct() %>%
+                        count(form_friendly_name)
+
+kable(qforms.swyc.counts)
+```
+
+### Filter Questionnaires
+
+Let's restrict to just the milestones
+
+```{r}
+qforms.swyc <- qforms.swyc[grepl("Month",qforms.swyc$form_friendly_name),]
+```
+
+We could also exclude low-N forms, say \< 100. However, since we're going with normative scores anyway its not necessary for now.
+
+```{r}
+# qforms.swyc <- qforms.swyc[qforms.swyc$form_friendly_name %in%
+#                            qforms.swyc.counts$form_friendly_name[qforms.swyc.counts$n >= 100],]
+```
+
+```{r}
+qforms.swyc.counts <- qforms.swyc %>%
+                        dplyr::select(c(pat_id, form_friendly_name)) %>%
+                        distinct() %>%
+                        count(form_friendly_name) %>%
+                        select(`SWYC Form` = form_friendly_name,
+                               Count = n)
+                        
+
+kable(qforms.swyc.counts)
+```
+
+Now let's check to see if a given form was appropriate based on the age range appropriate for the form
+
+```{r}
+swyc_grader <- read_csv("/home/kafadare/arcus/shared/jungbt/SWYC/data/SWYC_norms/SWYC_scores.csv", show_col_types = FALSE)
+
+qforms.swyc <- merge(qforms.swyc, swyc_grader, 
+                            by.x = "clin.age", by.y = "Age" , all.x = T)
+
+kable(table(qforms.swyc$form_friendly_name == qforms.swyc$Form), caption = "Uses Correct Form")
+```
+
+About 5,000 entries don't match the expected form, so let's remove them
+
+```{r}
+qforms.swyc <- qforms.swyc[qforms.swyc$form_friendly_name == qforms.swyc$Form,]
+```
+
+## Process SWYC Scores
+
+```{r}
+qforms.swyc.scores <- qforms.swyc[grepl("Scoring Question",qforms.swyc$quest_type_name),]
+qforms.swyc.scores$cat <- "Score"
+```
+
+```{r}
+#| echo: false
+#| eval: false
+#| fig-height: 12
+#| fig-width: 10
+
+ggplot(qforms.swyc.scores, aes(x = numeric_answer)) +
+  geom_histogram() +
+  facet_grid(form_friendly_name ~ cat)
+```
+
+```{r}
+#| fig-height: 12
+#| fig-width: 5
+qforms.swyc.scores <- qforms.swyc.scores[order(qforms.swyc.scores$effective_age),]
+qforms.swyc.scores$pat_id <- factor(qforms.swyc.scores$pat_id, levels = unique(qforms.swyc.scores$pat_id))
+# qforms.swyc.scores$cat <- "Score"
+ggplot(qforms.swyc.scores, aes(x = effective_age, y = pat_id, color = form_friendly_name)) +
+  geom_point(size = 0.2) +
+  geom_line(aes(group = pat_id), size = 0.1) + 
+  theme(axis.text.y  = element_blank())
+
+dir.create("/mnt/arcus/lab/users/kafadare/swyc_output/results/", showWarnings = F)
+ggsave("/mnt/arcus/lab/users/kafadare/swyc_output/results/swyc_ages.png")
+ ggplot(qforms.swyc.scores, aes(x = effective_age, fill = form_friendly_name)) +
+   geom_histogram()
+```
+
+## Approach 1: Using Clinical Thresholds
+
+The SWYC has specific guidance on whether individuals are meeting developmental milestones based on their age and response count. Let's apply those values to this data and see how many individuals are meeting thresholds
+
+```{r}
+qforms.swyc.scores$clin.meets_milestones <- qforms.swyc.scores$numeric_answer > qforms.swyc.scores$Cut_Score
+
+kable(table(qforms.swyc.scores$form_friendly_name,
+            qforms.swyc.scores$clin.meets_milestones),
+      caption = "Meeting Developmental Milestones")
+```
+
+## Approach 2: Normative Scores
+
+We can also calculate scores using normative data from Sheldrick et al. ([https://publications.aap.org/pediatrics/article/144/6/e20190374/76997/Establishing-New-Norms-for-Developmental](#0){.uri}). This approach takes any number of questions answered by an individual, and calculates the age at which the combination of responses given is mostly like to occur. This is the `developmental age`. We can then divide `developmental age` by the actual age to get `developmental quotient`. It should be noted that this approach does NOT correct for prematurity.
+
+### Get Response Rate
+
+First, let's plot the number of responses we have for each question. This technique should be robust against missing data, but its still good to check for biases.
+
+```{r}
+qforms.swyc.response <- table(qforms.swyc$form_friendly_name,qforms.swyc$form_line)
+
+response.rate <- qforms.swyc %>% 
+                    arrange(form_line) %>%
+                    dplyr::select(form_friendly_name, form_line) %>%
+                    pivot_wider(id_cols = "form_friendly_name",
+                                names_from = "form_line",
+                                values_from = "form_line",
+                                values_fn = function(x) sum(!is.na(x)), values_fill = 0)
+
+kable(response.rate, caption = "Responses by SWYC")
+
+```
+
+We tend to have a slight drop off in the later questions, but nothing severe.
+
+### Get List of Questions
+
+Now let's extract the individual questions. Some need to be reformatted to match our normative data.
+
+```{r}
+qforms.swyc.questions <- qforms.swyc %>%
+        dplyr::select(c(pat_id, encounter_id, form_friendly_name,
+                 form_line, quest_type_name, quest_text, form_section_friendly_name,
+                 numeric_answer, norm.age)) %>%
+        mutate(quest_text = ifelse(grepl("SCORING QUESTION",toupper(quest_text)), 
+                                   "Scoring Question", quest_text),
+               quest_text = ifelse(grepl("MONTH SCORE",toupper(quest_text)), 
+                                   "Scoring Question", quest_text),
+               quest_text = ifelse(grepl("TOTAL DEVELOPMENT SCORE",toupper(quest_text)), 
+                                   "Scoring Question", quest_text)) %>%
+        mutate(quest_text = str_replace_all(quest_text,'ga," ','ga",'),
+               quest_text = str_replace_all(quest_text,'ma,"','ma",'),
+               quest_text = str_replace_all(quest_text,"'","’"),
+               quest_text = str_replace_all(quest_text,"…","..."),
+               quest_text = str_replace_all(quest_text,'blanket\\?$','blanket?"'),
+               quest_text = trimws(quest_text)) %>%
+        filter(!(quest_text %in% c("Respondent"))) %>%
+        filter(!grepl("PLEASE BE SURE",toupper(quest_text))) %>%
+        drop_na(numeric_answer)
+
+write_csv(qforms.swyc.questions, "/mnt/arcus/lab/users/kafadare/swyc_output/results/SWYC_questions.csv")
+```
+
+Now let's get a count of each question. Some questions appear in multiple questionnaires, but the Sheldrick approach works on a per-question basis
+
+```{r}
+indiv_quests <- qforms.swyc.questions %>% 
+                  dplyr::select(quest_text) %>%
+                  count(quest_text)
+
+kable(indiv_quests, caption = "Number of Responses per Question")
+```
+
+### Calculate Developmental Quotient
+
+First, load the Sheldrick normative parameters for the response curves.
+
+```{r}
+sheldrick_norms <- read_csv("/home/kafadare/arcus/shared/jungbt/SWYC/data/SWYC_norms/Sheldrick_et_al_2019_norms.csv", show_col_types = FALSE)
+sheldrick_norms <- sheldrick_norms[!is.na(sheldrick_norms$`SWYC Milestone Text`),]
+
+
+qforms.swyc.questions <- merge(qforms.swyc.questions,sheldrick_norms,
+                              by.x = "quest_text", by.y = "SWYC Milestone Text")
+
+# Recode responses from 1 - 3 to 0 -2
+qforms.swyc.questions$numeric_answer <- qforms.swyc.questions$numeric_answer - 1
+
+```
+
+To calculate developmental quotient (DQ) from Sheldrick et al. (2019), we first do the following: calculate the probability of the given response at each age from 0 - 72 months.
+
+```{r}
+
+for (mo in 1:72) {
+  log_mo <- log(mo)
+  
+  # Generate response curve for each question
+  qforms.swyc.questions <- qforms.swyc.questions %>%
+                              mutate("prob.{mo}" := case_match(numeric_answer,
+                                                    0 ~ 1 - (exp(-alpha1 + beta*log_mo) / 
+                                                        (1+exp(-alpha1 + beta*log_mo))),
+                                                    1 ~ (1-exp(-alpha2 + beta*log_mo) / 
+                                                        (1+exp(-alpha2 + beta*log_mo)) - 
+                                                        (1-(exp(-alpha1 + beta*log_mo) / 
+                                                        (1+exp(-alpha1 + beta*log_mo))))),
+                                                    2 ~ exp(-alpha2 + beta*log_mo) /
+                                                        (1+exp(-alpha2 + beta*log_mo)),
+                                                    ))
+}
+```
+
+Here we generate the developmental age for each participant. This is accomplished by multiplying the probabilities of all responses at each age. Then, we find the age at which the probability of the given set of answers is highest. This method fails when responses are all 0s or all 2s. According to the methodology in the supplement, these values should be set "just above the maximum\[/minimum\] attainable developmental age resulting from at least 1 imperfect response on the set of questions their parents completed." So, we'll do that. Note, that this will take a while, as finding the minimum/maximum age for all 0s/all 2s requires making multiple new curves.
+
+```{r}
+sim_imperfect_response <- function(j, df) {
+  # Calculate new curve assuming the jth response is 1
+  for (mo in 1:72) {
+    log_mo <- log(mo)
+    df[j,] <- df[j,] %>%
+                    mutate("prob.{mo}" := (1-exp(-alpha2 + beta*log_mo) /
+                                              (1+exp(-alpha2 + beta*log_mo)) -
+                                              (1-(exp(-alpha1 + beta*log_mo) /
+                                              (1+exp(-alpha1 + beta*log_mo))))))
+
+  }
+  # Calculate new developmental age
+  curves.mat <- df %>% dplyr::select(c(prob.1:prob.72)) %>% t() %>% as_tibble()
+  curves.mat <- curves.mat %>%
+                rowwise() %>%
+                mutate(devo.prob = prod(c_across(colnames(curves.mat)))) %>%
+                ungroup()  %>%
+                mutate(devo.age = 1:nrow(curves.mat)) %>%
+                dplyr::slice(which.max(devo.prob)) %>%
+                dplyr::select(devo.age, devo.prob)
+  
+  return(list(devo.prob = curves.mat$devo.prob, devo.age = curves.mat$devo.age))
+}
+```
+
+```{r}
+#| output: false
+
+library(parallel)
+
+if (file.exists("/mnt/arcus/lab/users/kafadare/swyc_output/results/individual_development_scores.csv") & FALSE) {
+  qforms.swyc.indiv <- read_csv("/mnt/arcus/lab/users/kafadare/swyc_output/results/individual_development_scores.csv", 
+                                show_col_types = FALSE)
+} else {
+  qforms.swyc.indiv <- qforms.swyc.questions %>%
+                         dplyr::select(c(pat_id,encounter_id,form_friendly_name, norm.age)) %>%
+                         distinct()
+    
+  qforms.swyc.indiv$devo.age      <- NA
+  qforms.swyc.indiv$devo.prob     <- NA
+  qforms.swyc.indiv$devo.quotient <- NA
+  qforms.swyc.indiv$n_answers     <- NA
+  qforms.swyc.indiv$sum_answers   <- NA
+  qforms.swyc.indiv$all_0s        <- FALSE
+  qforms.swyc.indiv$all_2s        <- FALSE
+  
+  # Loop through each event and find the maximum of the curve
+  it_max <- nrow(qforms.swyc.indiv)
+  # it_max <- 100
+  pb = txtProgressBar(min = 0, max = it_max, initial = 0, style = 3) 
+  # for (i in 1:) {
+  for (i in 1:it_max) {
+    # Subset data to include only rows that belong to the visit, then transpose
+    qforms.ind <- qforms.swyc.questions %>%
+                    drop_na() %>%
+                    filter(pat_id             == qforms.swyc.indiv$pat_id[i] &
+                           encounter_id       == qforms.swyc.indiv$encounter_id[i] &
+                           form_friendly_name == qforms.swyc.indiv$form_friendly_name[i] &
+                           norm.age           == qforms.swyc.indiv$norm.age[i])
+    
+    # Record some basic data
+    qforms.swyc.indiv$n_answers[i] <- nrow(qforms.ind)
+    
+    # Some entries may have no data or not enough data, skip those
+    if(nrow(qforms.ind) < 5) {
+      next
+    # Some entries have two or more SWYCs for the same person, take the one with the highest
+    # completion rate
+    } else if (length(qforms.ind$form_section_friendly_name) > 1) {
+      qforms.ind <- qforms.ind %>%
+        filter(form_section_friendly_name == 
+                      names(which.max(table(form_section_friendly_name))))
+    }
+    
+    # Get basic response info
+    qforms.swyc.indiv$all_0s[i]      <- all(qforms.ind$numeric_answer == 0)
+    qforms.swyc.indiv$all_2s[i]      <- all(qforms.ind$numeric_answer == 2)
+    qforms.swyc.indiv$sum_answers[i] <- sum(qforms.ind$numeric_answer)
+    
+    # Now we calculate the developmental age as the max of the product of the response curves
+    # setting up a special case if the responses are all 0s or 2s
+    if (!(qforms.swyc.indiv$all_0s[i] | qforms.swyc.indiv$all_2s[i])) {
+      # Subset the data to just extract the response curves
+      curves.mat <- qforms.ind %>% dplyr::select(c(prob.1:prob.72)) %>% t() %>% as_tibble()
+      
+      # Take the produce of the probs to find the maximum of the curve, 
+      # select the max prob as the developmental age
+      curves.mat <- curves.mat %>%
+                        rowwise() %>%
+                        mutate(devo.prob = prod(c_across(colnames(curves.mat)))) %>%
+                        ungroup()  %>%
+                        mutate(devo.age = 1:nrow(curves.mat)) %>%
+                        dplyr::slice(which.max(devo.prob)) %>%
+                        dplyr::select(devo.age, devo.prob)
+      
+      qforms.swyc.indiv$devo.age[i]      <- curves.mat$devo.age
+      qforms.swyc.indiv$devo.prob[i]     <- curves.mat$devo.prob
+    } else {
+      # All 0 and All 2 responses won't work, so we set the value to just above/below the 
+      # max/min developmental age attainable assuming 1 imperfect response
+      # Calculate maximum possible age with one possible imperfect response
+      sim_responses <- mcmapply(sim_imperfect_response, 1:nrow(qforms.ind), MoreArgs = list(df = qforms.ind), mc.cores = 10)
+      sim_responses <- as_tibble(t(sim_responses)) %>% unnest(cols = c(devo.prob, devo.age))
+      # Record imperfect developmental age
+      if (qforms.swyc.indiv$all_0s[i]) {
+        # Set devo.age to the lowest possible devo age - 1
+        qforms.swyc.indiv$devo.age[i] <- min(sim_responses$devo.age, na.rm = T) - 1
+        qforms.swyc.indiv$devo.prob[i] <- max(sim_responses$devo.prob[sim_responses$devo.age == qforms.swyc.indiv$devo.age[i] + 1], 
+                                              na.rm = T)
+      } else if (qforms.swyc.indiv$all_2s[i]) { 
+        # Set devo.age to the highest possible devo age + 1
+        qforms.swyc.indiv$devo.age[i] <- max(sim_responses$devo.age, na.rm = T) + 1
+        qforms.swyc.indiv$devo.prob[i] <- max(sim_responses$devo.prob[sim_responses$devo.age == qforms.swyc.indiv$devo.age[i] - 1], 
+                                              na.rm = T)
+      }
+    }
+
+    setTxtProgressBar(pb,i)
+  }
+  qforms.swyc.indiv$devo.quotient <- qforms.swyc.indiv$devo.age/qforms.swyc.indiv$norm.age
+  
+  write_csv(qforms.swyc.indiv,"/mnt/arcus/lab/users/kafadare/swyc_output/results/individual_development_scores.csv")
+}
+```
+
+## Formatting
+
+Now we can merge these scores with some additional info.
+
+```{r}
+qforms.swyc.indiv <- tibble(merge(qforms.swyc.indiv, qforms.swyc.scores, 
+                                  by = c("pat_id","encounter_id","form_friendly_name", 
+                                         "norm.age"))) %>%
+                      mutate(well_visit = grepl("well",tolower(appt_prc_name)),
+                             clin.matches_expected_swyc = form_friendly_name == Form)
+```
+
+Clean up the results a bit
+
+```{r}
+qforms.swyc.indiv <- qforms.swyc.indiv %>% 
+                          select_if(~sum(!is.na(.)) > 0) %>%
+                          relocate(
+                             sex_abbr, race, ethnicity, 
+                             well_visit, effective_age,
+                             age_mo = norm.age,
+                             gestational_age_num, 
+                             weeks_premature,
+                             SWYC.form_friendly_name = form_friendly_name, 
+                             SWYC.n_answers = n_answers,
+                             SWYC.sum_answers = sum_answers,
+                             SWYC.count.score = numeric_answer, 
+                             SWYC.all_0s = all_0s, SWYC.all_2s = all_2s,
+                             clin.prematurity_adj_age = clin.age,
+                             clin.meets_milestones, clin.matches_expected_swyc,
+                             devo.age, devo.quotient, devo.prob, appt_prc_name,
+                             birth_weight_kg, .after = encounter_id) %>%
+                          dplyr::select(c(pat_id:birth_weight_kg)) %>%
+                          filter(SWYC.n_answers >= 5,
+                                 clin.matches_expected_swyc)
+```
+
+Let's plot the distribution of developmental age, developmental probability, and developmental quotient.
+
+```{r}
+ggplot(qforms.swyc.indiv, aes(x = devo.age)) +
+  geom_histogram() +
+  geom_density()
+ggsave("/mnt/arcus/lab/users/kafadare/swyc_output/results/development_age.png")
+
+ggplot(qforms.swyc.indiv, aes(x = devo.prob)) +
+  geom_histogram() +
+  geom_density()
+ggsave("/mnt/arcus/lab/users/kafadare/swyc_output/results/development_prob.png")
+
+ggplot(qforms.swyc.indiv, aes(x = devo.quotient)) +
+  geom_histogram()
+ggsave("/mnt/arcus/lab/users/kafadare/swyc_output/results/development_quotient.png")
+```
+
+Let's see how SWYC scores track with developmental age and developmental quotient.
+
+```{r}
+ggplot(qforms.swyc.indiv, aes(x = age_mo, y = devo.age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  xlim(c(0,40)) + ylim(c(0,40)) +
+  facet_wrap(~ SWYC.form_friendly_name, ncol = 2)
+ggsave("/mnt/arcus/lab/users/kafadare/swyc_output/results/swyc_vs_devo_age.png")
+
+ggplot(qforms.swyc.indiv, aes(x = age_mo, y = devo.quotient)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  xlim(c(0,40)) + 
+  facet_wrap(~ SWYC.form_friendly_name, ncol = 2)
+ggsave("/mnt/arcus/lab/users/kafadare/swyc_output/results/swyc_vs_dq.png")
+```
+
+Finally let's look at how these factors relate to which SWYC was used AND plot data longitudinally.
+
+```{r}
+ggplot(qforms.swyc.indiv, aes(x = age_mo, y = devo.quotient, group = pat_id, color = SWYC.form_friendly_name)) +
+  geom_vline(xintercept = c(6, 9, 15, 18, 24, 30), linetype = "dashed") +
+  geom_line(size = 0.05) +
+  stat_smooth(aes(group = 1))
+```
+
+# Save
+
+```{r}
+write_csv(qforms.swyc.indiv,"/mnt/arcus/lab/users/kafadare/swyc_output/results/swyc_normative_scores.csv")
+```
+
+# Upload To Arcus
+
+```{r}
+# Clean up table
+# df_swyc <- qforms.swyc.indiv %>% 
+#               select(pat_id, encounter_id, sex_abbr, effective_age, 
+#                      age_mo, gestational_age_num, weeks_premature, 
+#                      prematurity_adj_age = clin.prematurity_adj_age, 
+#                      form_friendly_name = SWYC.form_friendly_name, 
+#                      n_answers = SWYC.n_answers,
+#                      sum_answers = SWYC.sum_answers, 
+#                      all_0s = SWYC.all_0s, 
+#                      all_2s = SWYC.all_2s,
+#                      meets_milestones = clin.meets_milestones,
+#                      norm_devo_age = devo.age, 
+#                      norm_devo_quotient = devo.quotient,
+#                      norm_devo_prob = devo.prob, 
+#                      appt_prc_name)
+# 
+# colnames(df_swyc) <- str_replace_all(colnames(df_swyc),"\\.","_")
+```
+
+```{r}
+# bq_swyc <- bq_table(project_id,"lab","swyc_normative_scores_20260129")
+# if (bq_table_exists(bq_swyc)) {
+#   bq_table_delete(bq_swyc)
+# }
+# 
+# bq_table_create(
+#   bq_swyc,
+#   fields = df_swyc,
+#   friendly_name = "SWYC Normative Scores",
+#   description = "These data contain summarized and normative scores for the developmental milestones portion of the Survey of Well-being in Young Children. Normative scores were generated as described Sheldrick et al., 2019. NOTE: Prematurity is NOT factored into the normative scores. prematurity_adj_age is calculated for the traditional interpretation of the SWYC and, consistent with that, only adjusts for prematurity up to 24 months after birth."
+# )
+# 
+# bq_table_exists(bq_swyc)
+# 
+# bq_table_upload(bq_swyc, df_swyc)
+# 
+# bq_table_fields(bq_swyc)
+```

@@ -1,4 +1,5 @@
-#make median except for CT (mpr) centiles
+# make median except for CT (mpr): 
+# can be used for centiles or raw segmented features data frames depending on input
 
 #Load packages
 require(dplyr)
@@ -10,8 +11,8 @@ median_file <- as.numeric(args[1])
 mpr_file <- args[2]
 save_path <- args [3]
 
-median_file = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-29.csv"
-mpr_file = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-02-04.csv"
+median_file = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_all_2026-01-04.csv"
+mpr_file = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-distinct-allgrades-25.11/data_clean/centiles_all_2026-02-04.csv"
 save_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-ThMPR-distinct-allgrades-25.11/data_clean/"
 
 median <- read.csv(median_file)
@@ -21,11 +22,11 @@ cth_names <- names(median)[grepl("Thick", names(median))]
 
 merged <- merge(median, 
                 mpr %>% select(all_of(c("participant_id", "session_id", cth_names))),
-                by = c("participant_id", "session_id"), suffixes = c(".median", ""))
+                by = c("participant_id", "session_id"), suffixes = c(".median", ""), all.x = TRUE)
 
 
 if(!dir.exists(save_path)) dir.create(save_path)
-filename <- paste0(save_path, "median_Th-MPR_", Sys.Date(), ".csv")
+filename <- paste0(save_path, "median_Th-MPR_all_", Sys.Date(), ".csv")
 write.csv(merged, filename)
 
 

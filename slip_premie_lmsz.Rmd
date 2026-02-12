@@ -7,8 +7,8 @@ editor_options:
   chunk_output_type: console
 params:
   output_folder: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_ThMPR_25.11/"
-  centiles_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv"
-  raw_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/slip_median.csv"
+  centiles_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-ThMPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv"
+  raw_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/median_Th-MPR_2026-02-04.csv"
   models_path: "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
 ---
 # Define params if they do not exist
@@ -16,8 +16,8 @@ params:
 if (!exists("params")) {
   params <- list(
   output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_ThMPR_25.11/",
-  centiles_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv", 
-  raw_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/slip_median.csv",
+  centiles_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv", 
+  raw_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/median_Th-MPR_2026-02-04.csv",
   models_path = "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
   )
 }
@@ -36,6 +36,11 @@ set.seed(42)
 save_tables <- TRUE
 plot <- TRUE
 save_figs <- TRUE
+
+output_folder <- params$output_folder
+centiles_data_path <- params$centiles_data_path
+raw_data_path <- params$raw_data_path
+models_path <- params$models_path
 ```
 
 # Load Packages
@@ -444,14 +449,14 @@ df_lpm <- df_subset
 ```
 ### check betas across vars and intercept to see if there are any phenotypes that are wack
 ```{r, echo = FALSE}
-hist(models_lpm$intercept_coef)
-hist(models_lpm$intercept_sigma_coef)
+#hist(models_lpm$intercept_coef)
+#hist(models_lpm$intercept_sigma_coef)
 
-hist(models_lpm$age_coef)
-hist(models_lpm$age_sigma_coef)
+#hist(models_lpm$age_coef)
+#hist(models_lpm$age_sigma_coef)
 
 #hist(models_lpm$sex_coef) #(none)
-hist(models_lpm$sex_sigma_coef)
+#hist(models_lpm$sex_sigma_coef)
 ```
 
 ### Save Models and Centiles
@@ -482,9 +487,9 @@ for (pheno in full_vars) {
                                      sim_list_slip, 
                                      df_vpm)
   if (pheno == full_vars[1]) {
-    out_fans_slip2 <- tmp
+    out_fans_slip <- tmp
   } else {
-    out_fans_slip2 <- bind_rows(out_fans_slip, tmp)
+    out_fans_slip <- bind_rows(out_fans_slip, tmp)
   }
 }
 ```

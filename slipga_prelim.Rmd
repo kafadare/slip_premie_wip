@@ -716,7 +716,7 @@ panel_save(global_betas_plot, "global-betas-gabw", "pdf", plot_output_folder)
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_GrayVol_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore)
@@ -943,7 +943,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_SurfArea_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore)
@@ -1134,7 +1134,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_ThickAvg_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age, data = df.zscore)
@@ -1468,7 +1468,7 @@ panel_save(gaold_dkt_th_plot, "ga-old-dkt-th", "pdf", plot_output_folder)
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_GrayVol_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore)
@@ -1693,7 +1693,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_SurfArea_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore)
@@ -1884,7 +1884,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_ThickAvg_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg, data = df.zscore)
@@ -2218,7 +2218,7 @@ panel_save(bwold_dkt_th_plot, "bw-old-dkt-th", "pdf", plot_output_folder)
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_GrayVol_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore)
@@ -2443,7 +2443,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_SurfArea_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore)
@@ -2636,7 +2636,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_ThickAvg_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ gestational_age + qc_var, data = df.zscore)
@@ -2971,7 +2971,7 @@ panel_save(ga.qcold_dkt_th_plot, "ga-old-qc-dkt-th", "pdf", plot_output_folder)
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_GrayVol_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw.qc_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore)
@@ -3196,7 +3196,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_SurfArea_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw.qc_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore)
@@ -3387,7 +3387,7 @@ interaction_plots
 
 ##### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_ThickAvg_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw.qc_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(x ~ birth_weight_kg + qc_var, data = df.zscore)
@@ -3722,7 +3722,7 @@ panel_save(bw.qcold_dkt_th_plot, "bw-old-qc-dkt-th", "pdf", plot_output_folder)
 ##### compute regressions
 ```{r, echo = FALSE}
 print(glue("Global measure for volume is {global_measure_vol}"))
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_GrayVol_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(reformulate(c("gestational_age", "qc_var", global_measure_vol), response = "x"), data = df.zscore)
@@ -3948,7 +3948,7 @@ interaction_plots
 ##### compute regressions
 ```{r, echo = FALSE}
 print(glue("Global measure for surface area is {global_measure_sa}"))
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_SurfArea_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(reformulate(c("gestational_age", "qc_var", global_measure_sa), response = "x"), data = df.zscore)
@@ -4140,7 +4140,7 @@ interaction_plots
 ##### compute regressions
 ```{r, echo = FALSE}
 print(glue("Global measure for cortical thickness is {global_measure_th}"))
-sum(!is.na(df.zscore$gestational_age))
+sum(!is.na(df.zscore$gestational_age) & is.na(df.zscore$aparc_ThickAvg_lh_bankssts))
 # Regional -- including cortical and subcortical
 ga.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(reformulate(c("gestational_age", "qc_var", global_measure_th), response = "x"), data = df.zscore)
@@ -4475,7 +4475,7 @@ panel_save(ga.qc.globalold_dkt_th_plot, "ga-qc-meanth-old-dkt-th", "pdf", plot_o
 ##### compute regressions
 ```{r, echo = FALSE}
 print(glue("Global measure for volume is {global_measure_vol}"))
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_GrayVol_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw.qc.global_vol <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% vol_vars)], function(x) {
   lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_vol), response = "x"), data = df.zscore)
@@ -4701,7 +4701,7 @@ interaction_plots
 ##### compute regressions
 ```{r, echo = FALSE}
 print(glue("Global measure for surface area is {global_measure_sa}"))
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_SurfArea_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw.qc.global_sa <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% sa_vars)], function(x) {
   lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_sa), response = "x"), data = df.zscore)
@@ -4893,7 +4893,7 @@ interaction_plots
 ##### compute regressions
 ```{r, echo = FALSE}
 print(glue("Global measure for cortical thickness is {global_measure_th}"))
-sum(!is.na(df.zscore$birth_weight_kg))
+sum(!is.na(df.zscore$birth_weight_kg) & is.na(df.zscore$aparc_ThickAvg_lh_bankssts))
 # Regional -- including cortical and subcortical
 bw.qc.global_th <- as.data.frame(t(sapply(df.zscore[, which(names(df.zscore) %in% th_vars)], function(x) {
   lm <- lm(reformulate(c("birth_weight_kg", "qc_var", global_measure_th), response = "x"), data = df.zscore)

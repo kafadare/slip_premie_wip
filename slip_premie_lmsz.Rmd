@@ -6,8 +6,8 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 params:
-  output_folder: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_ThMPR_25.11/"
-  centiles_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-ThMPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv"
+  output_folder: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_Th-MPR_25.11/"
+  centiles_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv"
   raw_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/median_Th-MPR_2026-02-04.csv"
   models_path: "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
 ---
@@ -15,7 +15,7 @@ params:
 ```{r, echo = FALSE}
 if (!exists("params")) {
   params <- list(
-  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_ThMPR_25.11/",
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_Th-MPR_25.11/",
   centiles_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv", 
   raw_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/median_Th-MPR_2026-02-04.csv",
   models_path = "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
@@ -125,6 +125,23 @@ df_raw <- read.csv(raw_data_path) %>% select(all_of(c(full_vars, "participant_id
 shared_names <- intersect(names(df_raw), names(df))
 
 df <- merge(df, df_raw, by = shared_names, all.x = FALSE, all.y = FALSE)
+```
+
+# Remove Age > 21
+```{r, echo = TRUE}
+hist(df$adjusted_age_years)
+sum(!is.na(df$birth_weight_kg))
+sum(!is.na(df$gestational_age))
+sum(!is.na(df$birth_weight_kg) & !is.na(df$gestational_age))
+
+df <- df %>% filter(adjusted_age_years <= 21)
+
+sum(!is.na(df$birth_weight_kg))
+sum(!is.na(df$gestational_age))
+sum(!is.na(df$birth_weight_kg) & !is.na(df$gestational_age))
+
+IQR(df$age_years)
+median(df$age_years)
 ```
 
 # Z-score Centiles, remove Inf Cells

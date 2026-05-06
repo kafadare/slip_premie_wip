@@ -5,5 +5,5 @@ SLIP_25_11_old/
 SLIP_25_11_liza/
 *.err
 *.out
-/360.calc-derived-noBoot.r
 data_files/
+.ipynb_checkpoints/

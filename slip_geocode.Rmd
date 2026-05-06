@@ -1,0 +1,2569 @@
+---
+title: "slip_geocode"
+output: html_document
+date: "2026-04-01"
+editor_options: 
+  chunk_output_type: console
+---
+
+# Controls
+```{r setup, echo = TRUE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+save_figs = TRUE
+save_tables = TRUE
+```
+
+# Load packages
+```{r}
+#Load packages. Install these packages with install.packages("pkg_name") if they are not installed.
+library(bigrquery) #package to import SQL tables into R
+library(tidyverse) #package suite for data manipulation, reading data into R, and plotting (ggplot2)
+library(glue) #package to use expressions with strings
+library(ggseg)
+require(gridExtra)
+library(interactions)
+library(ggcorrplot)
+
+panel_save <- function(plot, filename, extension, folder){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300)
+}
+```
+
+# Define paths
+```{r}
+save_path <-  "/mnt/arcus/lab/users/kafadare/geo_results/"
+if(!dir.exists(save_path)) dir.create(save_path)
+
+plot_output_folder <- paste(save_path, "plots/")
+if(!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
+
+csv_output_folder <-  paste0(save_path, "results_csv/")
+if (!dir.exists(csv_output_folder)) dir.create(csv_output_folder)
+
+betas_folder <- paste0(csv_output_folder, "full_betas/")
+if (!dir.exists(betas_folder)) dir.create(betas_folder)
+
+dkt_folder <- paste0(csv_output_folder, "dkt_betas/")
+if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
+```
+
+# Load tables from Arcus
+```{r}
+require(bigrquery)
+bq_auth()
+proj_id <- if (exists('proj_id')) proj_id else bq_projects()[1]
+
+#Download SWYC table
+#query <- glue("SELECT * FROM lab.sorted_geospatial") #the string here is the SQL query
+#geo <- bq_project_query(proj_id, query) %>% bq_table_download(., page_size=3500) #assign the name of the dataframe in R here
+#print(paste0("Arcus lab.sorted_geospatial table, dimensions: ", dim(geo))) #pastes the dimensions of the table downloaded
+
+#Download SWYC table
+query <- glue("SELECT * FROM lab.swyc_normative_scores_20260129") #the string here is the SQL query
+swyc <- bq_project_query(proj_id, query) %>% bq_table_download(., page_size=3500) #assign the name of the dataframe in R here
+print(paste0("Arcus lab.SWYC table, dimensions: ", dim(swyc))) #pastes the dimensions of the table downloaded
+
+#Download Participants table
+query <- glue("SELECT * FROM arcus.patient") #the string here is the SQL query
+participants <- bq_project_query(proj_id, query) %>% bq_table_download(., page_size=3500) #assign the name of the dataframe in R here
+print(paste0("Arcus arcus.patient table, dimensions: ", dim(participants))) #pastes the dimensions of the table downloaded
+
+```
+
+# Load vars names
+```{r}
+vars_path <- "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+```
+
+# Load centiles and env/geodata tables
+```{r}
+centiles_distinct_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/centiles_distinct_2026-03-18.csv"
+centiles_distinct <- read.csv(centiles_distinct_path)
+
+centiles_distinct$participant_id_modified <- sub("sub-", "", centiles_distinct$participant_id)
+
+centiles_all_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/centiles_all_2026-03-18.csv"
+centiles_all <- read.csv(centiles_all_path)
+centiles_all$participant_id_modified <- sub("sub-", "", centiles_all$participant_id)
+
+centiles_distinct <- centiles_distinct %>% filter(adjusted_age_in_years <= 21)
+centiles_all <- centiles_all %>% filter(adjusted_age_in_years <= 21)
+
+env <- readRDS("/mnt/arcus/lab/shared/env_data.rds")
+```
+
+# Set 0/1 centiles to min/max value to avoid Inf/-Inf
+numbers from gamlssTools pkg
+```{r}
+complete_centile_vars <- c(full_vars, th_vars_median)
+
+for (x in complete_centile_vars){
+  centiles_distinct[centiles_distinct[,x] == 0 & !is.na(centiles_distinct[,x]), x] <- 0.0000000000000000000000001
+  centiles_distinct[centiles_distinct[,x] == 1 & !is.na(centiles_distinct[,x]), x] <- 0.99999999999999994
+}
+
+for (x in complete_centile_vars){
+  centiles_all[centiles_all[,x] == 0 & !is.na(centiles_all[,x]), x] <- 0.0000000000000000000000001
+  centiles_all[centiles_all[,x] == 1 & !is.na(centiles_all[,x]), x] <- 0.99999999999999994
+}
+```
+
+# Explore the env/geodata table
+```{r}
+names(env)
+env <- merge(env, participants %>% select(pat_id, dob, dob_year), by = "pat_id")
+#rm(participants)
+
+names(env)
+hist(env$ADI)
+head(env$year)
+#Calculate unadjusted age in days using dob and end date for a particular entry
+env$unadjusted_age_in_days_at_end_date <- as.numeric(difftime(env$end_date, as.Date(env$dob), units = "days"))
+env$unadjusted_age_in_days_at_start_date <- as.numeric(difftime(env$start_date, as.Date(env$dob), units = "days"))
+```
+# Make swyc_clean df with one row per patient-form pair
+```{r}
+swyc$pat_form <- paste0(swyc$pat_id, swyc$form_friendly_name)
+
+dup_df <- swyc %>%
+  group_by(pat_form) %>%
+  filter(n() > 1)
+
+dup_df_summary <- dup_df %>%
+  group_by(pat_form) %>%
+  summarise(
+    across(c(n_answers, effective_age, age_mo, norm_devo_quotient),
+            ~ sd(.x, na.rm = TRUE),
+           .names = "sd_{.col}"),
+    .groups = "drop"
+  )
+
+median(dup_df_summary$sd_n_answers)
+median(dup_df_summary$sd_effective_age)
+median(dup_df_summary$sd_age_mo)
+median(dup_df_summary$sd_norm_devo_quotient)
+
+max(dup_df_summary$sd_n_answers)
+max(dup_df_summary$sd_effective_age)
+max(dup_df_summary$sd_age_mo)
+max(dup_df_summary$sd_norm_devo_quotient)
+
+swyc_clean <- swyc %>%
+  group_by(pat_form) %>%
+  slice_max(order_by = n_answers, with_ties = TRUE) %>%
+  slice_max(order_by = effective_age, with_ties = TRUE) %>%
+  distinct(pat_form, .keep_all = TRUE)
+```
+
+
+Ideas/what to do:
+For SWYC-based analyses
+- Take median up to date/age of SWYC
+- Use median SWYC at first pass
+- Look at association between env ~ swyc
+- See if including env in regression between perinatal ~ swyc changes anything
+
+For  Brain Centile-based analyses
+- Take median up to date/age of scan
+- Look at association between env ~ centile
+- See if including env in regression between perinatal ~ centile changes anything
+
+# Make a birth factors table from arcus.participants
+```{r}
+bf <- participants %>% select(pat_id, birth_weight_kg, birth_length_cm, gestational_age, gestational_age_num, sex, race, ethnicity)
+# convert the string format to days
+# Convert different gestational_age_string formats and convert to both 1) number of days AND 2) number of weeks (rounded up/down) AND 3) number of COMPLETED weeks to the best of our knowledge
+data <- bf$gestational_age
+
+data <- sub("\\s", "", data)
+complete_weeks <- as.numeric(sub("^(.{2}).*", "\\1", data))
+indices_plus <- grep("\\+", data)
+indices_fraction <- grep("/", data)
+indices_decimal <- grep("\\.", data)
+days <- rep(NA, length(data))
+days[!is.na(data)] <- 3 #add three days by default if no other information is encoded for days
+days[indices_fraction] <- as.numeric(sub("^.*?(\\d{1}/\\d{1})$", "\\1", data[indices_fraction]) %>% sub("^([0-9]{1}).*", "\\1", .))
+days[indices_plus] <- 3 # add three days if gestational age is entered as [week number]+ (like 40+ of 38+)
+days[indices_decimal] <- round(as.numeric(sub("^.*?(\\.\\d+)$", "\\1", data[indices_decimal]))*7)
+
+days_total <- complete_weeks*7 + days
+weeks_rounded <- round(days_total/7)
+
+bf$ga_complete_weeks <- complete_weeks
+bf$ga_days_total <- days_total
+bf$ga_weeks_rounded <- weeks_rounded
+
+# QC BW and GA
+
+# GA: remove anyone encoded as > 44*7 ga days or < 22 weeks (there is a single 43.5 weeker, I don't really want to remove this entry)
+# BW: remove anyone with birthweight recorded as > 10kg and < 0.3kg
+bf$ga_days_total_qc <- ifelse(bf$ga_days_total < 22*7 | bf$ga_days_total >= 44*7, NA, bf$ga_days_total)
+sum(!is.na(bf$ga_days_total) & is.na(bf$ga_days_total_qc)) # 21 removed
+
+bf$ga_num_qc <- ifelse(bf$gestational_age_num < 22 | bf$gestational_age_num >= 44, NA, bf$gestational_age_num)
+sum(!is.na(bf$gestational_age_num) & is.na(bf$ga_num_qc)) # 29 removed
+
+bf$birth_weight_kg_qc <- ifelse(bf$birth_weight_kg < 0.3 | bf$birth_weight_kg > 10, NA, bf$birth_weight_kg)
+sum(!is.na(bf$birth_weight_kg) & is.na(bf$birth_weight_kg_qc)) # 86 removed
+```
+
+# Env with SWYC merging
+
+## Merge env-swyc one patient-form pair per swyc, take age at given form
+Merge env with swyc and choose rows with closest swyc-effective-age (-) env-start-date, where swyc-effective-age is after env-start-date
+```{r}
+names(swyc_clean)
+table(swyc_clean$form_friendly_name)
+
+
+swyc_env_allforms <- merge(swyc_clean %>% select(pat_id, effective_age, form_friendly_name, meets_milestones, norm_devo_quotient, norm_devo_prob, pat_form), env, by = "pat_id")
+swyc_env_allforms$swyc_end_date_age_diff <- swyc_env_allforms$effective_age - swyc_env_allforms$unadjusted_age_in_days_at_end_date
+swyc_env_allforms$swyc_start_date_age_diff <- swyc_env_allforms$effective_age - swyc_env_allforms$unadjusted_age_in_days_at_start_date
+
+env_vars_of_int <- c("ADI3_EDU", "ADI3_ECON", "ADI3_FINS", "ADI", "Pollution", "Retirement", "University", "SES", "Urban_Core", names(env)[grepl("z_|r_", names(env))])
+
+swyc_env_allforms_median <- swyc_env_allforms %>%
+  group_by(pat_id, form_friendly_name) %>%
+  mutate(env_limit_row = min(swyc_start_date_age_diff[swyc_start_date_age_diff >= 0])) %>%
+  filter(swyc_start_date_age_diff >= env_limit_row) %>%
+  summarise(
+    n_rows = n(),
+    norm_devo_quotient = first(norm_devo_quotient),
+    effective_age_swyc = first(effective_age),
+    swyc_start_date_age_diff   = first(swyc_start_date_age_diff),
+    swyc_end_date_age_diff   = first(swyc_end_date_age_diff),
+    dob = first(dob),
+    dob_year = first(dob_year),
+    pat_form = first(pat_form),
+    across(any_of(env_vars_of_int),
+           list(
+             median = ~ median(.x, na.rm = TRUE),
+             n_val = ~ sum(!is.na(.x))
+           ),
+           .names = "{col}.{fn}"),
+    .groups = "drop"
+  )
+
+# sanity checks
+dim(swyc_env_allforms)
+dim(swyc_env_allforms_median)
+length(unique(swyc_env_allforms_median$pat_form))
+length(unique(swyc_env_allforms$pat_form))
+length(unique(swyc_env_allforms_median$pat_id))
+length(unique(swyc_env_allforms$pat_id))
+```
+
+## Merge swyc and env, take latest swyc date per patient, use median dq
+use the date for the latest swyc within a patient to define the endpoint of env variables to take a relevant median
+```{r}
+env_vars_of_int <- c("ADI3_EDU", "ADI3_ECON", "ADI3_FINS", "ADI", "Pollution", "Retirement", "University", "SES", "Urban_Core", names(env)[grepl("z_|r_", names(env))])
+
+swyc_avg <- swyc_clean %>%
+  group_by(pat_id) %>%
+  summarise(final_swyc_age = max(effective_age, na.rm = TRUE),
+         median_dq = median(norm_devo_quotient, na.rm = TRUE), 
+         mean_dq = mean(norm_devo_quotient, na.rm = TRUE))
+
+hist(swyc_avg$final_swyc_age)
+
+swyc_env_avg <- merge(swyc_avg, env, by = "pat_id")
+
+swyc_env_avg$swyc_end_date_age_diff <- swyc_env_avg$final_swyc_age - swyc_env_avg$unadjusted_age_in_days_at_end_date
+swyc_env_avg$swyc_start_date_age_diff <- swyc_env_avg$final_swyc_age - swyc_env_avg$unadjusted_age_in_days_at_start_date
+
+swyc_env_avg_median <- swyc_env_avg %>%
+  group_by(pat_id) %>%
+  mutate(env_limit_row = min(swyc_start_date_age_diff[swyc_start_date_age_diff >= 0])) %>%
+  filter(swyc_start_date_age_diff >= env_limit_row) %>%
+  summarise(
+    n_rows = n(),
+    median_dq = first(median_dq),
+    final_swyc_age = first(final_swyc_age),
+    mean_dq   = first(mean_dq),
+    swyc_start_date_age_diff   = first(swyc_start_date_age_diff),
+    swyc_end_date_age_diff   = first(swyc_end_date_age_diff),
+    dob = first(dob),
+    dob_year = first(dob_year),
+    across(any_of(env_vars_of_int),
+           list(
+             median = ~ median(.x, na.rm = TRUE),
+             n_val = ~ sum(!is.na(.x))
+           ),
+           .names = "{col}.{fn}")
+  ) %>% ungroup()
+
+# sanity checks
+dim(swyc_env_avg)
+dim(swyc_env_avg_median)
+length(unique(swyc_env_avg$pat_id))
+length(unique(swyc_env_avg_median$pat_id))
+```
+
+## Add birth factor variables
+```{r}
+swyc_env_allforms_median <- merge(swyc_env_allforms_median, bf, 
+              by = "pat_id")
+swyc_env_avg_median <- merge(swyc_env_avg_median, bf, 
+              by = "pat_id")
+```
+
+# Prepare dfs (z-score)
+```{r}
+# zscore centiles and other variables of interest
+df.zscore_avg <- swyc_env_avg_median %>%
+  mutate(across(any_of(c("ga_num_qc", "birth_weight_kg_qc", "ga_complete_weeks", "ga_days_total_qc", "ga_weeks_rounded",
+                         "mean_dq", "median_dq", "ADI.median", "ADI3_ECON.median", "ADI3_FINS.median", "ADI3_EDU.median",
+                         "Pollution.median", "Retirement.median", "University.median", "SES.median", "Urban_Core.median")), 
+                scale))
+# set sex and preterm as factor
+df.zscore_avg$sex <- as.factor(df.zscore_avg$sex)
+
+# zscore centiles and other variables of interest
+df.zscore_allforms <- swyc_env_allforms_median %>%
+  mutate(across(any_of(c("ga_num_qc", "birth_weight_kg_qc", "ga_complete_weeks", "ga_days_total_qc", "ga_weeks_rounded",
+                         "norm_devo_quotient", "norm_devo_prob", "ADI.median", "ADI3_ECON.median", "ADI3_FINS.median", "ADI3_EDU.median",
+                         "Pollution.median", "Retirement.median", "University.median", "SES.median", "Urban_Core.median")), 
+                scale))
+# set sex and preterm as factor
+df.zscore_allforms$sex <- as.factor(df.zscore_allforms$sex)
+```
+
+# Look at data post-median/zscore
+```{r}
+sum(is.na(df$ADI.median))
+max(df.zscore$ADI.n_val) #196
+patid_max = df.zscore[df.zscore$ADI.n_val == max(df.zscore$ADI.n_val), "pat_id"]
+env[env$pat_id == patid_max,]
+# just lots of address entries with lots of same end/start dates or dates that are a few days apart
+median(df.zscore$ADI.n_val) #6
+hist(df.zscore$ADI.n_val, breaks = 100)
+```
+
+
+# Explore swyc ~ env associations
+
+## define vars of interest
+```{r}
+# vars_exp <- c("ADI.median", "ADI3_ECON.median", "ADI3_FINS.median", "ADI3_EDU.median",
+#                          "Pollution.median", "Retirement.median", "University.median", "SES.median", "Urban_Core.median",
+#               names(df.zscore)[grep("^z_.*median$", names(df.zscore))])
+
+vars_exp <- c("ADI.median", "ADI3_ECON.median", "ADI3_FINS.median", "ADI3_EDU.median")
+
+```
+
+## Swyc Median across all forms
+
+### Correlations
+```{r}
+cor_matrix <- cor(df.zscore_avg %>% select(vars_exp, median_dq, birth_weight_kg_qc, ga_days_total_qc), use = "pairwise.complete.obs")
+p_matrix <- cor_pmat(df.zscore_avg %>% select(vars_exp, median_dq, birth_weight_kg_qc, ga_days_total_qc), use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_matrix,
+  type = "lower",
+  insig = "pch",
+  pch = 4,
+  pch.cex = 2,
+  sig.level = 0.05,
+  lab = TRUE,
+  digits = 2
+)
+
+# Grid of scatterplots
+df.zscore_avg %>% select(vars_exp, median_dq) %>%
+  pivot_longer(-median_dq) %>%
+  ggplot(aes(x = value, y = median_dq)) +
+  geom_point(alpha = 0.1) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+
+df.zscore_avg %>% select(vars_exp, birth_weight_kg_qc) %>%
+  pivot_longer(-birth_weight_kg_qc) %>%
+  ggplot(aes(x = value, y = birth_weight_kg_qc)) +
+  geom_point(alpha = 0.1) +
+   geom_density_2d(color = "red") +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+
+df.zscore_avg %>% select(vars_exp, birth_weight_kg_qc) %>%
+  pivot_longer(-birth_weight_kg_qc) %>%
+  ggplot(aes(x = value, y = birth_weight_kg_qc)) +
+  stat_density_2d(geom = "point", aes(size = after_stat(density)), n = 10, contour = FALSE) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+
+df.zscore_avg %>% select(vars_exp, ga_days_total_qc) %>%
+  pivot_longer(-ga_days_total_qc) %>%
+  ggplot(aes(x = value, y = ga_days_total_qc)) +
+  geom_point(alpha = 0.1) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+```
+
+### Partial R
+Maybe?
+Per Briana permutations for significance testing
+```{r}
+# Partial R of ADI
+# compute partial r^2
+model_red <- lm(median_dq ~ ga_days_total_qc, data = df.zscore_avg)
+model_full <- lm(median_dq ~ ga_days_total_qc + ADI.median, data = df.zscore_avg)
+
+r2_full <- summary(model_full)$r.squared
+r2_red  <- summary(model_red)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full)$r.squared
+r2_red  <- summary(model_red)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+
+# partial R of GA
+# compute partial r^2
+model_red <- lm(median_dq ~ ADI.median, data = df.zscore_avg)
+model_full <- lm(median_dq ~ ADI.median + ga_days_total_qc, data = df.zscore_avg)
+
+r2_full <- summary(model_full)$r.squared
+r2_red  <- summary(model_red)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full)["ga_days_total_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full)$r.squared
+r2_red  <- summary(model_red)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full)["ga_days_total_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+```
+
+## Swyc by Form
+
+### select patients with all forms (9,18,24,30) available
+```{r}
+df.zscore_9_24_pats <- df.zscore_allforms %>% 
+  group_by(pat_id) %>%
+  filter(
+    any(form_friendly_name == "SWYC : 09 Month" & !is.na(norm_devo_quotient)) &
+    any(form_friendly_name == "SWYC : 24 Month" & !is.na(norm_devo_quotient))
+        ) %>% ungroup()
+  
+length(unique(df.zscore_9_24_pats$pat_id))
+table(df.zscore_9_24_pats$form_friendly_name)
+
+adi_swyc_9mo <- lm(swyc_9month ~  ADI.median, data = df.zscore_9_24_pats %>% 
+  filter(form_friendly_name == "SWYC : 09 Month") %>% 
+  rename(swyc_9month = norm_devo_quotient))
+summary(adi_swyc_9mo)
+
+adi_swyc_24mo <- lm(swyc_24month ~  ADI.median, data = df.zscore_9_24_pats %>% 
+  filter(form_friendly_name == "SWYC : 24 Month") %>% 
+  rename(swyc_24month = norm_devo_quotient))
+summary(adi_swyc_24mo)
+
+df.zscore_9_24_pats_diff <- df.zscore_9_24_pats %>%
+  filter(form_friendly_name %in% c("SWYC : 09 Month", "SWYC : 24 Month")) %>%
+  mutate(form_friendly_name = recode(form_friendly_name,
+                             "SWYC : 09 Month" = "9mo",
+                             "SWYC : 24 Month" = "24mo")) %>%
+  select(pat_id, form_friendly_name , ADI.median, norm_devo_quotient) %>%
+  tidyr::pivot_wider(names_from = form_friendly_name, values_from = c("ADI.median", 
+                                                                      "norm_devo_quotient")) %>%
+  mutate(adi_diff_24_minus_9 = `ADI.median_24mo` - `ADI.median_9mo`,
+         dq_diff_24_minus_9 = `norm_devo_quotient_24mo` - `norm_devo_quotient_9mo`)
+
+hist(df.zscore_9_24_pats_diff$adi_diff_24_minus_9, breaks = 30)
+
+df_plot <- df.zscore_9_24_pats  %>%
+  filter(form_friendly_name %in% c("SWYC : 09 Month", "SWYC : 24 Month")) %>%
+  left_join(df.zscore_9_24_pats_diff %>% select(pat_id, adi_diff_24_minus_9, dq_diff_24_minus_9), 
+            by = "pat_id") %>%
+  mutate(adi_change = ifelse(adi_diff_24_minus_9 == 0, "same", 
+  ifelse(adi_diff_24_minus_9 > 0, "higher", "lower")),
+         dq_change = ifelse(dq_diff_24_minus_9 == 0, "same", 
+  ifelse(dq_diff_24_minus_9 > 0, "higher", "lower")))
+ 
+table(df_plot$adi_change)
+table(df_plot$dq_change)
+        
+ggplot(df_plot,
+       aes(x = form_friendly_name, y = ADI.median, group = pat_id, color = adi_change)) +
+  geom_line(alpha = 0.3) +
+  geom_point(size = 1) +
+  theme_classic()
+
+ggplot(df.zscore_9_24_pats_diff,
+       aes(x = adi_diff_24_minus_9, y = dq_diff_24_minus_9, color = norm_devo_quotient_24mo)) +
+  geom_point(size = 1) +
+  theme_classic()
+```
+
+### See ADI distribution by form
+```{r}
+ggplot(df.zscore_allforms, aes(x = ADI.median)) +
+  geom_histogram(bins = 30, fill = "#7FA6C9", color = "white") +
+  facet_wrap(~form_friendly_name, scales = "free_y") +
+  theme_classic()
+```
+
+### 24 months
+#### Correlations
+```{r}
+cor_matrix <- cor(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 24 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_24month = norm_devo_quotient), use = "pairwise.complete.obs")
+p_matrix <- cor_pmat(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 24 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_24month = norm_devo_quotient), use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_matrix,
+  type = "lower",
+  insig = "pch",
+  pch = 4,
+  pch.cex = 2,
+  sig.level = 0.05,
+  lab = TRUE,
+  digits = 2
+)
+
+# Grid of scatterplots
+df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 24 Month") %>% 
+  select(vars_exp, norm_devo_quotient) %>% 
+  rename(swyc_24month = norm_devo_quotient) %>%
+  pivot_longer(-swyc_24month) %>%
+  ggplot(aes(x = value, y = swyc_24month)) +
+  #geom_point(alpha = 0.1) +
+  stat_density_2d(geom = "point", aes(size = after_stat(density)), n = 20, contour = FALSE) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+
+df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 24 Month") %>% 
+  rename(swyc_24month = norm_devo_quotient) %>%
+  ggplot(aes(x = effective_age_swyc/30.4, y = ADI.median)) +
+  geom_point(alpha = 0.1)
+
+adi_swycage_24mo <- lm(ADI.median ~ effective_age_swyc, data = df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 24 Month"))
+summary(adi_swycage_24mo)
+
+adi_swyc_agecov_24mo <- lm(swyc_24month ~  ADI.median + effective_age_swyc, data = df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 24 Month") %>% 
+  rename(swyc_24month = norm_devo_quotient))
+summary(adi_swyc_agecov_24mo)
+```
+
+#### Partial R
+Maybe?
+Per Briana permutations for significance testing
+```{r}
+df = df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 24 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_24month = norm_devo_quotient)
+# Partial R of ADI
+# compute partial r^2
+model_red_24mo_adi <- lm(swyc_24month ~ ga_days_total_qc, data = df)
+model_full_24mo_adi <- lm(swyc_24month ~ ga_days_total_qc + ADI.median, data = df)
+
+r2_full <- summary(model_full_24mo_adi)$r.squared
+r2_red  <- summary(model_red_24mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_24mo_adi)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_24mo_adi)$r.squared
+r2_red  <- summary(model_red_24mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_24mo_adi)["ADI.median"])
+partial_r_adi <- sign_coef * sqrt(abs(partial_r2))
+
+
+# partial R of GA
+# compute partial r^2
+model_red_24mo_ga <- lm(swyc_24month ~ ADI.median, data = df)
+model_full_24mo_ga <- lm(swyc_24month ~ ADI.median + ga_days_total_qc, data = df)
+
+r2_full <- summary(model_full_24mo_ga)$r.squared
+r2_red  <- summary(model_red_24mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_24mo_ga)["ga_days_total_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_24mo_ga)$r.squared
+r2_red  <- summary(model_red_24mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_24mo_ga)["ga_days_total_qc"])
+partial_r_24mo_ga <- sign_coef * sqrt(abs(partial_r2))
+```
+
+
+### 9 months
+#### Correlations
+```{r}
+cor_matrix <- cor(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 09 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_9month = norm_devo_quotient), use = "pairwise.complete.obs")
+p_matrix <- cor_pmat(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 09 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_9month = norm_devo_quotient), use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_matrix,
+  type = "lower",
+  insig = "pch",
+  pch = 4,
+  pch.cex = 2,
+  sig.level = 0.05,
+  lab = TRUE,
+  digits = 2
+)
+
+# Grid of scatterplots
+df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 09 Month") %>% 
+  select(vars_exp, norm_devo_quotient) %>% 
+  rename(swyc_9month = norm_devo_quotient) %>%
+  pivot_longer(-swyc_9month) %>%
+  ggplot(aes(x = value, y = swyc_9month)) +
+  #geom_point(alpha = 0.1) +
+  stat_density_2d(geom = "point", aes(size = after_stat(density)), n = 20, contour = FALSE) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+
+
+df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 09 Month") %>% 
+  rename(swyc_9month = norm_devo_quotient) %>%
+  ggplot(aes(x = effective_age_swyc/30.4, y = ADI.median)) +
+  geom_point(alpha = 0.1)
+
+adi_swycage_9mo <- lm(ADI.median ~ effective_age_swyc, data = df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 09 Month"))
+summary(adi_swycage_9mo)
+
+adi_swyc_agecov_9mo <- lm(swyc_9month ~  ADI.median + effective_age_swyc, data = df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 09 Month") %>% 
+  rename(swyc_9month = norm_devo_quotient))
+summary(adi_swyc_agecov_9mo)
+```
+
+#### Partial R
+Maybe?
+Per Briana permutations for significance testing
+```{r}
+df = df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 09 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_9month = norm_devo_quotient)
+# Partial R of ADI
+# compute partial r^2
+model_red_9mo_adi <- lm(swyc_9month ~ ga_days_total_qc, data = df)
+model_full_9mo_adi <- lm(swyc_9month ~ ga_days_total_qc + ADI.median, data = df) 
+
+r2_full <- summary(model_full_9mo_adi)$r.squared
+r2_red  <- summary(model_red_9mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_9mo_adi)["ADI.median"])
+partial_r_adi <- sign_coef * sqrt(abs(partial_r2))
+partial_r_adi
+
+# partial R of GA
+# compute partial r^2
+model_red_9mo_ga <- lm(swyc_9month ~ ADI.median, data = df)
+model_full_9mo_ga <- lm(swyc_9month ~ ADI.median + ga_days_total_qc, data = df)
+
+r2_full <- summary(model_full_9mo_ga)$r.squared
+r2_red  <- summary(model_red_9mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_9mo_ga)["ga_days_total_qc"])
+partial_r_9mo_ga <- sign_coef * sqrt(abs(partial_r2))
+partial_r_9mo_ga
+```
+
+
+### 18 months
+#### Correlations
+```{r}
+cor_matrix <- cor(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 18 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_18month = norm_devo_quotient), use = "pairwise.complete.obs")
+p_matrix <- cor_pmat(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 18 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_18month = norm_devo_quotient), use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_matrix,
+  type = "lower",
+  insig = "pch",
+  pch = 4,
+  pch.cex = 2,
+  sig.level = 0.05,
+  lab = TRUE,
+  digits = 2
+)
+
+# Grid of scatterplots
+df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 18 Month") %>% 
+  select(vars_exp, norm_devo_quotient) %>% 
+  rename(swyc_18month = norm_devo_quotient) %>%
+  pivot_longer(-swyc_18month) %>%
+  ggplot(aes(x = value, y = swyc_18month)) +
+  #geom_point(alpha = 0.1) +
+  stat_density_2d(geom = "point", aes(size = after_stat(density)), n = 20, contour = FALSE) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+```
+
+#### Partial R
+Maybe?
+Per Briana permutations for significance testing
+```{r}
+df = df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 18 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_18month = norm_devo_quotient)
+# Partial R of ADI
+# compute partial r^2
+model_red_18mo_adi <- lm(swyc_18month ~ ga_days_total_qc, data = df)
+model_full_18mo_adi <- lm(swyc_18month ~ ga_days_total_qc + ADI.median, data = df)
+
+r2_full <- summary(model_full_18mo_adi)$r.squared
+r2_red  <- summary(model_red_18mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_18mo_adi)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_18mo_adi)$r.squared
+r2_red  <- summary(model_red_18mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_18mo_adi)["ADI.median"])
+partial_r_adi <- sign_coef * sqrt(abs(partial_r2))
+
+
+# partial R of GA
+# compute partial r^2
+model_red_18mo_ga <- lm(swyc_18month ~ ADI.median, data = df)
+model_full_18mo_ga <- lm(swyc_18month ~ ADI.median + ga_days_total_qc, data = df)
+
+r2_full <- summary(model_full_18mo_ga)$r.squared
+r2_red  <- summary(model_red_18mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_18mo_ga)["ga_days_total_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_18mo_ga)$r.squared
+r2_red  <- summary(model_red_18mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_18mo_ga)["ga_days_total_qc"])
+partial_r_18mo_ga <- sign_coef * sqrt(abs(partial_r2))
+```
+
+
+### 15 months
+#### Correlations
+```{r}
+cor_matrix <- cor(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 15 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_15month = norm_devo_quotient), use = "pairwise.complete.obs")
+p_matrix <- cor_pmat(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 15 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_15month = norm_devo_quotient), use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_matrix,
+  type = "lower",
+  insig = "pch",
+  pch = 4,
+  pch.cex = 2,
+  sig.level = 0.05,
+  lab = TRUE,
+  digits = 2
+)
+
+# Grid of scatterplots
+df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 15 Month") %>% 
+  select(vars_exp, norm_devo_quotient) %>% 
+  rename(swyc_15month = norm_devo_quotient) %>%
+  pivot_longer(-swyc_15month) %>%
+  ggplot(aes(x = value, y = swyc_15month)) +
+  #geom_point(alpha = 0.1) +
+  stat_density_2d(geom = "point", aes(size = after_stat(density)), n = 20, contour = FALSE) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+```
+
+#### Partial R
+Maybe?
+Per Briana permutations for significance testing
+```{r}
+df = df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 15 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_15month = norm_devo_quotient)
+# Partial R of ADI
+# compute partial r^2
+model_red_15mo_adi <- lm(swyc_15month ~ ga_days_total_qc, data = df)
+model_full_15mo_adi <- lm(swyc_15month ~ ga_days_total_qc + ADI.median, data = df)
+
+r2_full <- summary(model_full_15mo_adi)$r.squared
+r2_red  <- summary(model_red_15mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_15mo_adi)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_15mo_adi)$r.squared
+r2_red  <- summary(model_red_15mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_15mo_adi)["ADI.median"])
+partial_r_adi <- sign_coef * sqrt(abs(partial_r2))
+
+
+# partial R of GA
+# compute partial r^2
+model_red_15mo_ga <- lm(swyc_15month ~ ADI.median, data = df)
+model_full_15mo_ga <- lm(swyc_15month ~ ADI.median + ga_days_total_qc, data = df)
+
+r2_full <- summary(model_full_15mo_ga)$r.squared
+r2_red  <- summary(model_red_15mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_15mo_ga)["ga_days_total_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_15mo_ga)$r.squared
+r2_red  <- summary(model_red_15mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_15mo_ga)["ga_days_total_qc"])
+partial_r_15mo_ga <- sign_coef * sqrt(abs(partial_r2))
+```
+
+
+
+### 30 months
+#### Correlations
+```{r}
+cor_matrix <- cor(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 30 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_30month = norm_devo_quotient), use = "pairwise.complete.obs")
+p_matrix <- cor_pmat(df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 30 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_30month = norm_devo_quotient), use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_matrix,
+  type = "lower",
+  insig = "pch",
+  pch = 4,
+  pch.cex = 2,
+  sig.level = 0.05,
+  lab = TRUE,
+  digits = 2
+)
+
+# Grid of scatterplots
+df.zscore_allforms %>% 
+  filter(form_friendly_name == "SWYC : 30 Month") %>% 
+  select(vars_exp, norm_devo_quotient) %>% 
+  rename(swyc_30month = norm_devo_quotient) %>%
+  pivot_longer(-swyc_30month) %>%
+  ggplot(aes(x = value, y = swyc_30month)) +
+  #geom_point(alpha = 0.1) +
+  stat_density_2d(geom = "point", aes(size = after_stat(density)), n = 20, contour = FALSE) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+```
+
+#### Partial R
+Maybe?
+Per Briana permutations for significance testing
+```{r}
+df = df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 30 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_30month = norm_devo_quotient)
+# Partial R of ADI
+# compute partial r^2
+model_red_30mo_adi <- lm(swyc_30month ~ ga_days_total_qc, data = df)
+model_full_30mo_adi <- lm(swyc_30month ~ ga_days_total_qc + ADI.median, data = df)
+
+r2_full <- summary(model_full_30mo_adi)$r.squared
+r2_red  <- summary(model_red_30mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_30mo_adi)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_30mo_adi)$r.squared
+r2_red  <- summary(model_red_30mo_adi)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_30mo_adi)["ADI.median"])
+partial_r_adi <- sign_coef * sqrt(abs(partial_r2))
+
+
+# partial R of GA
+# compute partial r^2
+model_red_30mo_ga <- lm(swyc_30month ~ ADI.median, data = df)
+model_full_30mo_ga <- lm(swyc_30month ~ ADI.median + ga_days_total_qc, data = df)
+
+r2_full <- summary(model_full_30mo_ga)$r.squared
+r2_red  <- summary(model_red_30mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_30mo_ga)["ga_days_total_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_30mo_ga)$r.squared
+r2_red  <- summary(model_red_30mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_30mo_ga)["ga_days_total_qc"])
+partial_r_30mo_ga <- sign_coef * sqrt(abs(partial_r2))
+```
+
+
+
+# Birthweight vs GA (inc calc bwp)
+
+## Partial R of bw vs ga, at 24 mo SWYC
+```{r}
+df = df.zscore_allforms %>% filter(form_friendly_name == "SWYC : 24 Month") %>% select(vars_exp, norm_devo_quotient, birth_weight_kg_qc, ga_days_total_qc) %>% rename(swyc_24month = norm_devo_quotient)
+# Partial R of BW
+# compute partial r^2
+model_red_24mo_bw <- lm(swyc_24month ~ ga_days_total_qc, data = df)
+model_full_24mo_bw <- lm(swyc_24month ~ ga_days_total_qc + birth_weight_kg_qc, data = df)
+
+r2_full <- summary(model_full_24mo_bw)$r.squared
+r2_red  <- summary(model_red_24mo_bw)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_24mo_bw)["birth_weight_kg_qc"])
+partial_r_bw <- sign_coef * sqrt(abs(partial_r2))
+
+
+# partial R of GA
+# compute partial r^2
+model_red_24mo_ga <- lm(swyc_24month ~ birth_weight_kg_qc, data = df)
+model_full_24mo_ga <- lm(swyc_24month ~ birth_weight_kg_qc + ga_days_total_qc, data = df)
+
+r2_full <- summary(model_full_24mo_ga)$r.squared
+r2_red  <- summary(model_red_24mo_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_24mo_ga)["ga_days_total_qc"])
+partial_r_24mo_ga <- sign_coef * sqrt(abs(partial_r2))
+```
+
+
+## Calculate bwp
+```{r}
+
+```
+
+# Env with centiles
+
+## Merge env with centiles
+choose rows with closest age_at_scan (-) env-start-date, where age_at_scan is after env-start-date (+ diff)
+```{r}
+env_vars_of_int <- c("ADI3_EDU", "ADI3_ECON", "ADI3_FINS", "ADI", "Pollution", "Retirement", "University", "SES", "Urban_Core", names(env)[grepl("z_|r_", names(env))])
+
+cent_env <- merge(centiles_distinct %>% mutate(pat_id = sub("sub-", "", participant_id)), env, by = "pat_id")
+
+cent_env$scan_end_date_age_diff <- cent_env$age_at_scan - cent_env$unadjusted_age_in_days_at_end_date
+cent_env$scan_start_date_age_diff <- cent_env$age_at_scan - cent_env$unadjusted_age_in_days_at_start_date
+
+hist(cent_env$scan_start_date_age_diff)
+hist(cent_env$scan_end_date_age_diff)
+
+cent_env_median <- cent_env %>%
+  group_by(pat_id) %>%
+  mutate(env_limit_row = min(scan_start_date_age_diff[scan_start_date_age_diff >= 0])) %>%
+  filter(scan_start_date_age_diff >= env_limit_row) %>%
+  summarise(
+    n_rows = n(),
+    across(all_of(names(centiles_distinct)),
+                  ~ first(.x),
+                  .names = "{.col}"),
+    across(any_of(env_vars_of_int),
+           list(
+             median = ~ median(.x, na.rm = TRUE),
+             n_val = ~ sum(!is.na(.x))
+           ),
+           .names = "{col}.{fn}")
+  )
+
+dim(centiles_distinct)
+dim(cent_env)
+dim(cent_env_median)
+
+length(unique(centiles_distinct$pat_id))
+length(unique(cent_env$pat_id))
+length(unique(cent_env_median$pat_id))
+```
+
+## Add birth factor variables from arcus.patients
+```{r}
+cent_env_median <- merge(cent_env_median, participants %>% select(pat_id, gestational_age, gestational_age_num, race, ethnicity) %>% rename(gestational_age_string = gestational_age), 
+              by = "pat_id")
+
+# convert the string format to days
+# Convert different gestational_age_string formats and convert to both 1) number of days AND 2) number of weeks (rounded up/down) AND 3) number of COMPLETED weeks to the best of our knowledge
+data <- cent_env_median$gestational_age_string
+
+data <- sub("\\s", "", data)
+complete_weeks <- as.numeric(sub("^(.{2}).*", "\\1", data))
+indices_plus <- grep("\\+", data)
+indices_fraction <- grep("/", data)
+indices_decimal <- grep("\\.", data)
+days <- rep(NA, length(data))
+days[!is.na(data)] <- 3 #add three days by default if no other information is encoded for days
+days[indices_fraction] <- as.numeric(sub("^.*?(\\d{1}/\\d{1})$", "\\1", data[indices_fraction]) %>% sub("^([0-9]{1}).*", "\\1", .))
+days[indices_plus] <- 3 # add three days if gestational age is entered as [week number]+ (like 40+ of 38+)
+days[indices_decimal] <- round(as.numeric(sub("^.*?(\\.\\d+)$", "\\1", data[indices_decimal]))*7)
+
+days_total <- complete_weeks*7 + days
+weeks_rounded <- round(days_total/7)
+
+cent_env_median$ga_complete_weeks <- complete_weeks
+cent_env_median$ga_days_total <- days_total
+cent_env_median$ga_weeks_rounded <- weeks_rounded
+
+# QC BW and GA
+
+# GA: remove anyone encoded as > 44*7 ga days or < 22 weeks (there is a single 43.5 weeker, I don't really want to remove this entry)
+# BW: remove anyone with birthweight recorded as > 10kg and < 0.3kg
+cent_env_median$ga_days_total_qc <- ifelse(cent_env_median$ga_days_total < 22*7 | cent_env_median$ga_days_total >= 44*7, NA, cent_env_median$ga_days_total)
+sum(!is.na(cent_env_median$ga_days_total) & is.na(cent_env_median$ga_days_total_qc)) # 0 removed
+
+cent_env_median$ga_num_qc <- ifelse(cent_env_median$gestational_age_num < 22 | cent_env_median$gestational_age_num >= 44, NA, cent_env_median$gestational_age_num)
+sum(!is.na(cent_env_median$gestational_age_num) & is.na(cent_env_median$ga_num_qc)) # 3 removed
+
+cent_env_median$birth_weight_kg_qc <- ifelse(cent_env_median$birth_weight_kg < 0.3 | cent_env_median$birth_weight_kg > 10, NA, cent_env_median$birth_weight_kg)
+sum(!is.na(cent_env_median$birth_weight_kg) & is.na(cent_env_median$birth_weight_kg_qc)) # 0 removed (already QC'ed bw coming from centiles_distinct)
+```
+
+## Add swyc median dq
+```{r}
+cent_env_median <- merge(cent_env_median, swyc_env_avg_median %>% select(pat_id, median_dq, final_swyc_age), 
+              by = "pat_id", all.x = TRUE, all.y = FALSE)
+```
+
+## Prepare dfs (z-score)
+```{r}
+# zscore centiles and other variables of interest
+df.zscore_cent <- cent_env_median %>%
+  mutate(across(all_of(c(complete_centile_vars, "bweight_percentile")), qnorm))  %>%
+  mutate(across(any_of(c("ga_num_qc", "birth_weight_kg_qc", "ga_complete_weeks", "ga_days_total_qc", "ga_weeks_rounded", "gestational_age",
+                        "median_dq",  "ADI.median", "ADI3_ECON.median", "ADI3_FINS.median", "ADI3_EDU.median",
+                         "Pollution.median", "Retirement.median", "University.median", "SES.median", "Urban_Core.median")), 
+                scale))
+# set sex and preterm as factor
+df.zscore_cent$sex <- as.factor(df.zscore_cent$sex)
+df.zscore_cent$preterm <- as.factor(df.zscore_cent$preterm)
+```
+
+## Look at data post-median/zscore
+```{r}
+sum(is.na(df.zscore_cent$ADI.median))
+max(df.zscore_cent$ADI.n_val) #252
+patid_max = df.zscore_cent[df.zscore_cent$ADI.n_val == max(df.zscore_cent$ADI.n_val), "pat_id"]
+env[env$pat_id == patid_max,]
+# just lots of address entries with lots of same end/start dates or dates that are a few days apart
+median(df.zscore_cent$ADI.n_val) #13
+hist(df.zscore_cent$ADI.n_val, breaks = 100)
+```
+
+
+## Explore relationships
+### define vars of interest
+```{r}
+# vars_exp <- c("ADI.median", "ADI3_ECON.median", "ADI3_FINS.median", "ADI3_EDU.median",
+#                          "Pollution.median", "Retirement.median", "University.median", "SES.median", "Urban_Core.median",
+#               names(df.zscore_cent)[grep("^z_.*median$", names(df.zscore_cent))])
+
+vars_exp <- c("ADI.median", "ADI3_ECON.median", "ADI3_FINS.median", "ADI3_EDU.median")
+
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
+```
+
+### Correlations
+```{r}
+cor_matrix <- cor(df.zscore_cent %>% select(vars_exp, global_vars_totest, birth_weight_kg_qc, ga_days_total_qc, median_dq), use = "pairwise.complete.obs")
+p_matrix <- cor_pmat(df.zscore_cent %>% select(vars_exp, global_vars_totest, birth_weight_kg_qc, ga_days_total_qc, median_dq), use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_matrix,
+  type = "lower",
+  insig = "blank",
+  sig.level = 0.05,
+  lab = TRUE,
+  digits = 2
+)
+
+# Grid of scatterplots
+df.zscore_cent %>% select(vars_exp, global_eTIV) %>%
+  pivot_longer(-global_eTIV) %>%
+  ggplot(aes(x = value, y = global_eTIV)) +
+  geom_point(alpha = 0.1) +
+  theme_classic() +
+  facet_wrap(~ name, scales = "free")
+```
+
+### Partial R
+Maybe?
+Per Briana permutations for significance testing
+#### GA
+```{r}
+# Partial R of ADI
+# compute partial r^2
+model_red_adi_ga <- lm(global_eTIV ~ ga_days_total_qc, data = df.zscore_cent)
+model_full_adi_ga <- lm(global_eTIV ~ ga_days_total_qc + ADI.median, data = df.zscore_cent)
+
+r2_full <- summary(model_full_adi_ga)$r.squared
+r2_red  <- summary(model_red_adi_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_adi_ga)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_adi_ga)$r.squared
+r2_red  <- summary(model_red_adi_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_adi_ga)["ADI.median"])
+partial_r_adi_ga <- sign_coef * sqrt(abs(partial_r2))
+
+# compute partial r^2 of GA
+model_red_ga <- lm(global_eTIV ~ ADI.median, data = df.zscore_cent)
+model_full_ga <- lm(global_eTIV ~ ADI.median + ga_days_total_qc, data = df.zscore_cent)
+
+r2_full <- summary(model_full_ga)$r.squared
+r2_red  <- summary(model_red_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_ga)["ga_days_total_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_ga)$r.squared
+r2_red  <- summary(model_red_ga)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_ga)["ga_days_total_qc"])
+partial_r_ga <- sign_coef * sqrt(abs(partial_r2))
+```
+
+
+#### BW
+```{r}
+# Partial R of ADI
+# compute partial r^2
+model_red_adi_bw <- lm(global_eTIV ~ birth_weight_kg_qc, data = df.zscore_cent)
+model_full_adi_bw <- lm(global_eTIV ~ birth_weight_kg_qc + ADI.median, data = df.zscore_cent)
+
+r2_full <- summary(model_full_adi_bw)$r.squared
+r2_red  <- summary(model_red_adi_bw)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_adi_bw)["ADI.median"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full_adi_bw)$r.squared
+r2_red  <- summary(model_red_adi_bw)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_adi_bw)["ADI.median"])
+partial_r_adi_bw <- sign_coef * sqrt(abs(partial_r2)) 
+
+# compute partial r^2 of bw
+model_red_bw <- lm(global_eTIV ~ ADI.median, data = df.zscore_cent)
+model_full_bw <- lm(global_eTIV ~ ADI.median + birth_weight_kg_qc, data = df.zscore_cent)
+
+r2_full <- summary(model_full_bw)$r.squared
+r2_red  <- summary(model_red_bw)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_bw)["birth_weight_kg_qc"])
+partial_r <- sign_coef * sqrt(abs(partial_r2))
+
+r2_full <- summary(model_full)$r.squared
+r2_red  <- summary(model_red_bw)$r.squared
+partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
+
+# sign from coefficient
+sign_coef <- sign(coef(model_full_bw)["birth_weight_kg_qc"])
+partial_r_bw <- sign_coef * sqrt(abs(partial_r2))
+```
+
+## Regressions including ADI as covariate
+
+### Global
+#### Define global vars of interest
+```{r, echo = TRUE}
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea",
+                        "global_MeanThickness", "aseg_CSF")
+```
+
+#### GA
+```{r, echo = FALSE}
+sum(!is.na(df.zscore_cent$gestational_age) & !is.na(df.zscore_cent$ADI.median))
+ga.adi_reg_table_global <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore_cent$gestational_age + df.zscore_cent$median_euler_mean + df.zscore_cent$ADI.median)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
+})))
+
+ga.adi_reg_table_global$ga_p_adj <- p.adjust(ga.adi_reg_table_global$ga_p, method = "BH")
+
+ga.adi_reg_table_global %>% filter(ga_p_adj < 0.05)
+range(ga.adi_reg_table_global %>% filter(ga_p_adj < 0.05) %>% select(ga_beta))
+```
+
+#### BW
+```{r, echo = FALSE}
+sum(!is.na(df.zscore_cent$birth_weight_kg_qc) & !is.na(df.zscore_cent$ADI.median))
+bw.adi_reg_table_global <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ df.zscore_cent$birth_weight_kg_qc + df.zscore_cent$median_euler_mean + df.zscore_cent$ADI.median)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw.adi_reg_table_global$bw_p_adj <- p.adjust(bw.adi_reg_table_global$bw_p, method = "BH")
+
+bw.adi_reg_table_global %>% filter(bw_p_adj < 0.05)
+range(bw.adi_reg_table_global %>% filter(bw_p_adj < 0.05) %>% select(bw_beta))
+```
+
+#### Visualize/Figure Panel
+```{r, echo = FALSE}
+#  Add phenotype column from rownames
+ga.adi_reg_table_global$phenotype <- rownames(ga.adi_reg_table_global)
+bw.adi_reg_table_global$phenotype <- rownames(bw.adi_reg_table_global)
+
+#  Add model identifiers + rename to common column names
+ga.adi_reg_table_global <- ga.adi_reg_table_global %>%
+  mutate(model = "Gestational Age",
+         beta = ga_beta,
+         se   = ga_se,
+         p_adj    = ga_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+bw.adi_reg_table_global <- bw.adi_reg_table_global %>%
+  mutate(model = "Birthweight",
+         beta = bw_beta,
+         se   = bw_se,
+         p_adj    = bw_p_adj) %>%
+    mutate(sig = p_adj < 0.05,
+          color = case_when(
+            sig & beta > 0 ~ "#c87a7a",   #  muted red
+            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            TRUE ~ "gray70"))
+
+#  Combine and arrange by specific order of global phenotypes
+df <- bind_rows(ga.adi_reg_table_global, bw.adi_reg_table_global) %>%
+  mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
+                                                  "global_SubCortGrayVol", "global_VentricleChoroidVol",
+                                                  "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
+
+#  Labeling for phenotypes on plot
+phenotype_labs <- c(
+ global_eTIV = "Intracranial Volume",
+ global_MeanThickness = "Mean Cortical Thickness",
+ global_VentricleChoroidVol = "Ventricular Volume",
+ global_SurfaceArea = "Total Surface Area",
+ global_CortexVol = "Cortical Gray Matter Volume",
+ global_CerebralWhiteMatterVol = "Cerebral White Matter Volume",
+ global_SubCortGrayVol = "Subcortical Gray Matter Volume"
+)
+
+#  Plot
+(global_betas_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
+    geom_point(aes(shape = model, color = color), size = 3) +
+    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
+    scale_shape_manual(values = c("Gestational Age" = 16, "Birthweight" = 17),
+                       name = "") +
+    scale_color_identity() +
+    scale_x_continuous(limits = c(-0.1, 0.3)) +
+    scale_y_discrete(limits = rev, labels = phenotype_labs) +
+    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
+    theme_minimal() +
+    theme_bw(base_size = 16) +
+    theme(
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.border = element_blank(),
+        axis.text.y  = element_text(color = "black"),
+        axis.line.x  = element_line(color = "black"),
+        axis.line.y  = element_blank(),
+        legend.justification = c("left", "top")
+    ) +
+    xlab("Standardized Beta Estimate, with QC and ADI covar") +
+    ylab(""))
+
+if(save_figs == TRUE){
+panel_save(global_betas_plot, "global-betas-gabw", "pdf", plot_output_folder)
+}
+```
+
+
+### Regional
+#### GA with qc and ADI median covariate
+
+##### Volume
+
+######  simple linear regressions
+
+####### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+ga.qc.adi_vol <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% vol_vars)], function(x) {
+  lm <- lm(reformulate(c("gestational_age",  "median_euler_mean", "ADI.median"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
+})))
+
+ga.qc.adi_vol$ga_p_adj <- p.adjust(ga.qc.adi_vol$ga_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.adi_vol %>% filter(ga_p_adj < 0.05))[1]))
+```
+
+####### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(ga.qc.adi_vol), perl = TRUE)
+
+ga.qc.adi_vol$label <- rownames(ga.qc.adi_vol) %>% 
+  sub("aparc_GrayVol_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+ga.qc.adi_vol$label[cols_edit] <- gsub("_", "-", ga.qc.adi_vol$label[cols_edit])
+
+ga.qc.adi_vol_sig_MC <- ga.qc.adi_vol %>% filter(ga_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(ga.qc.adi_vol_sig_MC$ga_beta)))
+```
+
+####### save betas
+```{r, echo = FALSE}
+save_table_full <- ga.qc.adi_vol
+name <- "ga.qc.adi_volume.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+####### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(ga.qc.adi_vol_sig_MC, ggseg::dk, by = "label")
+plot_data_aseg <- merge(ga.qc.adi_vol_sig_MC, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(ga.qc.adi_vol_noplot <- ga.qc.adi_vol_sig_MC[!(ga.qc.adi_vol_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.adi_vol_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(ga.qc.adi_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "GA, QC and ADI covar, Volume"))
+
+(ga.qc.adi_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = ga_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void() +
+  labs(title = "GA, QC and ADI covar, Volume"))
+
+if(save_figs == TRUE){
+panel_save(ga.qc.adi_dkt_vol_plot, "ga-qc-adi-dkt-vol", "pdf", plot_output_folder)
+panel_save(ga.qc.adi_aseg_vol_plot , "ga-qc-adi-aseg-vol", "pdf", plot_output_folder)
+}
+```
+
+######  lm with age interaction
+
+####### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+gabyage.qc.adi_vol <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% vol_vars)], function(x) {
+  lm <- lm(reformulate(c("gestational_age", "adjusted_age_in_years", "median_euler_mean", "ADI.median", "gestational_age:adjusted_age_in_years"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2],
+   age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
+   gabyage_beta = summary$coefficients[6,1], gabyage_p = summary$coefficients[6,4], gabyage_se = summary$coefficients[6,2])
+})))
+
+gabyage.qc.adi_vol$ga_p_adj <- p.adjust(gabyage.qc.adi_vol$ga_p, method = "BH")
+gabyage.qc.adi_vol$gabyage_p_adj <- p.adjust(gabyage.qc.adi_vol$gabyage_p, method = "BH")
+
+print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc.adi_vol %>% filter(age_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc.adi_vol %>% filter(gabyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc.adi_vol %>% filter(gabyage_p_adj < 0.05))[1]))
+```
+
+####### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(gabyage.qc.adi_vol), perl = TRUE)
+
+gabyage.qc.adi_vol$label <- rownames(gabyage.qc.adi_vol) %>% 
+  sub("aparc_GrayVol_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+gabyage.qc.adi_vol$label[cols_edit] <- gsub("_", "-", gabyage.qc.adi_vol$label[cols_edit])
+
+gabyage.qc.adi_vol_sig_MC <- gabyage.qc.adi_vol %>% filter(gabyage_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(gabyage.qc.adi_vol_sig_MC$gabyage_beta)))
+```
+
+####### save betas
+```{r, echo = FALSE}
+save_table_full <- gabyage.qc.adi_vol
+name <- "gabyage.qc.adi_volume.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+####### visualize interaction betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(gabyage.qc.adi_vol_sig_MC, ggseg::dk, by = "label")
+plot_data_aseg <- merge(gabyage.qc.adi_vol_sig_MC, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(gabyage.qc.adi_vol_noplot <- gabyage.qc.adi_vol_sig_MC[!(gabyage.qc.adi_vol_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc.adi_vol_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(gabyage.qc.adi_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = gabyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "GAxAge, QC and ADI covar, Volume"))
+
+(gabyage.qc.adi_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = gabyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void() +
+  labs(title = "GAxAge, QC and ADI covar, Volume"))
+
+if(save_figs == TRUE){
+panel_save(gabyage.qc.adi_dkt_vol_plot, "gabyage-qc-adi-dkt-vol", "pdf", plot_output_folder)
+panel_save(gabyage.qc.adi_aseg_vol_plot , "gabyage-qc-adi-aseg-vol", "pdf", plot_output_folder)
+}
+```
+
+##### Surface Area
+
+######  simple linear regressions
+
+####### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+ga.qc.adi_sa <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% sa_vars)], function(x) {
+  lm <- lm(reformulate(c("gestational_age", "median_euler_mean", "ADI.median"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
+})))
+
+ga.qc.adi_sa$ga_p_adj <- p.adjust(ga.qc.adi_sa$ga_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.adi_sa %>% filter(ga_p_adj < 0.05))[1]))
+```
+
+####### add label column to match to ggseg
+```{r, echo = FALSE}
+ga.qc.adi_sa$label <- rownames(ga.qc.adi_sa) %>% 
+  sub("aparc_SurfArea_", "", .)
+
+ga.qc.adi_sa_sig_MC <- ga.qc.adi_sa %>% filter(ga_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(ga.qc.adi_sa_sig_MC$ga_beta)))
+```
+
+####### save betas
+```{r, echo = FALSE}
+save_table_full <- ga.qc.adi_sa
+name <- "ga.qc.adi_surfArea.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+####### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(ga.qc.adi_sa_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(ga.qc.adi_sa_noplot <- ga.qc.adi_sa_sig_MC[!(ga.qc.adi_sa_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.adi_sa_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(ga.qc.adi_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "GA, QC and ADI covar, Surface Area"))
+
+if(save_figs == TRUE){
+panel_save(ga.qc.adi_dkt_sa_plot, "ga-qc-adi-dkt-sa", "pdf", plot_output_folder)
+}
+```
+
+######  lm with age interaction
+
+####### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+gabyage.qc.adi_sa <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% sa_vars)], function(x) {
+  lm <- lm(reformulate(c("gestational_age", "adjusted_age_in_years", "median_euler_mean", "ADI.median", "gestational_age:adjusted_age_in_years"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2],
+   age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
+   gabyage_beta = summary$coefficients[6,1], gabyage_p = summary$coefficients[6,4], gabyage_se = summary$coefficients[6,2])
+})))
+
+gabyage.qc.adi_sa$ga_p_adj <- p.adjust(gabyage.qc.adi_sa$ga_p, method = "BH")
+gabyage.qc.adi_sa$gabyage_p_adj <- p.adjust(gabyage.qc.adi_sa$gabyage_p, method = "BH")
+
+print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc.adi_sa %>% filter(age_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc.adi_sa %>% filter(gabyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc.adi_sa %>% filter(gabyage_p_adj < 0.05))[1]))
+```
+
+####### add label column to match to ggseg
+```{r, echo = FALSE}
+gabyage.qc.adi_sa$label <- rownames(gabyage.qc.adi_sa) %>% 
+  sub("aparc_SurfArea_", "", .)
+
+gabyage.qc.adi_sa_sig_MC <- gabyage.qc.adi_sa %>% filter(gabyage_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(gabyage.qc.adi_sa_sig_MC$ga_beta)))
+```
+
+####### save betas
+```{r, echo = FALSE}
+save_table_full <- gabyage.qc.adi_sa
+name <- "gabyage.qc.adi_surfArea.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+####### visualize interaction betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(gabyage.qc.adi_sa_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(gabyage.qc_sa_noplot <- gabyage.qc.adi_sa_sig_MC[!(gabyage.qc.adi_sa_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc.adi_sa_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(gabyage.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = gabyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "GAxAge, QC and ADI covar, Surface Area"))
+
+if(save_figs == TRUE){
+panel_save(gabyage.qc_dkt_sa_plot, "gabyage-qc-adi-dkt-sa", "pdf", plot_output_folder)
+}
+```
+
+##### Thickness
+
+######  simple linear regressions
+
+####### compute regressions
+```{r, echo = FALSE}
+sum(!is.na(df.zscore_cent$gestational_age) & !is.na(df.zscore_cent$ADI.median) & !is.na(df.zscore_cent$global_MeanThickness))
+# Regional -- including cortical and subcortical
+ga.qc.adi_th <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% th_vars)], function(x) {
+  lm <- lm(reformulate(c("gestational_age", "euler_mean_mpr", "ADI.median"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
+})))
+
+ga.qc.adi_th$ga_p_adj <- p.adjust(ga.qc.adi_th$ga_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(ga.qc.adi_th %>% filter(ga_p_adj < 0.05))[1]))
+```
+
+####### add label column to match to ggseg
+```{r, echo = FALSE}
+ga.qc.adi_th$label <- rownames(ga.qc.adi_th) %>% 
+  sub("aparc_ThickAvg_", "", .)
+
+ga.qc.adi_th_sig_MC <- ga.qc.adi_th %>% filter(ga_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(ga.qc.adi_th_sig_MC$ga_beta)))
+```
+
+####### save betas
+```{r, echo = FALSE}
+save_table_full <- ga.qc.adi_th
+name <- "ga.qc.adi_thick.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+####### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(ga.qc.adi_th_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(ga.qc.adi_th_noplot <- ga.qc.adi_th_sig_MC[!(ga.qc.adi_th_sig_MC$label %in% plot_data_dkt$label) & !(ga.qc.adi_th_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(ga.qc.adi_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "GA, QC and ADI covar, Cortical Thickness"))
+
+if(save_figs == TRUE){
+panel_save(ga.qc.adi_dkt_th_plot, "ga-qc-adi-dkt-th", "pdf", plot_output_folder)
+}
+```
+
+######  lm with age interaction
+
+####### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+gabyage.qc.adi_th <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% th_vars)], function(x) {
+  lm <- lm(reformulate(c("gestational_age", "adjusted_age_in_years", "euler_mean_mpr", "ADI.median", "gestational_age:adjusted_age_in_years"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2],
+   age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
+   gabyage_beta = summary$coefficients[6,1], gabyage_p = summary$coefficients[6,4], gabyage_se = summary$coefficients[6,2])
+})))
+
+gabyage.qc.adi_th$ga_p_adj <- p.adjust(gabyage.qc.adi_th$ga_p, method = "BH")
+gabyage.qc.adi_th$gabyage_p_adj <- p.adjust(gabyage.qc.adi_th$gabyage_p, method = "BH")
+
+print(paste0("Age Main significant results (shouldn't be any): ", dim(gabyage.qc.adi_th %>% filter(age_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - NO correction: ", dim(gabyage.qc.adi_th %>% filter(gabyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(gabyage.qc.adi_th %>% filter(gabyage_p_adj < 0.05))[1]))
+```
+
+####### add label column to match to ggseg
+```{r, echo = FALSE}
+gabyage.qc.adi_th$label <- rownames(gabyage.qc.adi_th) %>% 
+  sub("aparc_ThickAvg_", "", .)
+  
+gabyage.qc.adi_th_sig_MC <- gabyage.qc.adi_th %>% filter(gabyage_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(gabyage.qc.adi_th_sig_MC$gabyage_beta)))
+```
+
+####### save betas
+```{r, echo = FALSE}
+save_table_full <- gabyage.qc.adi_th
+name <- "gabyage.qc.adi_thick.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+####### visualize interaction betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(gabyage.qc.adi_th_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(gabyage.qc.adi_th_noplot <- gabyage.qc.adi_th_sig_MC[!(gabyage.qc.adi_th_sig_MC$label %in% plot_data_dkt$label) & !(gabyage.qc.adi_th_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(gabyage.qc.adi_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = gabyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "GAxAge, QC and ADI covar, Cortical Thickness"))
+
+if(save_figs == TRUE){
+panel_save(gabyage.qc.adi_dkt_th_plot, "gabyage-qc-adi-dkt-th", "pdf", plot_output_folder)
+}
+```
+
+#### BW with qc and ADI covariate
+
+##### Volume
+
+######  simple linear regressions
+
+####### compute regressions
+```{r, echo = FALSE}
+sum(!is.na(df.zscore_cent$birth_weight_kg_qc))
+# Regional -- including cortical and subcortical
+bw.qc.adi_vol <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% vol_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "median_euler_mean", "ADI.median"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw.qc.adi_vol$bw_p_adj <- p.adjust(bw.qc.adi_vol$bw_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.adi_vol %>% filter(bw_p_adj < 0.05))[1]))
+```
+
+####### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bw.qc.adi_vol), perl = TRUE)
+
+bw.qc.adi_vol$label <- rownames(bw.qc.adi_vol) %>% 
+  sub("aparc_GrayVol_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bw.qc.adi_vol$label[cols_edit] <- gsub("_", "-", bw.qc.adi_vol$label[cols_edit])
+
+bw.qc.adi_vol_sig_MC <- bw.qc.adi_vol %>% filter(bw_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bw.qc.adi_vol_sig_MC$bw_beta)))
+```
+
+####### save betas
+```{r, echo = FALSE}
+save_table_full <- bw.qc.adi_vol
+name <- "bw.qc.adi_volume.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+####### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw.qc.adi_vol_sig_MC, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bw.qc.adi_vol_sig_MC, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bw.qc.adi_vol_noplot <- bw.qc.adi_vol_sig_MC[!(bw.qc.adi_vol_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.adi_vol_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bw.qc.adi_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BW, QC and ADI covar, Volume"))
+
+(bw.qc.adi_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bw_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void() +
+  labs(title = "BW, QC and ADI covar, Volume"))
+
+if(save_figs == TRUE){
+panel_save(bw.qc.adi_dkt_vol_plot, "bw-qc-adi-dkt-vol", "pdf", plot_output_folder)
+panel_save(bw.qc.adi_aseg_vol_plot , "bw-qc-adi-aseg-vol", "pdf", plot_output_folder)
+}
+```
+
+##### Scatterplot for top betas
+```{r, echo = FALSE}
+if(dim(bw.qc.adi_vol_sig_MC)[1] > 0){
+top_n = if(dim(bw.qc.adi_vol_sig_MC)[1] > 10) {10} else {dim(bw.qc.adi_vol_sig_MC)[1]}
+top <- bw.qc.adi_vol_sig_MC[order(bw.qc.adi_vol_sig_MC$bw_beta, decreasing = TRUE)[1:top_n],]
+scatterplots_bw.qc.adi_vol <- vector(mode = "list", length = top_n)
+for(i in 1:top_n){
+  pheno <- rownames(top)[i]
+  title <- top$label[i]
+  names(scatterplots_bw.qc.adi_vol[i]) <- pheno
+  scatterplots_bw.qc.adi_vol[[i]] <- ggplot(df.zscore_cent, aes(x = birth_weight_kg_qc, y = !!sym(pheno))) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    theme_minimal() +
+    labs(x = "Gestational Age (z-scored)", y = "Centile (z-scored)", title = title)
+}
+
+nCol <- 2
+nRow <- 2
+breaks <- c(seq(from = 0, to = top_n , by = (nCol*nRow)), top_n) %>% unique(.)
+for(k in 1:(length(breaks)-1)){
+  start <- breaks[k]+1
+  end <- breaks[k+1]
+  do.call("grid.arrange", c(scatterplots_bw.qc.adi_vol[start:end], ncol=nCol))
+}
+}
+```
+
+####  lm with age interaction
+
+##### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+bwbyage.qc.adi_vol <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% vol_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "adjusted_age_in_years", "median_euler_mean", "ADI.median", "birth_weight_kg_qc:adjusted_age_in_years"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2],
+   age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
+   bwbyage_beta = summary$coefficients[6,1], bwbyage_p = summary$coefficients[6,4], bwbyage_se = summary$coefficients[6,2])
+})))
+
+bwbyage.qc.adi_vol$bw_p_adj <- p.adjust(bwbyage.qc.adi_vol$bw_p, method = "BH")
+bwbyage.qc.adi_vol$bwbyage_p_adj <- p.adjust(bwbyage.qc.adi_vol$bwbyage_p, method = "BH")
+
+print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc.adi_vol %>% filter(age_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc.adi_vol %>% filter(bwbyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc.adi_vol %>% filter(bwbyage_p_adj < 0.05))[1]))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bwbyage.qc.adi_vol), perl = TRUE)
+
+bwbyage.qc.adi_vol$label <- rownames(bwbyage.qc.adi_vol) %>% 
+  sub("aparc_GrayVol_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("X", "x", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bwbyage.qc.adi_vol$label[cols_edit] <- gsub("_", "-", bwbyage.qc.adi_vol$label[cols_edit])
+
+bwbyage.qc.adi_vol_sig_MC <- bwbyage.qc.adi_vol %>% filter(bwbyage_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc.adi_vol_sig_MC$bwbyage_beta)))
+```
+
+##### save betas
+```{r, echo = FALSE}
+save_table_full <- bwbyage.qc.adi_vol
+name <- "bwbyage.qc.adi_volume.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+##### visualize interaction betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bwbyage.qc.adi_vol_sig_MC, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bwbyage.qc.adi_vol_sig_MC, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bwbyage.qc.adi_vol_noplot <- bwbyage.qc.adi_vol_sig_MC[!(bwbyage.qc.adi_vol_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc.adi_vol_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bwbyage.qc.adi_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwbyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BWxAge, QC and ADI covar, Volume"))
+
+(bwbyage.qc.adi_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bwbyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void() +
+  labs(title = "BWxAge, QC and ADI covar, Volume"))
+
+if(save_figs == TRUE){
+panel_save(bwbyage.qc.adi_dkt_vol_plot, "bwbyage-qc-adi-dkt-vol", "pdf", plot_output_folder)
+panel_save(bwbyage.qc.adi_aseg_vol_plot , "bwbyage-qc-adi-aseg-vol", "pdf", plot_output_folder)
+}
+```
+
+##### visualize interaction plots
+```{r, echo = FALSE}
+if (dim(bwbyage.qc_vol_sig_MC)[1] > 0){
+vars <- rownames(bwbyage.qc_vol_sig_MC[order(-(bwbyage.qc_vol_sig_MC$bwbyage_beta)),])
+interaction_plots <-  vector(mode = "list", length = length(vars))
+if (length(vars) > 0) {
+for (i in 1:length(vars)){
+  x <- df.zscore_cent[,grepl(vars[i], names(df.zscore_cent))]
+  y_label <- sub("aparc_GrayVol_", "", vars[i])
+  y_label <- sub("aseg_", "", vars[i])
+  y_label <- sub("X", "", vars[i])
+  lm <- lm(x ~ birth_weight_kg_qc*adjusted_age_in_years, df.zscore_cent)
+  summary <- summary(lm)
+  interaction_plots[[i]] <- interact_plot(lm, pred = birth_weight_kg_qc, modx = adjusted_age_in_years) + ylab(y_label) + ggtitle(paste0("bwbyage.qc beta = ", as.character(signif(summary$coefficients[4,1], 3))))
+}
+interaction_plots
+}
+}
+```
+
+### Surface Area
+
+####  simple linear regressions
+
+##### compute regressions
+```{r, echo = FALSE}
+print(glue("Global measure for surface area is {"ADI.median"}"))
+sum(!is.na(df.zscore_cent$birth_weight_kg_qc))
+# Regional -- including cortical and subcortical
+bw.qc.adi_sa <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% sa_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "median_euler_mean", "ADI.median"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw.qc.adi_sa$bw_p_adj <- p.adjust(bw.qc.adi_sa$bw_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.adi_sa %>% filter(bw_p_adj < 0.05))[1]))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+bw.qc.adi_sa$label <- rownames(bw.qc.adi_sa) %>% 
+  sub("aparc_SurfArea_", "", .)
+
+bw.qc.adi_sa_sig_MC <- bw.qc.adi_sa %>% filter(bw_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bw.qc.adi_sa_sig_MC$bw_beta)))
+```
+
+##### save betas
+```{r, echo = FALSE}
+save_table_full <- bw.qc.adi_sa
+name <- "bw.qc.adi_surfArea.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+##### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw.qc.adi_sa_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(bw.qc.adi_sa_noplot <- bw.qc.adi_sa_sig_MC[!(bw.qc.adi_sa_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.adi_sa_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bw.qc.adi_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BW, QC and ADI covar, Surface Area"))
+
+if(save_figs == TRUE){
+panel_save(bw.qc.adi_dkt_sa_plot, "bw-qc-adi-dkt-sa", "pdf", plot_output_folder)
+}
+```
+
+##### Scatterplot for top betas
+```{r, echo = FALSE}
+if(dim(bw.qc.adi_sa_sig_MC)[1] > 0){
+top_n = if(dim(bw.qc.adi_sa_sig_MC)[1] > 10) {10} else {dim(bw.qc.adi_sa_sig_MC)[1]}
+top <- bw.qc.adi_sa_sig_MC[order(bw.qc.adi_sa_sig_MC$bw_beta, decreasing = TRUE)[1:top_n],]
+scatterplots_bw.qc.adi_sa <- vector(mode = "list", length = top_n)
+for(i in 1:top_n){
+  pheno <- rownames(top)[i]
+  title <- top$label[i]
+  names(scatterplots_bw.qc.adi_sa[i]) <- pheno
+  scatterplots_bw.qc.adi_sa[[i]] <- ggplot(df.zscore_cent, aes(x = birth_weight_kg_qc, y = !!sym(pheno))) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    theme_minimal() +
+    labs(x = "Gestational Age (z-scored)", y = "Centile (z-scored)", title = title)
+}
+
+nCol <- 2
+nRow <- 2
+breaks <- c(seq(from = 0, to = top_n , by = (nCol*nRow)), top_n) %>% unique(.)
+for(k in 1:(length(breaks)-1)){
+  start <- breaks[k]+1
+  end <- breaks[k+1]
+  do.call("grid.arrange", c(scatterplots_bw.qc.adi_sa[start:end], ncol=nCol))
+}
+}
+```
+
+####  lm with age interaction
+
+##### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+bwbyage.qc.adi_sa <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% sa_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "adjusted_age_in_years", "median_euler_mean", "ADI.median", "birth_weight_kg_qc:adjusted_age_in_years"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2],
+   age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
+   bwbyage_beta = summary$coefficients[6,1], bwbyage_p = summary$coefficients[6,4], bwbyage_se = summary$coefficients[6,2])
+})))
+
+bwbyage.qc.adi_sa$bw_p_adj <- p.adjust(bwbyage.qc.adi_sa$bw_p, method = "BH")
+bwbyage.qc.adi_sa$bwbyage_p_adj <- p.adjust(bwbyage.qc.adi_sa$bwbyage_p, method = "BH")
+
+print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc.adi_sa %>% filter(age_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc.adi_sa %>% filter(bwbyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc.adi_sa %>% filter(bwbyage_p_adj < 0.05))[1]))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+bwbyage.qc.adi_sa$label <- rownames(bwbyage.qc.adi_sa) %>% 
+  sub("aparc_SurfArea_", "", .)
+
+bwbyage.qc.adi_sa_sig_MC <- bwbyage.qc.adi_sa %>% filter(bwbyage_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc.adi_sa_sig_MC$bw_beta)))
+```
+
+##### save betas
+```{r, echo = FALSE}
+save_table_full <- bwbyage.qc.adi_sa
+name <- "bwbyage.qc.adi_surfArea.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+##### visualize interaction betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bwbyage.qc.adi_sa_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(bwbyage.qc_sa_noplot <- bwbyage.qc.adi_sa_sig_MC[!(bwbyage.qc.adi_sa_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc.adi_sa_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bwbyage.qc_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwbyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BWxAge, QC and ADI covar, Surface Area"))
+
+if(save_figs == TRUE){
+panel_save(bwbyage.qc_dkt_sa_plot, "bwbyage-qc-adi-dkt-sa", "pdf", plot_output_folder)
+}
+```
+
+##### visualize interaction plots
+```{r, echo = FALSE}
+if (dim(bwbyage.qc.adi_sa_sig_MC)[1] > 0){
+vars <- rownames(bwbyage.qc.adi_sa_sig_MC[order(-(bwbyage.qc.adi_sa_sig_MC$bwbyage_beta)),])
+interaction_plots <-  vector(mode = "list", length = length(vars))
+if (length(vars) > 0) {
+for (i in 1:length(vars)){
+  x <- df.zscore_cent[,grepl(vars[i], names(df.zscore_cent))]
+  y_label <- sub("aparc_SurfArea_", "", vars[i])
+  lm <- lm(x ~ birth_weight_kg_qc*adjusted_age_in_years, df.zscore_cent)
+  summary <- summary(lm)
+  interaction_plots[[i]] <- interact_plot(lm, pred = birth_weight_kg_qc, modx = adjusted_age_in_years) + ylab(y_label) + ggtitle(paste0("bwbyage.qc beta = ", as.character(signif(summary$coefficients[4,1], 3))))
+}
+interaction_plots
+}
+}
+```
+
+### Thickness
+
+####  simple linear regressions
+
+##### compute regressions
+```{r, echo = FALSE}
+print(glue("Global measure for cortical thickness is {"ADI.median"}"))
+sum(!is.na(df.zscore_cent$birth_weight_kg_qc))
+# Regional -- including cortical and subcortical
+bw.qc.adi_th <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% th_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "median_euler_mean", "ADI.median"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw.qc.adi_th$bw_p_adj <- p.adjust(bw.qc.adi_th$bw_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.adi_th %>% filter(bw_p_adj < 0.05))[1]))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+bw.qc.adi_th$label <- rownames(bw.qc.adi_th) %>% 
+  sub("aparc_ThickAvg_", "", .)
+
+bw.qc.adi_th_sig_MC <- bw.qc.adi_th %>% filter(bw_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bw.qc.adi_th_sig_MC$bw_beta)))
+```
+
+##### save betas
+```{r, echo = FALSE}
+save_table_full <- bw.qc.adi_th
+name <- "bw.qc.adi_thick.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+##### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw.qc.adi_th_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(bw.qc.adi_th_noplot <- bw.qc.adi_th_sig_MC[!(bw.qc.adi_th_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.adi_th_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bw.qc.adi_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BW, QC and ADI covar, Cortical Thickness"))
+
+if(save_figs == TRUE){
+panel_save(bw.qc.adi_dkt_th_plot, "bw-qc-adi-dkt-th", "pdf", plot_output_folder)
+}
+```
+
+##### Scatterplot for top betas
+```{r, echo = FALSE}
+if(dim(bw.qc.adi_th_sig_MC)[1] > 0) {
+top_n = if(dim(bw.qc.adi_th_sig_MC)[1] > 10) {10} else {dim(bw.qc.adi_th_sig_MC)[1]}
+top <- bw.qc.adi_th_sig_MC[order(abs(bw.qc.adi_th_sig_MC$bw_beta), decreasing = TRUE)[1:top_n],]
+scatterplots_bw.qc.adi_th <- vector(mode = "list", length = top_n)
+for(i in 1:top_n){
+  print(i)
+  pheno <- rownames(top)[i]
+  print(pheno)
+  title <- top$label[i]
+  names(scatterplots_bw.qc.adi_th)[i] <- pheno
+  scatterplots_bw.qc.adi_th[[i]] <- ggplot(df.zscore_cent, aes(x = birth_weight_kg_qc, y = !!sym(pheno))) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    theme_minimal() +
+    labs(x = "Gestational Age (z-scored)", y = "Centile (z-scored)", title = title)
+}
+
+nCol <- 2
+nRow <- 2
+breaks <- c(seq(from = 0, to = top_n , by = (nCol*nRow)), top_n) %>% unique(.)
+for(k in 1:(length(breaks)-1)){
+  start <- breaks[k]+1
+  end <- breaks[k+1]
+  do.call("grid.arrange", c(scatterplots_bw.qc.adi_th[start:end], ncol=nCol))
+}
+}
+```
+
+####  lm with age interaction
+
+##### compute regressions
+```{r, echo = FALSE}
+# Regional -- including cortical and subcortical
+bwbyage.qc.adi_th <- as.data.frame(t(sapply(df.zscore_cent[, which(names(df.zscore_cent) %in% th_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "adjusted_age_in_years", "median_euler_mean", "ADI.median", "birth_weight_kg_qc:adjusted_age_in_years"), response = "x"), data = df.zscore_cent)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2],
+   age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
+   bwbyage_beta = summary$coefficients[6,1], bwbyage_p = summary$coefficients[6,4], bwbyage_se = summary$coefficients[6,2])
+})))
+
+bwbyage.qc.adi_th$bw_p_adj <- p.adjust(bwbyage.qc.adi_th$bw_p, method = "BH")
+bwbyage.qc.adi_th$bwbyage_p_adj <- p.adjust(bwbyage.qc.adi_th$bwbyage_p, method = "BH")
+
+print(paste0("Age Main significant results (shouldn't be any): ", dim(bwbyage.qc.adi_th %>% filter(age_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - NO correction: ", dim(bwbyage.qc.adi_th %>% filter(bwbyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs - AFTER FDR correction: ", dim(bwbyage.qc.adi_th %>% filter(bwbyage_p_adj < 0.05))[1]))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+bwbyage.qc.adi_th$label <- rownames(bwbyage.qc.adi_th) %>% 
+  sub("aparc_ThickAvg_", "", .)
+  
+bwbyage.qc.adi_th_sig_MC <- bwbyage.qc.adi_th %>% filter(bwbyage_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bwbyage.qc.adi_th_sig_MC$bwbyage_beta)))
+```
+
+##### save betas
+```{r, echo = FALSE}
+save_table_full <- bwbyage.qc.adi_th
+name <- "bwbyage.qc.adi_thick.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+##### visualize interaction betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bwbyage.qc.adi_th_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(bwbyage.qc.adi_th_noplot <- bwbyage.qc.adi_th_sig_MC[!(bwbyage.qc.adi_th_sig_MC$label %in% plot_data_dkt$label) & !(bwbyage.qc.adi_th_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bwbyage.qc.adi_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwbyage_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BWxAge, QC and ADI covar, Cortical Thickness"))
+
+if(save_figs == TRUE){
+panel_save(bwbyage.qc.adi_dkt_th_plot, "bwbyage-qc-adi-dkt-th", "pdf", plot_output_folder)
+}
+```
+
+##### visualize interaction plots
+```{r, echo = FALSE}
+if(dim(bwbyage.qc.adi_th_sig_MC)[1] > 0) {
+vars <- rownames(bwbyage.qc.adi_th_sig_MC[order(-(bwbyage.qc.adi_th_sig_MC$bwbyage_beta)),])
+interaction_plots <-  vector(mode = "list", length = length(vars))
+if (length(vars) > 0) {
+for (i in 1:length(vars)){
+  x <- df.zscore_cent[,grepl(vars[i], names(df.zscore_cent))]
+  y_label <- sub("aparc_ThickAvg_", "", vars[i])
+  lm <- lm(x ~ birth_weight_kg_qc*adjusted_age_in_years, df.zscore_cent)
+  summary <- summary(lm)
+  interaction_plots[[i]] <- interact_plot(lm, pred = birth_weight_kg_qc, modx = adjusted_age_in_years) + ylab(y_label) + ggtitle(paste0("bwbyage.qc.adi beta = ", as.character(signif(summary$coefficients[4,1], 3))))
+}
+interaction_plots
+}
+}
+```
+
+####  group by age and check bw.qc.adi on thickness effect
+
+##### young
+
+###### compute regressions
+```{r, echo = FALSE}
+sum(!is.na(df.zscore_cent_young$birth_weight_kg_qc))
+# Regional -- including cortical and subcortical
+bw.qc.adi_th_young <- as.data.frame(t(sapply(df.zscore_cent_young[, which(names(df.zscore_cent_young) %in% th_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "median_euler_mean", "ADI.median"), response = "x"), data = df.zscore_cent_young)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw.qc.adi_th_young$bw_p_adj <- p.adjust(bw.qc.adi_th_young$bw_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.adi_th_young %>% filter(bw_p_adj < 0.05))[1]))
+```
+
+###### add label column to match to ggseg
+```{r, echo = FALSE}
+bw.qc.adi_th_young$label <- rownames(bw.qc.adi_th_young) %>% 
+  sub("aparc_ThickAvg_", "", .)
+
+bw.qc.adi_th_young_sig_MC <- bw.qc.adi_th_young %>% filter(bw_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bw.qc.adi_th_young_sig_MC$bw_beta)))
+```
+
+###### save betas
+```{r, echo = FALSE}
+save_table_full <- bw.qc.adi_th_young
+name <- "bw.qc.adi_thick_young.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+###### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw.qc.adi_th_young_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(bw.qc.adi_th_young_noplot <- bw.qc.adi_th_young_sig_MC[!(bw.qc.adi_th_young_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.adi_th_young_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bw.qc.adiyoung_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BW, Young, QC and ADI covar, Cortical Thickness"))
+
+if(save_figs == TRUE){
+panel_save(bw.qc.adiyoung_dkt_th_plot, "bw-qc-meanth-young-dkt-th", "pdf", plot_output_folder)
+}
+```
+
+##### old
+
+###### compute regressions
+```{r, echo = FALSE}
+sum(!is.na(df.zscore_cent_old$birth_weight_kg_qc))
+# Regional -- including cortical and subcortical
+bw.qc.adi_th_old <- as.data.frame(t(sapply(df.zscore_cent_old[, which(names(df.zscore_cent_old) %in% th_vars)], function(x) {
+  lm <- lm(reformulate(c("birth_weight_kg_qc", "median_euler_mean", "ADI.median"), response = "x"), data = df.zscore_cent_old)
+  summary <- summary(lm)
+  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+})))
+
+bw.qc.adi_th_old$bw_p_adj <- p.adjust(bw.qc.adi_th_old$bw_p, method = "BH")
+print(paste0("Number of significant IDPs after FDR correction: ", dim(bw.qc.adi_th_old %>% filter(bw_p_adj < 0.05))[1]))
+```
+
+###### add label column to match to ggseg
+```{r, echo = FALSE}
+bw.qc.adi_th_old$label <- rownames(bw.qc.adi_th_old) %>% 
+  sub("aparc_ThickAvg_", "", .)
+
+bw.qc.adi_th_old_sig_MC <- bw.qc.adi_th_old %>% filter(bw_p_adj < 0.05)
+
+print(paste0("Beta range of significant IDPs: ", range(bw.qc.adi_th_old_sig_MC$bw_beta)))
+```
+
+###### save betas
+```{r, echo = FALSE}
+save_table_full <- bw.qc.adi_th_old
+name <- "bw.qc.adi_thick_old.csv"
+# Save dkt cortical betas for spin test
+if(save_tables == TRUE){
+  output_folder <-dkt_folder
+  save_table_full$hemisphere <- ifelse(grepl("lh", save_table_full$label), "L", 
+                         ifelse(grepl("rh", save_table_full$label), "R", NA))
+  save_table_full$label <- sub("^rh_|lh_", "", save_table_full$label)
+  filename_all <- paste0(output_folder, name)
+  write.csv(save_table_full, filename_all)
+}
+# Save full betas
+if(save_tables == TRUE){
+output_folder <- betas_folder
+filename <- paste0(output_folder, name)
+write.csv(save_table_full, filename)
+}
+```
+
+###### visualization of betas on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw.qc.adi_th_old_sig_MC, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(bw.qc.adi_th_old_noplot <- bw.qc.adi_th_old_sig_MC[!(bw.qc.adi_th_old_sig_MC$label %in% plot_data_dkt$label) & !(bw.qc.adi_th_old_sig_MC$label %in% plot_data_aseg$label),])
+
+# plots
+(bw.qc.adiold_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_beta)) +
+  scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = limits) +
+  theme_void()+
+  labs(title = "BW, Old, QC and ADI covar, Cortical Thickness"))
+if(save_figs == TRUE){
+panel_save(bw.qc.adiold_dkt_th_plot, "bw-qc-meanth-old-dkt-th", "pdf", plot_output_folder)
+}
+```

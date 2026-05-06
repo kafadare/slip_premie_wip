@@ -60,25 +60,25 @@ atlas_rh = nib.load(atlas_files['image'][1])
 labels_lh = atlas_lh.labeltable.get_labels_as_dict()
 labels_rh = atlas_rh.labeltable.get_labels_as_dict()
 # Convert label dicts into DataFrames
-df_labels_lh = pd.DataFrame(list(labels_lh.items()), columns=['Key','label'])
-df_labels_rh = pd.DataFrame(list(labels_rh.items()), columns=['Key','label'])
+df_labels_lh = pd.DataFrame(list(labels_lh.items()), columns=['Key', label_col])
+df_labels_rh = pd.DataFrame(list(labels_rh.items()), columns=['Key', label_col])
 
 # %%
 #read in the csvs
-abcd_t1_bw_betas = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/ABCD-braincharts/2.0_results/dkt_betas/dsk_birthweight_all_t1.csv")
-abcd_t1_ga_betas = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/ABCD-braincharts/2.0_results/dkt_betas/dsk_gestAge_all_t1.csv")
-abcd_t2_bw_betas = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/ABCD-braincharts/2.0_results/dkt_betas/dsk_birthweight_all_t2.csv")
-abcd_t2_ga_betas = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/ABCD-braincharts/2.0_results/dkt_betas/dsk_gestAge_all_t2.csv")
-slip_bw_betas_vol = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/results_csv/dkt_betas/bw.qc_volume.csv")
-slip_ga_betas_vol = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/results_csv/dkt_betas/ga.qc_volume.csv")
-slip_bw_betas_sa = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/results_csv/dkt_betas/bw.qc_surfArea.csv")
-slip_ga_betas_sa = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/results_csv/dkt_betas/ga.qc_surfArea.csv")
-slip_bw_betas_th = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/results_csv/dkt_betas/bw.qc_thick.csv")
-slip_ga_betas_th = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/results_csv/dkt_betas/ga.qc_thick.csv")
+slip_bw_betas_vol = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-allgrades-25.11/results_csv/dkt_betas/bw.qc_volume.csv")
+slip_ga_betas_vol = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-allgrades-25.11/results_csv/dkt_betas/ga.qc_volume.csv")
+slip_bw_betas_sa = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-allgrades-25.11/results_csv/dkt_betas/bw.qc_surfArea.csv")
+slip_ga_betas_sa = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-allgrades-25.11/results_csv/dkt_betas/ga.qc_surfArea.csv")
+slip_bw_betas_th = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-allgrades-25.11/results_csv/dkt_betas/bw.qc_thick.csv")
+slip_ga_betas_th = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-allgrades-25.11/results_csv/dkt_betas/ga.qc_thick.csv")
+slip_peaks = pd.read_csv("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/centile_peaks.csv")
 
 # %%
-abcd_t1_bw_beta_vector = process_beta_dataframe(abcd_t1_bw_betas, df_labels_lh, df_labels_rh, 'bw_beta')
-abcd_t2_bw_beta_vector = process_beta_dataframe(abcd_t2_bw_betas, df_labels_lh, df_labels_rh, 'bw_beta')
+slip_peaks_vol = slip_peaks[slip_peaks['domain' == "vol"]].copy()
+slip_peaks_sa = slip_peaks[slip_peaks['domain' == "sa"]].copy()
+slip_peaks_th = slip_peaks[slip_peaks['domain' == "th"]].copy()
+
+# %%
 slip_bw_vol_beta_vector = process_beta_dataframe(slip_bw_betas_vol, df_labels_lh, df_labels_rh, 'bw_beta')
 slip_bw_sa_beta_vector = process_beta_dataframe(slip_bw_betas_sa, df_labels_lh, df_labels_rh, 'bw_beta')
 slip_bw_th_beta_vector = process_beta_dataframe(slip_bw_betas_th, df_labels_lh, df_labels_rh, 'bw_beta')

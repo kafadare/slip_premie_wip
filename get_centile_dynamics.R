@@ -15,6 +15,11 @@ source(glue("{code_path}R_util_lmsz.R"))
 
 vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 
+# args <- commandArgs(trailingOnly = TRUE)
+# centiles_data_path <- args[1]
+# raw_data_path <- args[2]
+# models_path <- args[3]
+
 centiles_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv"
 raw_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/median_Th-MPR_2026-02-04.csv"
 
@@ -130,9 +135,6 @@ out_df$domain <- ifelse(grepl("aparc_GrayVol", out_df$pheno), "vol",
 
 out_df$label <- sub("^(aparc_(GrayVol|SurfArea|ThickAvg)_(lh|rh)_)", "", out_df$pheno)
 
-
-out_df %>% filter(domain == "vol") %>% frank(adj_age_days_log_peak50, ties.method = "dense")
-
 out_df[which(out_df$domain == "vol"),]$rank_peak50 <- out_df %>% filter(domain == "vol") %>% frank(adj_age_days_log_peak50, ties.method = "dense")
 out_df[which(out_df$domain == "sa"),]$rank_peak50 <- out_df %>% filter(domain == "sa") %>% frank(adj_age_days_log_peak50, ties.method = "dense")
 out_df[which(out_df$domain == "th"),]$rank_peak50 <- out_df %>% filter(domain == "th") %>% frank(adj_age_days_log_peak50, ties.method = "dense")
@@ -174,6 +176,77 @@ brain_plot_df$hemi <- ifelse(grepl("lh", brain_plot_df$pheno), "left",
 
 limits = c(0,1)
 high_color = "#0F766E"
+
+# Rank Brain Plots for Vol/SA/Thickness
+rank_brain_plot <- merge(brain_plot_df %>% select(pheno, label), out_df %>% select(-label), by = c("pheno"))
+# merge with atlas data
+plot_data_dkt <- merge(rank_brain_plot, ggseg::dk, by = "label")
+plot_data_aseg <- merge(rank_brain_plot, ggseg::aseg, by = "label")
+
+rank_low_color = "#4878CF"
+rank_mid_color = "white"
+rank_high_color = "#D65F5F"
+
+#print(brain_noplot <- rank_brain_plot[(!(rank_brain_plot$label %in% plot_data_dkt$label) & !(rank_brain_plot$label %in% plot_data_aseg$label)),"label"], n = 100)
+
+# plots
+(vol_rank50_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+    geom_brain(atlas = dk, 
+               position = position_brain(hemi ~ side),
+               aes(fill = rank_peak50)) +
+    scale_fill_gradient2(low = rank_low_color, mid = rank_mid_color, high = rank_high_color, limits = c(1, 44)) +
+    theme_void()+
+    labs(title = "Volume Age at Peak 50th Rank (higher rank later age)"))
+
+(vol_age50_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+    geom_brain(atlas = dk, 
+               position = position_brain(hemi ~ side),
+               aes(fill = adj_age_years_peak50)) +
+    scale_fill_gradient2(low = rank_low_color, mid = rank_mid_color, high = rank_high_color, limits = c(4, 12)) +
+    theme_void()+
+    labs(title = "Volume Age at Peak 50th"))
+
+(vol_rank50_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
+    geom_brain(atlas = dk, 
+               position = position_brain(hemi ~ side),
+               aes(fill = rank_peak50)) +
+    scale_fill_gradient2(low = rank_low_color, mid = rank_mid_color, high = rank_high_color, limits = c(1, 44)) +
+    theme_void()+
+    labs(title = "Volume Age at Peak 50th Rank (higher rank later age)"))
+
+(sa_rank50_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+    geom_brain(atlas = dk, 
+               position = position_brain(hemi ~ side),
+               aes(fill = rank_peak50))) +
+    scale_fill_gradient2(low = rank_low_color, mid = rank_mid_color, high = rank_high_color, limits = c(1, 44)) +
+    theme_void()+
+    labs(title = "SA Age at Peak 50th Rank (higher rank later age)")
+
+(th_rank50_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "th")) +
+    geom_brain(atlas = dk, 
+               position = position_brain(hemi ~ side),
+               aes(fill = rank_peak50))) +
+  scale_fill_gradient2(low = rank_low_color, mid = rank_mid_color, high = rank_high_color, limits = c(1, 12)) +
+  theme_void()+
+  labs(title = "CTh Age at Peak 50th Rank (higher rank later age)")
+
+(sa_d1min_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "sa")) +
+    geom_brain(atlas = dk, 
+               position = position_brain(hemi ~ side),
+               aes(fill = cent_deriv_adj_age_years)) +
+    scale_fill_gradient2(low = rank_low_color, mid = rank_mid_color, high = rank_high_color, limits = c(0, 22)) +
+    theme_void()+
+    labs(title = "SA Age at Min Derivative"))
+
+
+
+
+(vpm_vol_mu_intercept_aseg_plot <- ggplot(plot_data_aseg %>% filter(domain == "aseg")) +
+    geom_brain(atlas = aseg,
+               aes(fill = intercept_coef)) +
+    scale_fill_gradient2(low = low_color, mid = mid_color, high = high_color, limits = c(-2.5, 2.5)) +
+    theme_void() +
+    labs(title = "VPM Volume Mu Intercept"))
 
 # plotting curves for inspection
 for (i in 1:length(full_vars)) {

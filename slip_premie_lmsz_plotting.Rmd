@@ -2,20 +2,45 @@
 title: "slip_premie_lmsz_plotting"
 author: "Eren Kafadar"
 date: "2026-01-29"
-output: html_document
-editor_options: 
-  chunk_output_type: console
+output:
+  html_document:
+    df_print: paged
+params:
+  output_folder: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_Th-MPR_25.11/"
+  centiles_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv"
+  raw_data_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/median_Th-MPR_2026-02-04.csv"
+
 ---
-## controls
-```{r, echo = TRUE}
-set.seed(42)
-#set command
+# Define params if they do not exist
+```{r define params, echo = FALSE}
+if (!exists("params")) {
+  params <- list(
+   output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_Th-MPR_25.11/",
+  centiles_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-Th-MPR-distinct-allgrades-25.11/data_clean/median_Th-MPR_2026-02-04.csv",
+  raw_data_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/median_Th-MPR_2026-02-04.csv"
+  )
+}
+print(params)
+``` 
+
+# Controls
+```{r setup, echo = TRUE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+# set command
 save_tables <- TRUE
 plot <- TRUE
 save_figs <- TRUE
+set.seed(42)
+
+output_folder <- params$output_folder
+centiles_data_path <- params$centiles_data_path
+raw_data_path <- params$raw_data_path
 ```
 
-## Load Packages
+# Load Packages
 ```{r, echo = FALSE}
 # Load libraries
 require(dplyr)
@@ -36,46 +61,38 @@ require(ggseg)
 require(ggcorrplot)
 require(cowplot)
 require(egg)
+require(patchwork)
 require(interactions)
 require(growthstandards)
 require(gtsummary)
 require(svglite)
 ```
 
-## Define Paths
+# Define Paths
 ```{r, echo = TRUE}
 # set folder paths
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
 vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 
-# raw data paths
-raw_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/slip_median.csv"
-
-centiles_data_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/data_clean/centiles_distinct_2026-01-29.csv"
-models_path <- "/mnt/isilon/bgdlab_processing/braincharts/SLIP/2025_03/code/gamlss/RDS/"
-
-# output folder
-save_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/lmsz_median_25.11_new/"
-
 ##  output subfolder paths
-csv_save_path <-  paste0(save_path, "results_csv/")
+csv_save_path <-  paste0(output_folder, "results_csv/")
 if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
-plot_save_path <- paste0(save_path, "plots/")
+plot_save_path <- paste0(output_folder, "plots/")
 if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
 ```
 
-## Load custom functions
+# Load custom functions
 ```{r, echo = FALSE}
-panel_save <- function(plot, filename, extension, folder){
+panel_save <- function(plot, filename, extension, folder, plot_width = 8, plot_height = 10){
   save_name <- paste0(folder, filename, ".", extension)
-  ggsave(save_name, plot = plot, dpi = 300)
+  ggsave(save_name, plot = plot, dpi = 300, width = plot_width, height = plot_height)
 }
 
 source(glue("{code_path}R_util_lmsz.R"))
 ```
 
 # Load Phenotype Variable Names
-```{r}
+```{r, echo = FALSE}
 full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
 global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
 vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
@@ -86,13 +103,12 @@ th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
 full_vars <- full_vars[!(full_vars %in% c("aseg_CC_Central", "aseg_CC_Mid_Posterior"))]
 ```
 # Load Clean Data
-```{r}
-df <- read.csv(centiles_data_path) %>% select(-"X") #%>%
-  #rename_with(~paste0(.x, ".cent"), all_of(full_vars))
+```{r, echo = FALSE}
+df <- read.csv(centiles_data_path) %>% select(-"X")
 ```
 
 # Load Raw Data and merge
-```{r}
+```{r, echo = FALSE}
 df_raw <- read.csv(raw_data_path) %>% select(all_of(c(full_vars, "participant_id", "session_id", "sex", "age_days",
                                                       "site", "avg_grade", "age_at_scan"))) %>%
   #mutate(across(all_of(full_vars), ~c(scale(.)), .names = "{.col}.raw_normalised")) %>%
@@ -106,7 +122,7 @@ df <- merge(df, df_raw, by = shared_names, all.x = FALSE, all.y = FALSE)
 # Z-score Centiles, remove Inf Cells
 
 ## zscore centiles (new df)
-```{r}
+```{r, echo = FALSE}
 #zscore centiles and other variables of interest
 df <- df %>%
   mutate(across(all_of(full_vars), qnorm,
@@ -116,11 +132,10 @@ df$sex <- as.factor(df$sex)
 df$preterm <- as.factor(df$preterm)
 zscore_vars_names <- paste0(full_vars, ".zscore")
 raw_vars_names <- paste0(full_vars, ".raw")
-#rawnorm_vars_names <- paste0(full_vars, ".raw_normalised")
 ```
 
 ## find Inf cells, make a table of N per phenotype, then convert to NaN
-```{r}
+```{r, echo = FALSE}
 inf_nan_table <- as.data.frame(t(sapply(df[zscore_vars_names], function(x){
   c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
 })))
@@ -131,19 +146,19 @@ inf_nan_table %>% filter(inf > 0)
 ```
 
 ## set Inf cells to NaN
-```{r}
+```{r, echo = FALSE}
 df <- df %>% mutate(across(all_of(zscore_vars_names), ~ replace(., is.infinite(.), NaN)))
 ```
 
 # Load LMSz dfs and model paths
-```{r}
+```{r, echo = FALSE}
 models_vpm <- read.csv(glue("{csv_save_path}lmsz_models_vpm.csv"))
 df_vpm <- read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_vpm.csv"))
-models_vpm_path <- glue("{save_path}lmsz_models_vpm/")
+models_vpm_path <- glue("{output_folder}lmsz_models_vpm/")
 
 models_lpm <- read.csv(glue("{csv_save_path}lmsz_models_lpm.csv"))
 df_lpm <- read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_lpm.csv"))
-models_lpm_path <- glue("{save_path}lmsz_models_lpm/")
+models_lpm_path <- glue("{output_folder}lmsz_models_lpm/")
 
 #fix columns of type logical to avoid plotting errors
 vpm_col_fix <- models_vpm %>% select(names(models_vpm)[grepl("coef", names(models_vpm))] & is.logical) %>% colnames()
@@ -157,6 +172,7 @@ out_fans_slip <- read.csv(glue("{csv_save_path}lmsz_centfans_vpm_uncorrected.csv
 ```
 
 # Visualize Model Output on Brain Maps
+
 ## Plots specifications
 ```{r, echo = TRUE}
 #limits = c(-3, 3)
@@ -164,6 +180,7 @@ low_color = "#4878CF"
 mid_color = "white"
 high_color = "#D65F5F"
 ```
+
 ## add label column to match to ggseg
 ```{r, echo = FALSE}
 #models vpm
@@ -208,6 +225,7 @@ models_lpm$label[cols_edit] <- gsub("_", "-", models_lpm$label[cols_edit])
 ```
 
 ## Plot mu intercept value of all phenotypes
+
 ### VPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -256,6 +274,7 @@ panel_save(vpm_sa_mu_intercept_dk_plot, "vpm-sa-mu-intercept-dk", "pdf", plot_sa
 panel_save(vpm_th_mu_intercept_dk_plot, "vpm-th-mu-intercept-dk", "pdf", plot_save_path)
 }
 ```
+
 ### LPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -304,7 +323,9 @@ panel_save(lpm_sa_mu_intercept_dk_plot, "lpm-sa-mu-intercept-dk", "pdf", plot_sa
 panel_save(lpm_th_mu_intercept_dk_plot, "lpm-th-mu-intercept-dk", "pdf", plot_save_path)
 }
 ```
+
 ## Plot coefficient of age in mu
+
 ### VPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -353,6 +374,7 @@ panel_save(vpm_sa_mu_age_dk_plot, "vpm-sa-mu-age-dk", "pdf", plot_save_path)
 panel_save(vpm_th_mu_age_dk_plot, "vpm-th-mu-age-dk", "pdf", plot_save_path)
 }
 ```
+
 ### LPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -401,15 +423,14 @@ panel_save(lpm_sa_mu_age_dk_plot, "lpm-sa-mu-age-dk", "pdf", plot_save_path)
 panel_save(lpm_th_mu_age_dk_plot, "lpm-th-mu-age-dk", "pdf", plot_save_path)
 }
 ```
+
 ## Plot coefficient of sex in mu
+
 ### VPM
 ```{r, echo = FALSE}
 # merge with atlas data
 plot_data_dkt <- merge(models_vpm, ggseg::dk, by = "label")
 plot_data_aseg <- merge(models_vpm, ggseg::aseg, by = "label")
-
-# Regions not matched in atlases
-#print(models_vpm_noplot <- models_vpm[!(models_vpm$label %in% plot_data_dkt$label) & !(models_vpm$label %in% plot_data_aseg$label),"label"], n = 100)
 
 # plots
 (vpm_vol_mu_sex_dk_plot <- ggplot(plot_data_dkt %>% filter(domain == "vol")) +
@@ -450,6 +471,7 @@ panel_save(vpm_sa_mu_sex_dk_plot, "vpm-sa-mu-sex-dk", "pdf", plot_save_path)
 panel_save(vpm_th_mu_sex_dk_plot, "vpm-th-mu-sex-dk", "pdf", plot_save_path)
 }
 ```
+
 ### LPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -498,7 +520,9 @@ panel_save(lpm_sa_mu_sex_dk_plot, "lpm-sa-mu-sex-dk", "pdf", plot_save_path)
 panel_save(lpm_th_mu_sex_dk_plot, "lpm-th-mu-sex-dk", "pdf", plot_save_path)
 }
 ```
+
 ## Plot intercept in sigma
+
 ### VPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -547,6 +571,7 @@ panel_save(vpm_sa_sigma_intercept_dk_plot, "vpm-sa-sigma-intercept-dk", "pdf", p
 panel_save(vpm_th_sigma_intercept_dk_plot, "vpm-th-sigma-intercept-dk", "pdf", plot_save_path)
 }
 ```
+
 ### LPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -595,7 +620,9 @@ panel_save(lpm_sa_sigma_intercept_dk_plot, "lpm-sa-sigma-intercept-dk", "pdf", p
 panel_save(lpm_th_sigma_intercept_dk_plot, "lpm-th-sigma-intercept-dk", "pdf", plot_save_path)
 }
 ```
+
 ## Plot coefficient of age in sigma
+
 ### VPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -644,6 +671,7 @@ panel_save(vpm_sa_sigma_age_dk_plot, "vpm-sa-sigma-age-dk", "pdf", plot_save_pat
 panel_save(vpm_th_sigma_age_dk_plot, "vpm-th-sigma-age-dk", "pdf", plot_save_path)
 }
 ```
+
 ### LPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -692,7 +720,9 @@ panel_save(lpm_sa_sigma_age_dk_plot, "lpm-sa-sigma-age-dk", "pdf", plot_save_pat
 panel_save(lpm_th_sigma_age_dk_plot, "lpm-th-sigma-age-dk", "pdf", plot_save_path)
 }
 ```
+
 ## Plot coefficient of sex in sigma
+
 ### VPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -741,6 +771,7 @@ panel_save(vpm_sa_sigma_sex_dk_plot, "vpm-sa-sigma-sex-dk", "pdf", plot_save_pat
 panel_save(vpm_th_sigma_sex_dk_plot, "vpm-th-sigma-sex-dk", "pdf", plot_save_path)
 }
 ```
+
 ### LPM
 ```{r, echo = FALSE}
 # merge with atlas data
@@ -790,214 +821,153 @@ panel_save(lpm_th_sigma_sex_dk_plot, "lpm-th-sigma-sex-dk", "pdf", plot_save_pat
 }
 ```
 
+# Trajectory Plots Prep
 
-# Trajectory Plots 
-
-## Fix scale of out_fans (need to check which scales are really off first)
-```{r}
+## Fix scale of out_fans, scale everything back by 1000
+```{r, echo = FALSE}
 #Scale all phenotypes by 1000
 out_fans_slip <- out_fans_slip %>% 
                           mutate(SLIP_input_fans = SLIP_input_fans*1000,
                                  LMSz_fans = LMSz_fans*1000)
-# CT scale is off and eTIV fans are doubled. Provide manual correction
-# out_fans_slip <- out_fans_slip %>% 
-#                           mutate(SLIP_input_fans = ifelse(grepl("Thick",pheno),
-#                                                           SLIP_input_fans*1000,
-#                                                           SLIP_input_fans),
-#                                  LMSz_fans = ifelse(grepl("Thick",pheno),
-#                                                           LMSz_fans*1000,
-#                                                           LMSz_fans)) #%>% 
-                          # mutate(SLIP_input_fans = ifelse(pheno == "eTIV",
-                          #                                 SLIP_input_fans/2,
-                          #                                 SLIP_input_fans),
-                          #        LMSz_fans = ifelse(pheno == "eTIV",
-                          #                                 LMSz_fans/2,
-                          #                                 LMSz_fans))
 ```
 
-## Plot SLIP and LMSz trajectories
-```{r}
+## Define x axis marks
+```{r, echo = FALSE}
 x_breaks <- log(c(280, 365.25*1+280, 365.25*2+280, 
                   365.25*6+280, 365.25*21+280))
 x_labs <- c("0y","1y","2y","6y","21y")
 ```
 
-```{r, fig.height = 7.5, fig.width = 11}
-#| output: false
-pheno_list_to_plot <- c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
-                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
-                       "global_MeanThickness")
-pheno_vpm_sig <- models_vpm %>% filter(!grepl("0", m_model) & !grepl("0", s_model)) %>% select(feature) %>% pull(feature)
-
-pheno_vpm_age_mu <- models_vpm %>% filter(grepl("age", m_model)) %>% select(feature) %>% pull(feature)
-pheno_vpm_age_sigma <- models_vpm %>% filter(grepl("age", s_model)) %>% select(feature) %>% pull(feature)
-
-pheno_list_to_plot <- pheno_vpm_age_mu
-
-slip_plots <- list()
-lmsz_plots <- list()
-mult <- 1
-out_fans_plot <- out_fans_slip
-for (pheno_of_int in pheno_list_to_plot) {
-  df_plot <- df_vpm
-  df_plot$pheno <- df_plot[[glue("{pheno_of_int}.raw")]]
-  df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
-  # if (grepl("SurfaceArea",pheno_of_int)) {
-  #   ylab_text <- bquote('Surface Area')
-  # } else if (grepl("MeanThickness",pheno_of_int)) {
-  #   ylab_text <- bquote('Thickness')
-  #   df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
-  # } else {
-  #   ylab_text <- bquote('Volume')
-  # }
-  # if(pheno_of_int == "global_SurfaceArea") {
-  #   pheno_label <- "Cortical Surface Area"
-  # } else if (pheno_of_int == "meanCT") {
-  #   pheno_label <- "global_MeanThickness"
-  # } else if (pheno_of_int == "global_eTIV") {
-  #   pheno_label <- "Intracranial Volume"
-  # } 
-  #else if (pheno_of_int == "Cerebellum.all") {
-    #pheno_label <- "Cerebellum"
-  #} 
-  # else if (pheno_of_int == "global_CortexVol") {
-  #   pheno_label <- "Gray Matter Volume"
-  # } else if (pheno_of_int == "global_SubCortGrayVol") {
-  #   pheno_label <- "Subcortical Gray Matter Volume"
-  # } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
-  #   pheno_label <- "White Matter Volume"
-  # } else {
-  #   pheno_label <- pheno_of_int
-  # }
-  pheno_label <- pheno_of_int
-  out_fans_plot <- out_fans_slip %>% 
-                    filter(pheno == pheno_of_int,
-                           !(centile_cat %in% c("cent_0.25", "cent_0.75"))) %>%
-                    mutate(SLIP_input_fans = SLIP_input_fans*mult,
-                           LMSz_fans = LMSz_fans*mult)
-  # CT data is questionable at 0y. Limit to 2 years
-  if (grepl("global_MeanThickness",pheno_of_int)) {
-    df_plot <- df_plot %>% filter(age_days >= 2*365.25+280)
-    out_fans_plot <- out_fans_plot %>% filter(adjusted_age_days_log >= log(2*365.25+280))
-  }
-  slip_plots[[pheno_of_int]] <- ggplot(out_fans_plot) +
-                                    geom_point(data = df_plot, aes(y = pheno,
-                                               x = adjusted_age_days_log, fill=sex), 
-                                               alpha=0.5, shape=21, size = 0.5) +
-                                    geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
-                                                  group = interaction(centile_cat, sex),
-                                                  color = sex,
-                                                  linewidth = line_size,
-                                                  linetype = line_type)) +
-                                    scale_linewidth_identity() +
-                                    scale_linetype_identity() +
-                                    scale_colour_manual(values = c("firebrick","royalblue")) +
-                                    scale_x_continuous(breaks = x_breaks, labels = x_labs) +
-                                    ggtitle(pheno_label) + theme_classic() +
-                                    xlab("") + ylab(ylab_text) +
-                                  theme(plot.title = element_text(size = 12),
-                                        axis.title = element_text(size = 10),
-                                        axis.text = element_text(size = 8))
-
-  lmsz_plots[[pheno_of_int]] <- ggplot(out_fans_plot) +
-                                    geom_point(data = df_plot, aes(y = pheno,
-                                               x = adjusted_age_days_log, fill=sex), 
-                                               alpha=0.5, shape=21, size = 0.5) +
-                                    geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
-                                                  group = interaction(centile_cat, sex),
-                                                  color = sex,
-                                                  linewidth = line_size,
-                                                  linetype = line_type)) +
-                                    scale_linewidth_identity() +
-                                    scale_linetype_identity() +
-                                    scale_colour_manual(values = c("firebrick","royalblue")) +
-                                    scale_x_continuous(breaks = x_breaks, labels = x_labs) +
-                                    theme_classic() +
-                                    xlab("") + ylab(ylab_text) +
-                                  theme(plot.title = element_text(size = 12),
-                                        axis.title = element_text(size = 10),
-                                        axis.text = element_text(size = 8))
+## plotting loop function
+```{r, echo = FALSE}
+separate_plot_loop <- function(pheno_list, df_plot, out_fans_df, x_breaks, x_labs, mult){
+  slip_plots <- list()
+  lmsz_plots <- list()
+    for (pheno_of_int in pheno_list) {
+    df_plot$pheno <- df_plot[[glue("{pheno_of_int}.raw")]]
+    df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
+    if(grepl("global", pheno_of_int)){
+      ylab_text = ""
+      title_text = sub("global_", "", pheno_of_int)
+    } else if(grepl("GrayVol", pheno_of_int))  {
+      ylab_text = "Volume"
+      title_text = sub("aparc_GrayVol_", "", pheno_of_int)
+    } else if(grepl("SurfArea", pheno_of_int))  {
+      ylab_text = "Surface Area"
+      title_text = sub("aparc_SurfArea_", "", pheno_of_int)
+    } else if(grepl("ThickAvg", pheno_of_int))  {
+      ylab_text = "Thickness"
+      title_text = sub("aparc_ThickAvg_", "", pheno_of_int)
+    } else if(grepl("aseg", pheno_of_int))  {
+      ylab_text = "Aseg/Subcortical"
+      title_text = sub("aseg_", "", pheno_of_int)
+    } else{
+      ylab_text = pheno_of_int
+      title_text = pheno_of_int
+    }
+    out_fans_plot <- out_fans_df %>% 
+                      filter(pheno == pheno_of_int,
+                             !(centile_cat %in% c("cent_0.25", "cent_0.75"))) %>%
+                      mutate(SLIP_input_fans = SLIP_input_fans*mult,
+                             LMSz_fans = LMSz_fans*mult)
+    # CT data is questionable at 0y. Limit to 2 years
+    if (grepl("Thick",pheno_of_int)) {
+      df_plot <- df_plot %>% filter(age_days >= 2*365.25+280)
+      out_fans_plot <- out_fans_plot %>% filter(adjusted_age_days_log >= log(2*365.25+280))
+    }
+    slip_plots[[pheno_of_int]] <- ggplot(out_fans_plot) +
+                                      geom_point(data = df_plot, aes(y = pheno,
+                                                 x = adjusted_age_days_log, fill=sex), 
+                                                 alpha=0.5, shape=21, size = 0.5) +
+                                      geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
+                                                    group = interaction(centile_cat, sex),
+                                                    color = sex,
+                                                    linewidth = line_size,
+                                                    linetype = line_type)) +
+                                      scale_linewidth_identity() +
+                                      scale_linetype_identity() +
+                                      scale_colour_manual(values = c("firebrick","royalblue")) +
+                                      scale_x_continuous(breaks = x_breaks, labels = x_labs) +
+                                      ggtitle(title_text) + theme_classic() +
+                                      xlab("") + ylab(ylab_text) +
+                                    theme(plot.title = element_text(size = 12),
+                                          axis.title = element_text(size = 10),
+                                          axis.text = element_text(size = 8))
   
-  # Equalize Axes
-  p_y_min <- min(layer_scales(slip_plots[[pheno_of_int]])$y$range$range[1],
-                 layer_scales(lmsz_plots[[pheno_of_int]])$y$range$range[1])
-  p_y_max <- max(layer_scales(slip_plots[[pheno_of_int]])$y$range$range[2],
-                 layer_scales(lmsz_plots[[pheno_of_int]])$y$range$range[2])
-
-  slip_plots[[pheno_of_int]] <- slip_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
-  lmsz_plots[[pheno_of_int]] <- lmsz_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
+    lmsz_plots[[pheno_of_int]] <- ggplot(out_fans_plot) +
+                                      geom_point(data = df_plot, aes(y = pheno,
+                                                 x = adjusted_age_days_log, fill=sex), 
+                                                 alpha=0.5, shape=21, size = 0.5) +
+                                      geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
+                                                    group = interaction(centile_cat, sex),
+                                                    color = sex,
+                                                    linewidth = line_size,
+                                                    linetype = line_type)) +
+                                      scale_linewidth_identity() +
+                                      scale_linetype_identity() +
+                                      scale_colour_manual(values = c("firebrick","royalblue")) +
+                                      scale_x_continuous(breaks = x_breaks, labels = x_labs) +
+                                      ggtitle(title_text) + theme_classic() +
+                                      xlab("") + ylab(ylab_text) +
+                                    theme(plot.title = element_text(size = 12),
+                                          axis.title = element_text(size = 10),
+                                          axis.text = element_text(size = 8))
+    
+    # Equalize Axes
+    p_y_min <- min(layer_scales(slip_plots[[pheno_of_int]])$y$range$range[1],
+                   layer_scales(lmsz_plots[[pheno_of_int]])$y$range$range[1])
+    p_y_max <- max(layer_scales(slip_plots[[pheno_of_int]])$y$range$range[2],
+                   layer_scales(lmsz_plots[[pheno_of_int]])$y$range$range[2])
+  
+    slip_plots[[pheno_of_int]] <- slip_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
+    lmsz_plots[[pheno_of_int]] <- lmsz_plots[[pheno_of_int]] + ylim(p_y_min,p_y_max)
+  }
+  all_plots_list <- list()
+  all_plots_list$slip_plots <- slip_plots
+  all_plots_list$lmsz_plots <- lmsz_plots
+  return(all_plots_list)
 }
 
-p1_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p1 <- ggarrange(plots =  slip_plots, nrow = 5, legend = "none", common.legend = T)
-
-p2_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
-                                  x = 0.5, hjust = 0.5, fontface = "bold")
-p2 <- ggarrange(plots =  lmsz_plots, nrow = 5, legend = "bottom", common.legend = T)
-# p_fits <- ggarrange(p1_title, p1, 
-#                 p2_title, p2, 
-#                 nrow = 2, ncol = 2, widths = c(0.1,1.2),
-#                 legend = "bottom", common.legend = T)
-
-```
-
-```{r, fig.height = 7.5, fig.width = 11}
-p_fits
-```
-
-## Plot Overlaid Trajectories
-
-```{r}
-#| output: false
-overlap_plots_male <- list()
-overlap_plots_female <- list()
-overlap_plots_deriv <- list()
-out_fans_plot <- out_fans_slip
-for (pheno_of_int in pheno_list_to_plot) {
-  df_plot <- df_vpm
+overlaid_plot_loop <- function(pheno_list, df_plot, out_fans_df, x_breaks, x_labs, mult){
+  overlap_plots_male <- list()
+  overlap_plots_female <- list()
+  overlap_plots_avg <- list()
+  for (pheno_of_int in pheno_list) {
   df_plot$pheno <- df_plot[[glue("{pheno_of_int}.raw")]]
   df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
-  # if (grepl("SurfaceArea",pheno_of_int)) {
-  #   ylab_text <- bquote('Surface Area')
-  # } else if (grepl("MeanThickness",pheno_of_int)) {
-  #   ylab_text <- bquote('Thickness')
-  #   df_plot <- df_plot %>% filter(age_days >= 2*365.25+280) ### BRING FURTHER UP????
-  # } else {
-  #   ylab_text <- bquote('Volume')
-  # }
-  # if(pheno_of_int == "global_SurfaceArea") {
-  #   pheno_label <- "Cortical Surface Area"
-  # } else if (pheno_of_int == "meanCT") {
-  #   pheno_label <- "global_MeanThickness"
-  # } else if (pheno_of_int == "global_eTIV") {
-  #   pheno_label <- "Intracranial Volume"
-  # } 
-  # #else if (pheno_of_int == "Cerebellum.all") {
-  #   #pheno_label <- "Cerebellum"
-  # #} 
-  # else if (pheno_of_int == "global_CortexVol") {
-  #   pheno_label <- "Gray Matter Volume"
-  # } else if (pheno_of_int == "global_SubCortGrayVol") {
-  #   pheno_label <- "Subcortical Gray Matter Volume"
-  # } else if (pheno_of_int == "global_CerebralWhiteMatterVol") {
-  #   pheno_label <- "White Matter Volume"
-  # } else {
-  #   pheno_label <- pheno_of_int
-  # }
+    if(grepl("global", pheno_of_int)){
+    ylab_text = ""
+    title_text = sub("global_", "", pheno_of_int)
+  } else if(grepl("GrayVol", pheno_of_int))  {
+    ylab_text = "Volume"
+    title_text = sub("aparc_GrayVol_", "", pheno_of_int)
+  } else if(grepl("SurfArea", pheno_of_int))  {
+    ylab_text = "Surface Area"
+    title_text = sub("aparc_SurfArea_", "", pheno_of_int)
+  } else if(grepl("ThickAvg", pheno_of_int))  {
+    ylab_text = "Thickness"
+    title_text = sub("aparc_ThickAvg_", "", pheno_of_int)
+  } else if(grepl("aseg", pheno_of_int))  {
+    ylab_text = "Aseg/Subcortical"
+    title_text = sub("aseg_", "", pheno_of_int)
+  } else{
+    ylab_text = pheno_of_int
+    title_text = pheno_of_int
+  }
   
-  pheno_label <- pheno_of_int
-  
-  out_fans_plot <- out_fans_slip %>% 
+  out_fans_plot <- out_fans_df %>% 
                     filter(pheno == pheno_of_int,
                            !(centile_cat %in% c("cent_0.25", "cent_0.75"))) %>%
                     mutate(SLIP_input_fans = SLIP_input_fans*mult,
                            LMSz_fans = LMSz_fans*mult)
-  if (grepl("CT",pheno_of_int)) {
+  if (grepl("Thick",pheno_of_int)) {
     df_plot <- df_plot %>% filter(age_days >= 2*365.25+280)
     out_fans_plot <- out_fans_plot %>% filter(adjusted_age_days_log >= log(2*365.25+280))
   }
   overlap_plots_male[[pheno_of_int]] <- ggplot(out_fans_plot %>% filter(sex == "Male")) +
+                                    geom_point(data = df_plot %>% filter(sex == "Male"), aes(y = pheno,
+                                                 x = adjusted_age_days_log), 
+                                                 alpha=0.5, shape=21, size = 0.5, color = "royalblue") +
                                     geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
                                                   group = centile_cat,
                                                   color = "SLIP",
@@ -1011,14 +981,17 @@ for (pheno_of_int in pheno_list_to_plot) {
                                     scale_linewidth_identity() +
                                     scale_linetype_identity() +
                                     scale_x_continuous(breaks = x_breaks, labels = x_labs) +
-                                    ggtitle(pheno_of_int) + theme_classic() +
+                                    ggtitle(title_text) + theme_classic() +
                                     xlab("") + ylab(ylab_text) +
-                                    scale_colour_manual(values = c("black", "grey")) +
+                                    scale_colour_manual(values = c("#566fa3", "grey")) +
                                     theme(plot.title = element_text(size = 12),
                                           axis.title = element_text(size = 10),
                                           axis.text = element_text(size = 8))
   
   overlap_plots_female[[pheno_of_int]] <- ggplot(out_fans_plot %>% filter(sex == "Female")) +
+                                      geom_point(data = df_plot %>% filter(sex == "Female"), aes(y = pheno,
+                                                 x = adjusted_age_days_log), 
+                                                 alpha=0.5, shape=21, size = 0.5, color = "firebrick") +
                                       geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
                                                     group = centile_cat,
                                                     color = "SLIP",
@@ -1034,7 +1007,7 @@ for (pheno_of_int in pheno_list_to_plot) {
                                       scale_x_continuous(breaks = x_breaks, labels = x_labs) +
                                       ggtitle(pheno_of_int) + theme_classic() +
                                       xlab("") + ylab(ylab_text) +
-                                      scale_colour_manual(values = c("black", "grey")) +
+                                      scale_colour_manual(values = c("#E396B7", "grey")) +
                                       theme(plot.title = element_text(size = 12),
                                             axis.title = element_text(size = 10),
                                             axis.text = element_text(size = 8))
@@ -1047,11 +1020,14 @@ for (pheno_of_int in pheno_list_to_plot) {
                                    centile_cat, line_size, line_type) %>%
                           summarize(across(contains("fans"), ~mean(.x, na.rm = T)))
   
-  overlap_plots_deriv[[pheno_of_int]] <- ggplot(out_fans_plot_avg) +
+  overlap_plots_avg[[pheno_of_int]] <- ggplot(out_fans_plot_avg) +
+                                    geom_point(data = df_plot, aes(y = pheno,
+                                                 x = adjusted_age_days_log), 
+                                                 alpha=0.5, shape=21, size = 0.5, color = "#5FA052") +
                                     geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
                                                   group = centile_cat,
                                                   color = "SLIP",
-                                                  linewidth = line_size*2,
+                                                  linewidth = line_size,
                                                   linetype = line_type)) +
                                     geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
                                                   group = centile_cat,
@@ -1061,299 +1037,1126 @@ for (pheno_of_int in pheno_list_to_plot) {
                                     scale_linewidth_identity() +
                                     scale_linetype_identity() +
                                     scale_x_continuous(breaks = x_breaks, labels = x_labs) +
-                                    ggtitle(pheno_label) + theme_classic() +
+                                    ggtitle(title_text) + theme_classic() +
                                     xlab("") + ylab(ylab_text) + labs(colour = "Model") +
-                                    scale_colour_manual(values = c("black", "grey")) +
+                                    scale_colour_manual(values = c("#5FA052", "grey")) +
                                     theme(plot.title = element_text(size = 12),
                                           axis.title = element_text(size = 10),
                                           axis.text = element_text(size = 8))
   
+  }
+  all_plots_list <- list()
+  all_plots_list$overlap_male <- overlap_plots_male
+  all_plots_list$overlap_female<- overlap_plots_female
+  all_plots_list$overlap_avg <- overlap_plots_avg
+  return(all_plots_list)
 }
-p1_title <- ggdraw() + draw_label("Males", 
+```
+
+# Trajectory Plots VPM
+
+## Plot global trajectories
+```{r, echo = FALSE, fig.show='hide'}
+global_pheno_to_plot <- c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
+                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
+                       "global_MeanThickness")
+
+#Separate
+global_plots <- list()
+global_plots <- separate_plot_loop(global_pheno_to_plot, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
                                   x = 0.5, hjust = 0.5, fontface = "bold")
-p1 <- ggarrange(plots =  overlap_plots_male[!grepl("SurfaceArea\\.",overlap_plots_male)], 
+p_slip <- ggarrange(plots =  global_plots$slip_plots, nrow = 2, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  global_plots$lmsz_plots, nrow = 2, legend = "bottom", common.legend = T)
+
+p_fits_global_vpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Global, VPM")
+
+#Overlaid
+global_plots_overlaid <- list()
+global_plots_overlaid <- overlaid_plot_loop(global_pheno_to_plot, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  global_plots_overlaid$overlap_male, 
+                nrow = 2, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  global_plots_overlaid$overlap_female, 
+                nrow = 2, legend = "none", common.legend = T)
+
+p_fits_global_vpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Global, VPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  global_plots_overlaid$overlap_avg, 
+                nrow = 2, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("VPM Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_global_vpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Global, VPM")
+```
+
+## Plot age in mu VPM trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_vpm_age_mu <- models_vpm %>% filter(grepl("age", m_model)) %>% select(feature) %>% pull(feature)
+if(length(pheno_vpm_age_mu != 0)) {
+#Separate plots
+age_mu_vpm_plots <- list()
+age_mu_vpm_plots <- separate_plot_loop(pheno_vpm_age_mu, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  age_mu_vpm_plots$slip_plots, nrow = 3, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  age_mu_vpm_plots$lmsz_plots, nrow = 3, legend = "bottom", common.legend = T)
+
+p_fits_age_mu_vpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, VPM")
+
+
+#Overlaid
+age_mu_vpm_plots_overlaid <- list()
+age_mu_vpm_plots_overlaid <- overlaid_plot_loop(pheno_vpm_age_mu, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  age_mu_vpm_plots_overlaid$overlap_male, 
+                nrow = 3, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  age_mu_vpm_plots_overlaid$overlap_female, 
+                nrow = 3, legend = "none", common.legend = T)
+
+p_fits_age_mu_vpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, VPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  age_mu_vpm_plots_overlaid$overlap_avg, 
+                nrow = 3, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_age_mu_vpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, VPM")
+
+} else {
+  print(glue("No phenotypes have age in mu for VPM-LMSz models: {length(pheno_vpm_age_mu)}."))
+}
+```
+
+## Plot age spline in mu VPM trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_vpm_agespline_mu <- models_vpm %>% filter(grepl("ns", m_model)) %>% select(feature) %>% pull(feature)
+if(length(pheno_vpm_agespline_mu != 0)) {
+#Separate plots
+agespline_mu_vpm_plots <- list()
+agespline_mu_vpm_plots <- separate_plot_loop(pheno_vpm_agespline_mu, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  agespline_mu_vpm_plots$slip_plots, nrow = 3, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  agespline_mu_vpm_plots$lmsz_plots, nrow = 3, legend = "bottom", common.legend = T)
+
+p_fits_agespline_mu_vpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age Spline in Mu, VPM")
+
+
+#Overlaid
+agespline_mu_vpm_plots_overlaid <- list()
+agespline_mu_vpm_plots_overlaid <- overlaid_plot_loop(pheno_vpm_agespline_mu, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  agespline_mu_vpm_plots_overlaid$overlap_male, 
+                nrow = 3, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  agespline_mu_vpm_plots_overlaid$overlap_female, 
+                nrow = 3, legend = "none", common.legend = T)
+
+p_fits_agespline_mu_vpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, VPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  agespline_mu_vpm_plots_overlaid$overlap_avg, 
+                nrow = 3, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_agespline_mu_vpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, VPM")
+
+} else {
+  print(glue("No phenotypes have age spline in mu for VPM-LMSz models: {length(pheno_vpm_agespline_mu)}."))
+}
+```
+
+## Plot sex in mu VPM trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_vpm_sex_mu <- models_vpm %>% filter(grepl("sex", m_model)) %>% select(feature) %>% pull(feature)
+if(length(pheno_vpm_sex_mu != 0)) {
+#Separate plots
+sex_mu_vpm_plots <- list()
+sex_mu_vpm_plots <- separate_plot_loop(pheno_vpm_sex_mu, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  sex_mu_vpm_plots$slip_plots, nrow = 3, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  sex_mu_vpm_plots$lmsz_plots, nrow = 3, legend = "bottom", common.legend = T)
+
+p_fits_sex_mu_vpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Mu, VPM")
+
+
+#Overlaid
+sex_mu_vpm_plots_overlaid <- list()
+sex_mu_vpm_plots_overlaid <- overlaid_plot_loop(pheno_vpm_sex_mu, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  sex_mu_vpm_plots_overlaid$overlap_male, 
+                nrow = 3, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  sex_mu_vpm_plots_overlaid$overlap_female, 
+                nrow = 3, legend = "none", common.legend = T)
+
+p_fits_sex_mu_vpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Mu, VPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  sex_mu_vpm_plots_overlaid$overlap_avg, 
+                nrow = 3, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_sex_mu_vpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Mu, VPM")
+
+} else {
+  print(glue("No phenotypes have sex in mu for VPM-LMSz models: {length(pheno_vpm_sex_mu)}."))
+}
+```
+
+## Plot age in sigma VPM trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_vpm_age_sigma <- models_vpm %>% filter(grepl("age", s_model)) %>% select(feature) %>% pull(feature)
+
+if(length(pheno_vpm_age_sigma != 0)) {
+  
+#Separate plots
+age_sigma_vpm_plots <- list()
+age_sigma_vpm_plots <- separate_plot_loop(pheno_vpm_age_sigma, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  age_sigma_vpm_plots$slip_plots, nrow = 5, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  age_sigma_vpm_plots$lmsz_plots, nrow = 5, legend = "bottom", common.legend = T)
+
+p_fits_age_sigma_vpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Sigma, VPM")
+
+
+#Overlaid
+age_sigma_vpm_plots_overlaid <- list()
+age_sigma_vpm_plots_overlaid <- overlaid_plot_loop(pheno_vpm_age_sigma, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  age_sigma_vpm_plots_overlaid$overlap_male, 
                 nrow = 5, legend = "none", common.legend = T)
-p2_title <- ggdraw() + draw_label("Females", 
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
                                   x = 0.5, hjust = 0.5, fontface = "bold")
-p2 <- ggarrange(plots =  overlap_plots_female[!grepl("SurfaceArea\\.",overlap_plots_male)], 
+p_female <- ggarrange(plots =  age_sigma_vpm_plots_overlaid$overlap_female, 
                 nrow = 5, legend = "none", common.legend = T)
-p_traj_by_sex <- ggarrange(p1_title, p1, 
-                p2_title, p2, 
-                nrow = 4, heights = c(0.1,1,0.1,1.2),
-                legend = "bottom", common.legend = T)
+
+p_fits_age_sigma_vpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Sigma, VPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  age_sigma_vpm_plots_overlaid$overlap_avg, 
+                nrow = 5, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
 
 
+p_fits_age_sigma_vpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Sigma, VPM")
 
-p_traj_collapsed <- ggarrange(plots =  overlap_plots_deriv[!grepl("SurfaceArea\\.",overlap_plots_deriv)], 
-                nrow = 1, legend = "bottom", common.legend = T)
+} else {
+  print(glue("No phenotypes have age in sigma for VPM-LMSz models: {length(pheno_vpm_age_sigma)}."))
+}
+```
 
-p_traj_collapsed_title <- ggdraw() + draw_label("Overlaid Traj.", angle = 90,
+
+## Plot sex in sigma VPM trajectories
+```{r sex in sigma VPM, echo = FALSE, fig.show='hide'}
+pheno_vpm_sex_sigma <- models_vpm %>% filter(grepl("sex", s_model)) %>% select(feature) %>% pull(feature)
+
+if(length(pheno_vpm_sex_sigma != 0)) {
+  
+#Separate plots
+sex_sigma_vpm_plots <- list()
+sex_sigma_vpm_plots <- separate_plot_loop(pheno_vpm_sex_sigma, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
                                   x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  sex_sigma_vpm_plots$slip_plots, nrow = 4, legend = "none", common.legend = T)
 
-p_traj_collapsed <- ggarrange(p_traj_collapsed_title, p_traj_collapsed, 
-                nrow = 1, ncol = 2, widths = c(0.1,1.2),
-                legend = "bottom", common.legend = T)
+p_lmsz_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  sex_sigma_vpm_plots$lmsz_plots, nrow = 4, legend = "bottom", common.legend = T)
+
+p_fits_sex_sigma_vpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Sigma, VPM")
+
+
+#Overlaid
+sex_sigma_vpm_plots_overlaid <- list()
+sex_sigma_vpm_plots_overlaid <- overlaid_plot_loop(pheno_vpm_sex_sigma, 
+                                   df_vpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  sex_sigma_vpm_plots_overlaid$overlap_male, 
+                nrow = 4, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  sex_sigma_vpm_plots_overlaid$overlap_female, 
+                nrow = 4, legend = "none", common.legend = T)
+
+p_fits_sex_sigma_vpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Sigma, VPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  sex_sigma_vpm_plots_overlaid$overlap_avg, 
+                nrow = 4, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_sex_sigma_vpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Sigma, VPM")
+
+} else {
+  print(glue("No phenotypes have sex in sigma for VPM-LMSz models: {length(pheno_vpm_sex_sigma)}."))
+}
 ```
 
-```{r, fig.height = 7.5, fig.width = 11}
-p_traj_by_sex
+## Plot age:sex interaction in mu VPM trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_vpm_agesex_mu <- models_vpm %>% filter(grepl("\\*", m_model)) %>% select(feature) %>% pull(feature)
+
+if(length(pheno_vpm_agesex_mu != 0)) {
+  #Separate plots
+  agesex_mu_vpm_plots <- list()
+  agesex_mu_vpm_plots <- separate_plot_loop(pheno_vpm_agesex_mu, 
+                                     df_vpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_slip <- ggarrange(plots =  agesex_mu_vpm_plots$slip_plots, nrow = 1, legend = "none", common.legend = T)
+  
+  p_lmsz_title <- ggdraw() + draw_label("VPM LMSz", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_lmsz <- ggarrange(plots =  agesex_mu_vpm_plots$lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
+  
+  p_fits_agesex_mu_vpm_separate <- (p_slip_title + p_slip +
+               p_lmsz_title + p_lmsz) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Age*Sex in Mu, VPM")
+  
+  
+  #Overlaid
+  agesex_mu_vpm_plots_overlaid <- list()
+  agesex_mu_vpm_plots_overlaid <- overlaid_plot_loop(pheno_vpm_agesex_mu, 
+                                     df_vpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  #overlaid plots by sex
+  p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_male <- ggarrange(plots =  agesex_mu_vpm_plots_overlaid$overlap_male, 
+                  nrow = 1, legend = "none", common.legend = T)
+  p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_female <- ggarrange(plots =  agesex_mu_vpm_plots_overlaid$overlap_female, 
+                  nrow = 1, legend = "none", common.legend = T)
+  
+  p_fits_agesex_mu_vpm_overlaid_sex <- (p_male_title + p_male +
+               p_female_title + p_female) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Age*Sex in Mu, VPM")
+  
+  #overlaid plots averaged over sex
+  p_traj_sexavg <- ggarrange(plots =  agesex_mu_vpm_plots_overlaid$overlap_avg, 
+                  nrow = 1, legend = "bottom", common.legend = T)
+  
+  p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+  
+  
+  p_fits_agesex_mu_vpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+            plot_layout(ncol = 2, 
+                        nrow = 1, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Age*Sex in Mu, VPM")
+} else {
+  print(glue("No phenotypes have age*sex in mu for VPM-LMSz models: {length(pheno_vpm_agesex_mu)}."))
+}
 ```
 
-```{r, fig.height = 7.5, fig.width = 11}
-p_traj_collapsed
+# Trajectory Plots LPM
+
+## Plot global trajectories
+```{r, echo = FALSE, fig.show='hide'}
+global_pheno_to_plot <- c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
+                       "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
+                       "global_MeanThickness")
+
+#Separate
+global_plots <- list()
+global_plots <- separate_plot_loop(global_pheno_to_plot, 
+                                   df_lpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  global_plots$slip_plots, nrow = 2, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("LPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  global_plots$lmsz_plots, nrow = 2, legend = "bottom", common.legend = T)
+
+p_fits_global_lpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Global, LPM")
+
+#Overlaid
+global_plots_overlaid <- list()
+global_plots_overlaid <- overlaid_plot_loop(global_pheno_to_plot, 
+                                   df_lpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  global_plots_overlaid$overlap_male, 
+                nrow = 2, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  global_plots_overlaid$overlap_female, 
+                nrow = 2, legend = "none", common.legend = T)
+
+p_fits_global_lpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Global, LPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  global_plots_overlaid$overlap_avg, 
+                nrow = 2, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_global_lpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Global, LPM")
 ```
-## Final Formatted Plot
 
-```{r, fig.height= 12, fig.width=8}
-# 4 x 6 plot
-  # 4 rows (IDPs)
-  # 3 cols (orig, adjusted, overlaid)
-  # repeat
-# bottom row: exploratory{r, fig.height = 12, fig.width = 12}
+## Plot age in mu lpm trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_lpm_age_mu <- models_lpm %>% filter(grepl("age", m_model)) %>% select(feature) %>% pull(feature)
+if(length(pheno_lpm_age_mu != 0)) {
 
-leg1 <- get_legend(slip_plots$eTIV + theme(legend.title=element_blank())) %>% as_ggplot()
-leg2 <- get_legend(overlap_plots_deriv$eTIV + theme(legend.title=element_blank())) %>% as_ggplot()
+  #Separate plots
+  age_mu_lpm_plots <- list()
+  age_mu_lpm_plots <- separate_plot_loop(pheno_lpm_age_mu, 
+                                     df_lpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_slip <- ggarrange(plots =  age_mu_lpm_plots$slip_plots, nrow = 1, legend = "none", common.legend = T)
+  
+  p_lmsz_title <- ggdraw() + draw_label("LPM LMSz", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_lmsz <- ggarrange(plots =  age_mu_lpm_plots$lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
+  
+  p_fits_age_mu_lpm_separate <- (p_slip_title + p_slip +
+               p_lmsz_title + p_lmsz) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, LPM")
+  
+  
+  #Overlaid
+  age_mu_lpm_plots_overlaid <- list()
+  age_mu_lpm_plots_overlaid <- overlaid_plot_loop(pheno_lpm_age_mu, 
+                                     df_lpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  #overlaid plots by sex
+  p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_male <- ggarrange(plots =  age_mu_lpm_plots_overlaid$overlap_male, 
+                  nrow = 1, legend = "none", common.legend = T)
+  p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_female <- ggarrange(plots =  age_mu_lpm_plots_overlaid$overlap_female, 
+                  nrow = 1, legend = "none", common.legend = T)
+  
+  p_fits_age_mu_lpm_overlaid_sex <- (p_male_title + p_male +
+               p_female_title + p_female) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, LPM")
+  
+  #overlaid plots averaged over sex
+  p_traj_sexavg <- ggarrange(plots =  age_mu_lpm_plots_overlaid$overlap_avg, 
+                  nrow = 3, legend = "bottom", common.legend = T)
+  
+  p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+  
+  
+  p_fits_age_mu_lpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+            plot_layout(ncol = 2, 
+                        nrow = 1, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, LPM")
+} else {
+  print(glue("No phenotypes have age in mu for LPM-LMSz models: {length(pheno_lpm_age_mu)}."))
+}
+```
 
-plots_final <- list()
+## Plot age spline in mu lpm trajectories
+```{r age spline lpm, echo = FALSE, fig.show='hide'}
+pheno_lpm_agespline_mu <- models_lpm %>% filter(grepl("ns", m_model)) %>% select(feature) %>% pull(feature)
+if(length(pheno_lpm_agespline_mu != 0)) {
+#Separate plots
+agespline_mu_lpm_plots <- list()
+agespline_mu_lpm_plots <- separate_plot_loop(pheno_lpm_agespline_mu, 
+                                   df_lpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
 
-for (pheno_of_int in c("eTIV","GMV","sGMV","WMV",
-                       "Ventricles","Cerebellum.all",
-                       "totalSA","meanCT")) {
-  if (pheno_of_int == "eTIV") {
-    pheno_label <- "Intracranial Volume"
-  } else if (pheno_of_int == "Cerebellum.all") {
-    pheno_label <- "Cerebellum"
-  } else if (pheno_of_int == "totalSA") {
-    pheno_label <- "Cortical Surface Area"
-  } else if (pheno_of_int == "meanCT") {
-    pheno_label <- "Mean Cortical Thickness"
-  } else if (pheno_of_int == "GMV") {
-    pheno_label <- "Gray Matter Volume"
-  } else if (pheno_of_int == "sGMV") {
-    pheno_label <- "Subcortical Gray Matter Volume"
-  } else if (pheno_of_int == "WMV") {
-    pheno_label <- "White Matter Volume"
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  agespline_mu_lpm_plots$slip_plots, nrow = 3, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("LPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  agespline_mu_lpm_plots$lmsz_plots, nrow = 3, legend = "bottom", common.legend = T)
+
+p_fits_agespline_mu_lpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age Spline in Mu, lpm")
+
+
+#Overlaid
+agespline_mu_lpm_plots_overlaid <- list()
+agespline_mu_lpm_plots_overlaid <- overlaid_plot_loop(pheno_lpm_agespline_mu, 
+                                   df_lpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  agespline_mu_lpm_plots_overlaid$overlap_male, 
+                nrow = 3, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  agespline_mu_lpm_plots_overlaid$overlap_female, 
+                nrow = 3, legend = "none", common.legend = T)
+
+p_fits_agespline_mu_lpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, LPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  agespline_mu_lpm_plots_overlaid$overlap_avg, 
+                nrow = 3, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_agespline_mu_lpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Mu, LPM")
+
+} else {
+  print(glue("No phenotypes have age spline in mu for LPM-LMSz models: {length(pheno_lpm_agespline_mu)}."))
+}
+```
+
+## Plot sex in mu lpm trajectories
+```{r sex in mu lpm, echo = FALSE, fig.show='hide'}
+pheno_lpm_sex_mu <- models_lpm %>% filter(grepl("sex", m_model)) %>% select(feature) %>% pull(feature)
+print(length(pheno_lpm_sex_mu))
+  if(length(pheno_lpm_sex_mu != 0)) {
+  
+  #Separate plots
+  sex_mu_lpm_plots <- list()
+  sex_mu_lpm_plots <- separate_plot_loop(pheno_lpm_sex_mu, 
+                                     df_lpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_slip <- ggarrange(plots =  sex_mu_lpm_plots$slip_plots, nrow = 1, legend = "none", common.legend = T)
+  
+  p_lmsz_title <- ggdraw() + draw_label("LPM LMSz", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_lmsz <- ggarrange(plots =  sex_mu_lpm_plots$lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
+  
+  p_fits_sex_mu_lpm_separate <- (p_slip_title + p_slip +
+               p_lmsz_title + p_lmsz) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Mu, LPM")
+  
+  
+  #Overlaid
+  sex_mu_lpm_plots_overlaid <- list()
+  sex_mu_lpm_plots_overlaid <- overlaid_plot_loop(pheno_lpm_sex_mu, 
+                                     df_lpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  #overlaid plots by sex
+  p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_male <- ggarrange(plots =  sex_mu_lpm_plots_overlaid$overlap_male, 
+                  nrow = 3, legend = "none", common.legend = T)
+  p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_female <- ggarrange(plots =  sex_mu_lpm_plots_overlaid$overlap_female, 
+                  nrow = 3, legend = "none", common.legend = T)
+  
+  p_fits_sex_mu_lpm_overlaid_sex <- (p_male_title + p_male +
+               p_female_title + p_female) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Mu, LPM")
+  
+  #overlaid plots averaged over sex
+  p_traj_sexavg <- ggarrange(plots =  sex_mu_lpm_plots_overlaid$overlap_avg, 
+                  nrow = 3, legend = "bottom", common.legend = T)
+  
+  p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+  
+  
+  p_fits_sex_mu_lpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+            plot_layout(ncol = 2, 
+                        nrow = 1, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Mu, LPM")
+
   } else {
-    pheno_label <- pheno_of_int
+  print(glue("No phenotypes have sex in mu for LPM-LMSz models: {length(pheno_lpm_sex_mu)}."))
+}
+```
+
+## Plot age in sigma lpm trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_lpm_age_sigma <- models_lpm %>% filter(grepl("age", s_model)) %>% select(feature) %>% pull(feature)
+
+if(length(pheno_lpm_age_sigma != 0)) {
+
+#Separate plots
+age_sigma_lpm_plots <- list()
+age_sigma_lpm_plots <- separate_plot_loop(pheno_lpm_age_sigma, 
+                                   df_lpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_slip <- ggarrange(plots =  age_sigma_lpm_plots$slip_plots, nrow = 3, legend = "none", common.legend = T)
+
+p_lmsz_title <- ggdraw() + draw_label("LPM LMSz", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_lmsz <- ggarrange(plots =  age_sigma_lpm_plots$lmsz_plots, nrow = 3, legend = "bottom", common.legend = T)
+
+p_fits_age_sigma_lpm_separate <- (p_slip_title + p_slip +
+             p_lmsz_title + p_lmsz) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Sigma, LPM")
+
+
+#Overlaid
+age_sigma_lpm_plots_overlaid <- list()
+age_sigma_lpm_plots_overlaid <- overlaid_plot_loop(pheno_lpm_age_sigma, 
+                                   df_lpm, 
+                                   out_fans_slip, 
+                                   x_breaks, 
+                                   x_labs, 
+                                   mult = 1)
+
+#overlaid plots by sex
+p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_male <- ggarrange(plots =  age_sigma_lpm_plots_overlaid$overlap_male, 
+                nrow = 3, legend = "none", common.legend = T)
+p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                  x = 0.5, hjust = 0.5, fontface = "bold")
+p_female <- ggarrange(plots =  age_sigma_lpm_plots_overlaid$overlap_female, 
+                nrow = 3, legend = "none", common.legend = T)
+
+p_fits_age_sigma_lpm_overlaid_sex <- (p_male_title + p_male +
+             p_female_title + p_female) + 
+          plot_layout(ncol = 2, 
+                      nrow = 2, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Sigma, LPM")
+
+#overlaid plots averaged over sex
+p_traj_sexavg <- ggarrange(plots =  age_sigma_lpm_plots_overlaid$overlap_avg, 
+                nrow = 3, legend = "bottom", common.legend = T)
+
+p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+
+
+p_fits_age_sigma_lpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+          plot_layout(ncol = 2, 
+                      nrow = 1, 
+                      widths = c(0.07, 1)) +
+         plot_annotation(title = "Age in Sigma, LPM")
+
+} else {
+  print(glue("No phenotypes have age in sigma for LPM-LMSz models: {length(pheno_lpm_age_sigma)}."))
+}
+```
+
+
+## Plot sex in sigma lpm trajectories
+```{r, echo = FALSE, fig.show='hide'}
+pheno_lpm_sex_sigma <- models_lpm %>% filter(grepl("sex", s_model)) %>% select(feature) %>% pull(feature)
+
+if(length(pheno_lpm_sex_sigma != 0)) {
+
+  #Separate plots
+  sex_sigma_lpm_plots <- list()
+  sex_sigma_lpm_plots <- separate_plot_loop(pheno_lpm_sex_sigma, 
+                                     df_lpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  p_slip_title <- ggdraw() + draw_label("Original (SLIP)", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_slip <- ggarrange(plots =  sex_sigma_lpm_plots$slip_plots, nrow = 1, legend = "none", common.legend = T)
+  
+  p_lmsz_title <- ggdraw() + draw_label("LPM LMSz", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_lmsz <- ggarrange(plots =  sex_sigma_lpm_plots$lmsz_plots, nrow = 1, legend = "bottom", common.legend = T)
+  
+  p_fits_sex_sigma_lpm_separate <- (p_slip_title + p_slip +
+               p_lmsz_title + p_lmsz) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Sigma, LPM")
+  
+  
+  #Overlaid
+  sex_sigma_lpm_plots_overlaid <- list()
+  sex_sigma_lpm_plots_overlaid <- overlaid_plot_loop(pheno_lpm_sex_sigma, 
+                                     df_lpm, 
+                                     out_fans_slip, 
+                                     x_breaks, 
+                                     x_labs, 
+                                     mult = 1)
+  
+  #overlaid plots by sex
+  p_male_title <- ggdraw() + draw_label("Males", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_male <- ggarrange(plots =  sex_sigma_lpm_plots_overlaid$overlap_male, 
+                  nrow = 1, legend = "none", common.legend = T)
+  p_female_title <- ggdraw() + draw_label("Females", angle = 90,
+                                    x = 0.5, hjust = 0.5, fontface = "bold")
+  p_female <- ggarrange(plots =  sex_sigma_lpm_plots_overlaid$overlap_female, 
+                  nrow = 1, legend = "none", common.legend = T)
+  
+  p_fits_sex_sigma_lpm_overlaid_sex <- (p_male_title + p_male +
+               p_female_title + p_female) + 
+            plot_layout(ncol = 2, 
+                        nrow = 2, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Sigma, LPM")
+  
+  #overlaid plots averaged over sex
+  p_traj_sexavg <- ggarrange(plots =  sex_sigma_lpm_plots_overlaid$overlap_avg, 
+                  nrow = 1, legend = "bottom", common.legend = T)
+  
+  p_traj_collapsed_title <- ggdraw() + draw_label("Sex Avg Trajectory", angle = 90, x = 0.5, hjust = 0.5, fontface = "bold")
+  
+  
+  p_fits_sex_sigma_lpm_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) + 
+            plot_layout(ncol = 2, 
+                        nrow = 1, 
+                        widths = c(0.07, 1)) +
+         plot_annotation(title = "Sex in Sigma, LPM")
+
+} else {
+  print(glue("No phenotypes have sex in sigma for LPM-LMSz models: {length(pheno_lpm_sex_sigma)}."))
+}
+```
+
+# Save trajectory plots
+```{r, echo = FALSE, fig.height = 12, fig.width = 16}
+p_fits_global_vpm_separate
+p_fits_global_vpm_overlaid_sex
+p_fits_global_vpm_overlaid_avg
+p_fits_global_lpm_separate
+p_fits_global_lpm_overlaid_sex
+p_fits_global_lpm_overlaid_avg
+if(save_figs == TRUE){
+panel_save(p_fits_global_vpm_separate, "global_traj_slip_vpm_separate", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+panel_save(p_fits_global_vpm_overlaid_sex, "global_traj_slip_vpm_overlaid_sex", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+panel_save(p_fits_global_vpm_overlaid_avg, "global_traj_slip_vpm_overlaid_avg", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+panel_save(p_fits_global_lpm_separate, "global_traj_slip_lpm_separate", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+panel_save(p_fits_global_lpm_overlaid_sex, "global_traj_slip_lpm_overlaid_sex", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+panel_save(p_fits_global_lpm_overlaid_avg, "global_traj_slip_lpm_overlaid_avg", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+}
+
+if(exists("p_fits_age_mu_vpm_separate")){
+p_fits_age_mu_vpm_separate
+p_fits_age_mu_vpm_overlaid_sex
+p_fits_age_mu_vpm_overlaid_avg
+if(save_figs == TRUE){
+  panel_save(p_fits_age_mu_vpm_separate, "age_mu_traj_slip_vpm_separate", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  panel_save(p_fits_age_mu_vpm_overlaid_sex, "age_mu_traj_slip_vpm_overlaid_sex", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  panel_save(p_fits_age_mu_vpm_overlaid_avg, "age_mu_traj_slip_vpm_overlaid_avg", "pdf", plot_save_path, plot_width = 10, plot_height = 8)
+}
+}
+
+if(exists("p_fits_sex_mu_vpm_separate")){
+p_fits_sex_mu_vpm_separate
+p_fits_sex_mu_vpm_overlaid_sex
+p_fits_sex_mu_vpm_overlaid_avg
+if(save_figs == TRUE){
+  panel_save(p_fits_sex_mu_vpm_separate, "sex_mu_traj_slip_vpm_separate", "pdf", plot_save_path, plot_width = 6, plot_height = 8)
+  panel_save(p_fits_sex_mu_vpm_overlaid_sex, "sex_mu_traj_slip_vpm_overlaid_sex", "pdf", plot_save_path, plot_width = 6, plot_height = 8)
+  panel_save(p_fits_sex_mu_vpm_overlaid_avg, "sex_mu_traj_slip_vpm_overlaid_avg", "pdf", plot_save_path, plot_width = 6, plot_height = 6)
+}
+}
+
+if(exists("p_fits_age_sigma_vpm_separate")){
+  p_fits_age_sigma_vpm_separate
+  p_fits_age_sigma_vpm_overlaid_sex
+  p_fits_age_sigma_vpm_overlaid_avg
+  if(save_figs == TRUE){
+  panel_save(p_fits_age_sigma_vpm_separate, "age_sigma_traj_slip_vpm_separate", "pdf", plot_save_path, plot_width = 20, plot_height = 16)
+panel_save(p_fits_age_sigma_vpm_overlaid_sex, "age_sigma_traj_slip_vpm_overlaid_sex", "pdf", plot_save_path, plot_width = 20, plot_height = 16)
+panel_save(p_fits_age_sigma_vpm_overlaid_avg, "age_sigma_traj_slip_vpm_overlaid_avg", "pdf", plot_save_path, plot_width = 18, plot_height = 14)
   }
-  y_scale <- layer_scales(slip_plots[[pheno_of_int]])$y$range$range
-  plots <- list(slip_plots[[pheno_of_int]] + ggtitle("Reference"), 
-                lmsz_plots[[pheno_of_int]] + ggtitle("22q Adjusted"),
-                overlap_plots_deriv[[pheno_of_int]] + ggtitle("Overlap") + scale_y_continuous(limits = y_scale))
-  p1 <- ggarrange(plotlist = plots, nrow = 1, ncol = 3, common.legend = T, legend = "none")
-  p_title <- ggdraw() + draw_label(pheno_label, fontface = "bold")
-  plots_final[[pheno_of_int]] <- ggarrange(p_title, p1, nrow = 2, ncol = 1, heights = c(0.1,1))
 }
 
-p1A <- ggarrange(plotlist = plots_final[1:4], nrow = 4, ncol = 1, common.legend = T, 
-                 legend = "none")
-p1B <- ggarrange(plotlist = plots_final[5:8], nrow = 4, ncol = 1, common.legend = T, 
-                 legend = "none")
-p1 <- ggarrange(p1A, NULL, p1B, widths = c(1,0.1,1), ncol = 3)
 
-p2 <- ggarrange(NULL, leg1, leg2, NULL, nrow = 1, ncol = 4)
-
-```
-
-```{r, fig.height= 12, fig.width=12}
-library(grid)
-p <- ggarrange(p1,p2, heights = c(1,0.08), nrow = 2, ncol = 1)
-x = c(0.5, 0.5)
-y = c(0.08, 0.98)
-id = c(1,1)
-
-p
-grid.polygon(x,y,id,
-             gp = gpar(lty = "solid", lwd = 1, col = "black"))
-save(p, file = "additional_plots/lmsz_v2.rdata")
-```
-
-
-## Save Table
-
-```{r}
-models_fmt <- models %>% select(-c(m_model, s_model)) %>%
-                  mutate(label = case_match(feature,
-                                            "Cerebellum.all" ~ "Cerebellum",
-                                            "SUBC.Left_Accumbens.area" ~ "SUBC.Left_Accumbens",
-                                            "SUBC.Right_Accumbens.area" ~ "SUBC.Right_Accumbens",
-                                            .default = feature)) %>%
-                  relocate(label, .before = feature) %>%
-                  separate_wider_delim(label, delim = ".", names = c("IDP Group", "IDP"),
-                                       too_few = "align_end") %>%
-                  mutate(`IDP Group` = ifelse(is.na(`IDP Group`), "Global", `IDP Group`),
-                         `IDP Group` = factor(`IDP Group`, levels = c("Global","SUBC","GM","SA","CT")),
-                         across(contains("_coef"), ~ round(.x, 2)),
-                         across(ends_with("IC"), ~ round(.x, 0))) %>%
-                  select(-feature, contains("interaction")) %>%
-                  arrange(`IDP Group`, IDP)
-flextable(models_fmt)
-write_csv(models_fmt, "tables/table_s08_lmsz_models.csv")
-```
-
-## Plot Global Worm Plots
-
-```{r, fig.height = 6, fig.width = 12}
-
-glob_wps <- slip_worm_plots[global_measures]
-for (i in 1:length(global_measures)) {
-  glob_wps[[global_measures[i]]] <- glob_wps[[global_measures[i]]] + ggtitle(global_measure_names[i])
-}
-
-ggarrange(plotlist = glob_wps, nrow = 2, ncol = 4)
-ggsave("figures/figure_s12_wp.png", bg = "white")
-```
-
-## Plot All Worm Plots
-
-```{r}
-final_worm_plots <- list()
-
-glob_subc_feat <- features[grepl("SUBC\\.",features) | !grepl("GM\\.|SA\\.|CT\\.",features)]
-glob_subc_feat <- glob_subc_feat[order(grepl("SUBC\\.",glob_subc_feat))]
-
-for (feature in glob_subc_feat) {
-  final_worm_plots[[feature]] <- slip_worm_plots[[feature]] + ggtitle(feature)
-}
-
-feat <- unique(str_remove_all(features[!(features %in% glob_subc_feat)],"GM\\.|SA\\.|CT\\.|lh_|rh_"))
-# (GM, SA, CT) x (lh, rh) * 4 per page
-for (i in feat) {
-  for (j in c("GM","SA","CT")) {
-    for (k in c("lh","rh")) {
-      feat_name <- glue("{j}.{k}_{i}")
-      final_worm_plots[[feat_name]] <- slip_worm_plots[[feat_name]] + ggtitle(feat_name)
-    }
+if(exists("p_fits_sex_sigma_vpm_separate")){
+  p_fits_sex_sigma_vpm_separate
+  p_fits_sex_sigma_vpm_overlaid_sex
+  p_fits_sex_sigma_vpm_overlaid_avg
+  if(save_figs == TRUE){
+  panel_save(p_fits_sex_sigma_vpm_separate, "sex_sigma_traj_slip_vpm_separate", "pdf", plot_save_path, plot_width = 18, plot_height = 14)
+  panel_save(p_fits_sex_sigma_vpm_overlaid_sex, "sex_sigma_traj_slip_vpm_overlaid_sex", "pdf", plot_save_path, plot_width = 18, plot_height = 14)
+  panel_save(p_fits_sex_sigma_vpm_overlaid_avg, "sex_sigma_traj_slip_vpm_overlaid_avg", "pdf", plot_save_path, plot_width = 18, plot_height = 12)
   }
 }
 
-```
-
-```{r}
-#| output: false
-library(gridExtra)
-
-ggsave(
-   filename = glue("additional_plots/lmsz_worm_plots.pdf"), 
-   plot = marrangeGrob(final_worm_plots, nrow=8, ncol=6),
-   width = 8.5, height = 11
-)
-```
-
-# Plot All LMSz Charts
-
-```{r, fig.height = 7.5, fig.width = 11}
-PLOTS <- list()
-features_order <- c("eTIV","GMV","sGMV","WMV","Ventricles","Cerebellum.all","totalSA","meanCT",
-                       features[startsWith(features,"GM.")],
-                       features[startsWith(features,"SUBC.")],
-                       features[startsWith(features,"SA.")],
-                       features[startsWith(features,"CT.")])
-for (pheno_of_int in features_order) {
-  
-  if (grepl("CT",pheno_of_int)) {
-    x_breaks <- log(c(365.25*2+280, 
-                      365.25*6+280, 365.25*21+280))
-    x_labs <- c("2y","6y","21y")
-    x_lims <- log(c(365.25*2+280, 365.25*21+280))
-  } else {
-    x_breaks <- log(c(280, 365.25*1+280, 365.25*2+280, 
-                      365.25*6+280, 365.25*21+280))
-    x_labs <- c("0y","1y","2y","6y","21y")
-    x_lims <- log(c(280, 365.25*21+280))
+if(exists("p_fits_agesex_mu_vpm_separate")){
+print(p_fits_agesex_mu_vpm_separate)
+print(p_fits_agesex_mu_vpm_overlaid_sex)
+print(p_fits_agesex_mu_vpm_overlaid_avg)
+if(save_figs == TRUE){
+  panel_save(p_fits_agesex_mu_vpm_separate, "agesex_mu_traj_slip_vpm_separate", "pdf", plot_save_path, plot_width = 6, plot_height = 4)
+  panel_save(p_fits_agesex_mu_vpm_overlaid_sex, "agesex_mu_traj_slip_vpm_overlaid_sex", "pdf", plot_save_path, plot_width = 6, plot_height = 4)
+  panel_save(p_fits_agesex_mu_vpm_overlaid_avg, "agesex_mu_traj_slip_vpm_overlaid_avg", "pdf", plot_save_path, plot_width = 4, plot_height = 4)
   }
-  out_fans_plot <- out_fans_slip %>% filter(pheno == pheno_of_int) %>% filter(adjusted_age_days_log >= x_lims[1],adjusted_age_days_log <= x_lims[2])
-  # print(pheno_of_int)
-  p1 <- ggplot(out_fans_plot) +
-            geom_point(data = df, aes(y = get(glue("{pheno_of_int}Transformed.q.zscore")),
-                                      x = adjusted_age_days_log, color=sex, fill=sex), alpha=0.3) +
-            geom_line(aes(x = adjusted_age_days_log, y = LMSz_input_fans,
-                          group = interaction(centile_cat, sex),
-                          color = sex,
-                          linewidth = line_size,
-                          linetype = line_type)) +
-            scale_linewidth_identity() +
-            scale_linetype_identity() +
-            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
-            ggtitle("22q LMSz Trajectory") + ylab("Z-Score") +
-            theme_pubr() +
-            theme(plot.title = element_text(size = 12),
-                  axis.title = element_text(size = 10),
-                  axis.text = element_text(size = 8))
-  
-  p2 <- ggplot(out_fans_plot) +
-            geom_point(data = df, aes(y = get(glue("{pheno_of_int}Transformed.normalised")),
-                                      x = adjusted_age_days_log, color=sex, fill=sex), alpha=0.3) +
-            geom_line(aes(x = adjusted_age_days_log, y = SLIP_input_fans,
-                          group = interaction(centile_cat, sex),
-                          color = sex,
-                          linewidth = line_size,
-                          linetype = line_type)) +
-            scale_linewidth_identity() +
-            scale_linetype_identity() +
-            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
-            ggtitle("Original Model") + ylab("Normalized Value") +
-            theme_pubr() +
-            theme(plot.title = element_text(size = 12),
-                  axis.title = element_text(size = 10),
-                  axis.text = element_text(size = 8))
-  
-  p3 <- ggplot(out_fans_plot) +
-            geom_point(data = df, aes(y = get(glue("{pheno_of_int}Transformed.normalised")),
-                                      x = adjusted_age_days_log, color=sex, fill=sex), alpha=0.3) +
-            geom_line(aes(x = adjusted_age_days_log, y = LMSz_fans,
-                          group = interaction(centile_cat, sex),
-                          color = sex,
-                          linewidth = line_size*1.5,
-                          linetype = line_type)) +
-            scale_linewidth_identity() +
-            scale_linetype_identity() +
-            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
-            ggtitle("LMSz Backtransformed") + ylab("Normalized Value") +
-            theme_pubr() +
-            theme(plot.title = element_text(size = 12),
-                  axis.title = element_text(size = 10),
-                  axis.text = element_text(size = 8))
-  
-  olap_plot <- out_fans_plot %>% 
-                  filter(pheno == pheno_of_int,
-                         centile_cat == "cent_0.5") %>%
-                  pivot_longer(c(SLIP_input_fans, LMSz_fans), 
-                               names_to = "Model", values_to = "Fans") %>%
-                  mutate(Model = str_remove_all(Model, "_input_fans|_fans"))
-  
-  p4 <- ggplot(olap_plot) +
-            geom_line(aes(x = adjusted_age_days_log, y = Fans,
-                          group = interaction(sex, Model),
-                          color = interaction(sex, Model),
-                          linewidth = line_size*1.5,
-                          linetype = line_type)) +
-            scale_linewidth_identity() +
-            scale_linetype_identity() +
-            scale_x_continuous(breaks = x_breaks, labels = x_labs, limits = x_lims) +
-            scale_color_manual(values = c("#F8766D","#00BFC4","firebrick","royalblue")) +
-            ggtitle("Median Lines") + ylab("Normalized Value") +
-            theme_classic() +
-            theme(plot.title = element_text(size = 12),
-                  axis.title = element_text(size = 10),
-                  axis.text = element_text(size = 8)) +
-            labs(color="")
-  
-  p5 <- slip_worm_plots[[pheno_of_int]]
-  p6 <- ggarrange(p1, p2, p3, ncol = 1, legend = "bottom", common.legend = T)
-  p_title <- ggdraw() + draw_label(pheno_of_int, fontface = "bold")
-  p7 <- ggarrange(p4, p5,ncol = 1, legend = "bottom", common.legend = F)
-  p8 <- ggarrange(p6, p7, ncol = 2)
-  PLOTS[[pheno_of_int]] <- ggarrange(p_title, p8, ncol = 1, heights = c(0.05,1))
+}
+
+if(exists("p_fits_agespline_mu_vpm_separate")){
+print(p_fits_agespline_mu_vpm_separate)
+print(p_fits_agespline_mu_vpm_overlaid_sex)
+print(p_fits_agespline_mu_vpm_overlaid_avg)
+if(save_figs == TRUE){
+  panel_save(p_fits_agespline_mu_vpm_separate, "agespline_mu_traj_slip_vpm_separate", "pdf", plot_save_path, plot_width = 6, plot_height = 4)
+  panel_save(p_fits_agespline_mu_vpm_overlaid_sex, "agespline_mu_traj_slip_vpm_overlaid_sex", "pdf", plot_save_path, plot_width = 6, plot_height = 4)
+  panel_save(p_fits_agespline_mu_vpm_overlaid_avg, "agespline_mu_traj_slip_vpm_overlaid_avg", "pdf", plot_save_path, plot_width = 4, plot_height = 4)
+  }
+}
+
+if(exists("p_fits_age_mu_lpm_separate")){
+print(p_fits_age_mu_lpm_separate)
+print(p_fits_age_mu_lpm_overlaid_sex)
+print(p_fits_age_mu_lpm_overlaid_avg)
+if(save_figs == TRUE){
+  panel_save(p_fits_age_mu_lpm_separate, "age_mu_traj_slip_lpm_separate", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  panel_save(p_fits_age_mu_lpm_overlaid_sex, "age_mu_traj_slip_lpm_overlaid_sex", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  panel_save(p_fits_age_mu_lpm_overlaid_avg, "age_mu_traj_slip_lpm_overlaid_avg", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  }
+}
+
+if(exists("p_fits_agespline_mu_lpm_separate")){
+print(p_fits_agespline_mu_lpm_separate)
+print(p_fits_agespline_mu_lpm_overlaid_sex)
+print(p_fits_agespline_mu_lpm_overlaid_avg)
+if(save_figs == TRUE){
+  panel_save(p_fits_agespline_mu_lpm_separate, "agespline_mu_traj_slip_lpm_separate", "pdf", plot_save_path, plot_width = 6, plot_height = 4)
+  panel_save(p_fits_agespline_mu_lpm_overlaid_sex, "agespline_mu_traj_slip_lpm_overlaid_sex", "pdf", plot_save_path, plot_width = 6, plot_height = 4)
+  panel_save(p_fits_agespline_mu_lpm_overlaid_avg, "agespline_mu_traj_slip_lpm_overlaid_avg", "pdf", plot_save_path, plot_width = 4, plot_height = 4)
+  }
+}
+
+if(exists("p_fits_sex_mu_lpm_separate")){
+print(p_fits_sex_mu_lpm_separate)
+print(p_fits_sex_mu_lpm_overlaid_sex)
+print(p_fits_sex_mu_lpm_overlaid_avg)
+if(save_figs == TRUE){
+  panel_save(p_fits_sex_mu_lpm_separate, "sex_mu_traj_slip_lpm_separate", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  panel_save(p_fits_sex_mu_lpm_overlaid_sex, "sex_mu_traj_slip_lpm_overlaid_sex", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  panel_save(p_fits_sex_mu_lpm_overlaid_avg, "sex_mu_traj_slip_lpm_overlaid_avg", "pdf", plot_save_path, plot_width = 12, plot_height = 8)
+  }
+}
+
+if(exists("p_fits_age_sigma_lpm_separate")){
+print(p_fits_age_sigma_lpm_separate)
+print(p_fits_age_sigma_lpm_overlaid_sex)
+print(p_fits_age_sigma_lpm_overlaid_avg)
+if(save_figs == TRUE){
+  panel_save(p_fits_age_sigma_lpm_separate, "age_sigma_traj_slip_lpm_separate", "pdf", plot_save_path, plot_width = 14, plot_height = 8)
+  panel_save(p_fits_age_sigma_lpm_overlaid_sex, "age_sigma_traj_slip_lpm_overlaid_sex", "pdf", plot_save_path, plot_width = 14, plot_height = 8)
+  panel_save(p_fits_age_sigma_lpm_overlaid_avg, "age_sigma_traj_slip_lpm_overlaid_avg", "pdf", plot_save_path, plot_width = 16, plot_height = 8)
+  }
+}
+
+if(exists("p_fits_sex_sigma_lpm_separate")){
+print(p_fits_sex_sigma_lpm_separate)
+print(p_fits_sex_sigma_lpm_overlaid_sex)
+print(p_fits_sex_sigma_lpm_overlaid_avg)
+if(save_figs == TRUE){
+  panel_save(p_fits_sex_sigma_lpm_separate, "sex_sigma_traj_slip_lpm_separate", "pdf", plot_save_path, plot_width = 16, plot_height = 8)
+  panel_save(p_fits_sex_sigma_lpm_overlaid_sex, "sex_sigma_traj_slip_lpm_overlaid_sex", "pdf", plot_save_path, plot_width = 16, plot_height = 8)
+  panel_save(p_fits_sex_sigma_lpm_overlaid_avg, "sex_sigma_traj_slip_lpm_overlaid_avg", "pdf", plot_save_path, plot_width = 18, plot_height = 8)
+  }
 }
 ```
 
-```{r}
-library(gridExtra)
+# Plot bigger fits (for visibility)
+```{r, echo = FALSE, fig.height = 16, fig.width = 20}
+p_fits_age_sigma_vpm_separate
+p_fits_age_sigma_vpm_overlaid_sex
+p_fits_age_sigma_vpm_overlaid_avg
 
-ggsave(
-   filename = glue("additional_plots/LMSz_curve_plots.pdf"), 
-   plot = marrangeGrob(PLOTS, nrow=1, ncol=1),
-   width = 11, height = 8.5
-)
+p_fits_sex_sigma_vpm_separate
+p_fits_sex_sigma_vpm_overlaid_sex
+p_fits_sex_sigma_vpm_overlaid_avg
 ```

@@ -1,0 +1,385 @@
+---
+title: "data-clean-save"
+author: "Eren Kafadar"
+date: "2025-11-18"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+params:
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/"
+  centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/centile_csv/slip_median_centiles_041526.csv"
+  participants_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/participants_ga_imputed.csv"
+  qc_metrics_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/fs7.4.1-clinical-reconall-qc.csv"
+  selected_scans_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/slip_selected_scans_041526.csv"
+  type: "median"  
+  add_qc_flag: "TRUE"
+---
+
+# Define params if they do not exist
+```{r, echo = FALSE}
+if (!exists("params")) {
+  params <- list(
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/",
+  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/centile_csv/slip_median_centiles_041526.csv",
+  participants_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/participants_ga_imputed.csv",
+  qc_metrics_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/fs7.4.1-clinical-reconall-qc.csv",
+  selected_scans_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/slip_selected_scans_041526.csv",
+  type = "median",
+  add_qc_flag = "TRUE"
+  )
+}
+``` 
+
+# Load packages
+```{r, echo = FALSE}
+#Load libraries
+library(dplyr)
+library(magrittr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(glue)
+#For figures/plotting
+library(ggplot2)
+library(gridExtra)
+library(ggseg)
+#library(ggpubr)
+library(ggcorrplot)
+library(cowplot)
+library(egg)
+library(interactions)
+library(growthstandards)
+library(gtsummary)
+library(svglite)
+library(childsds)
+```
+
+# Controls
+```{r setup, echo = TRUE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+#set command
+save_tables <- TRUE
+plot <- TRUE
+save_figs <- TRUE
+
+set.seed(42)
+
+output_folder <- params$output_folder
+centiles_path <- params$centiles_path
+participants_path <- params$participants_path
+qc_metrics_path <- params$qc_metrics_path
+selected_scans_path <- params$selected_scans_path
+type <- params$type
+add_qc_flag <- params$add_qc_flag
+```
+
+# Define Paths
+```{r, echo = TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#define paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars_2511_new/"
+
+## output/save paths
+if (!dir.exists(output_folder)) dir.create(output_folder)
+csv_save_path <- glue("{output_folder}csv/")
+if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
+plot_save_path <- paste0(output_folder, "plots/")
+if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
+
+#load custom data transform and bw/ga qc functions
+source(paste0(code_path,"slip_data_utils.R"))
+```
+
+# Load Data
+```{r, echo = FALSE}
+participants <- read.csv(participants_path)
+selected_scans <- read.csv(selected_scans_path)
+qc_metrics <- read.csv(qc_metrics_path) %>% filter(scan_id %in% selected_scans$scan_id)
+centiles <- read.csv(centiles_path)
+```
+
+# Load Phenotype Var Names
+```{r, echo = FALSE}
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+```
+
+# QC inter-variable correlations
+```{r, echo = FALSE}
+#correlation matrix and visualization
+cor_matrix <- cor(qc_metrics[,names(qc_metrics)[!grepl("_id$", names(qc_metrics))]], use = "pairwise.complete.obs")
+p_mat <- cor_pmat(qc_metrics[,names(qc_metrics)[!grepl("_id$", names(qc_metrics))]])
+
+ggcorrplot(
+  cor_matrix,
+  p.mat = p_mat,
+  type = "lower",
+  insig = "blank",
+  lab = TRUE
+)
+```
+
+# QC metrics prep
+```{r}
+if(type == "median"){
+##group by session-id and take median of euler_mean
+qc_metrics <- qc_metrics %>%
+  group_by(session_id) %>%
+  summarise(median_euler_mean = median(euler_mean),
+            .groups = "drop") %>%
+  left_join(qc_metrics, by = "session_id") %>%
+  rename(participant_id = subject_id)
+}
+```
+
+# Participant DF prep
+double/incongruent BW/GA info is dealt with in previous steps before modeling
+```{r, echo = FALSE}
+participants_vars_select <- c("pat_id", "study_id", "participant_id", "session_id", "scan_id", "sex", 
+                "age_at_scan",
+                "height_at_enc", "weight_at_enc", "hc_at_enc", 
+                "ga_days_total_qc", "ga_imputed_nomedian_days_total", "ga_imputed_days_total",
+                "birth_weight_kg_qc", "birth_length_cm",
+                "race", "ethnicity",
+                "site", "avg_grade", "useable", "proc_ord_id")
+
+participants <- participants %>%
+  select(any_of(participants_vars_select)) %>%
+           rename(gestational_age = ga_days_total_qc,
+                  ga_bw_imputed = ga_imputed_nomedian_days_total,
+                  ga_full_imputed = ga_imputed_days_total,
+                  birth_weight_kg = birth_weight_kg_qc,
+                  site_hospital_name = site)
+```
+
+# check for extra variables in the centiles df
+```{r, echo = FALSE}
+vars_to_select <- c(full_vars, "participant_id", "session_id", "scan_id", "site", "sex", 
+                    "log10_age_days", "age_days", 
+                    "dx", "obs_weight")
+vars_extra <- names(centiles)[!(names(centiles) %in% vars_to_select)]
+vars_extra_print <- vars_extra[!grepl("glasser", vars_extra)]
+print(glue("Additional variables in the centiles csv provided (other than glasser): {vars_extra_print}"))
+```
+
+# run data cleanup
+```{r, echo = FALSE}
+print(glue("ALL Centiles DF dimensions before 'cleanup' script: {c(dim(centiles))}"))
+vars_notfound <- vars_to_select[!(vars_to_select %in% names(centiles))]
+print(glue("Variables not found in the centiles csv: {vars_notfound}"))
+#centiles <- centiles %>% select(any_of(vars_to_select))
+participants_vars_select_clean <- c("pat_id", "study_id", "participant_id", 
+                                    "session_id", "sex", "age_at_scan",
+                "height_at_enc", "weight_at_enc", "hc_at_enc", 
+                "gestational_age", "ga_bw_imputed", "ga_full_imputed",
+                "birth_weight_kg",
+                "race", "ethnicity",
+                "site_hospital_name", "avg_grade", "useable", "proc_ord_id")
+clean_centiles <- slip_centdf_clean(centiles, 
+                                    participants, 
+                                    qc_metrics, 
+                                    type = type, 
+                                    add_qc = add_qc_flag,
+                                    participants_vars_select = participants_vars_select_clean,
+                                    cent_df_vars_select = vars_to_select)
+centiles_distinct <- clean_centiles$distinct
+centiles_all <- clean_centiles$all
+print(glue("DISTINCT Centiles DF dimensions: {c(dim(centiles_distinct))}"))
+print(glue("ALL Centiles DF dimensions: {c(dim(centiles_all))}"))
+
+rm(centiles)
+```
+
+
+Need to get median (within 180 days) weight/height from arcus table. Will do this later
+<!-- # Weight/ Height Centile & QC -->
+
+<!-- ## Weight/Height Availability (before QC) -->
+<!-- ```{r} -->
+<!-- print(glue("Number of Data Points with weight at enc {sum(!is.na(centiles_all$weight_at_enc))}")) -->
+<!-- print(glue("Number of Data Points with height at enc {sum(!is.na(centiles_all$height_at_enc))}")) -->
+<!-- print(glue("Number of Data Points with weight and height at enc {sum(!is.na(centiles_all$height_at_enc) & !is.na(centiles_all$weight_at_enc))}")) -->
+
+<!-- print(glue("Number of Data Points with weight AND height at enc AND gestational age {sum(!is.na(centiles_all$height_at_enc) & !is.na(centiles_all$weight_at_enc) & !is.na(centiles_all$gestational_age))}")) -->
+<!-- print(glue("Number of Data Points with weight AND height at enc AND birth weight {sum(!is.na(centiles_all$height_at_enc) & !is.na(centiles_all$weight_at_enc) & !is.na(centiles_all$birth_weight_kg))}")) -->
+<!-- ``` -->
+
+<!-- ## Weight/Height Plots -->
+<!-- ```{r, echo = FALSE} -->
+<!-- ggplot(centiles_all, aes(x = weight_at_enc, y = age_at_scan_years)) + -->
+<!--   geom_point(size = 0.5, alpha = 0.2) + -->
+<!--   geom_hline(yintercept = 19, color = "#974343", alpha = 0.5) + -->
+<!--   labs(x = "Weight at Encounter (kg?)",  -->
+<!--        y = "Age At Scan (yrs)") + -->
+<!--   theme_classic() -->
+
+<!-- ggplot(centiles_all, aes(x = height_at_enc, y = age_at_scan_years)) + -->
+<!--   geom_point(size = 0.5, alpha = 0.2) + -->
+<!--   geom_hline(yintercept = 19, color = "#974343", alpha = 0.5) + -->
+<!--   labs(x = "Height at Encounter (cm?)",  -->
+<!--        y = "Age At Scan (yrs)") + -->
+<!--   theme_classic() -->
+<!-- ``` -->
+
+<!-- ## Calculate Weight/Height z-score -->
+<!-- Using childsds package, who.ref reference charts -->
+<!-- ```{r, echo = FALSE} -->
+<!-- wc_out <- cdcanthro(centiles_all %>% -->
+<!--                    mutate(age_at_scan_months = age_at_scan/30.4375, -->
+<!--                           sex = recode(sex, Male = "m", Female = "f")),  -->
+<!--                  age = age_at_scan_months, -->
+<!--                  wt = weight_at_enc, -->
+<!--                  ht = height_at_enc, -->
+<!--                  all = FALSE) %>% -->
+<!--   select(participant_id, session_id, wap, waz, hap, haz, bmip, bmiz) %>% -->
+<!--   rename(weight_cent = wap, weight_zscore = waz, -->
+<!--          height_cent = haz, height_zscore = haz, -->
+<!--          bmi_cent = bmip, bmi_zscore = bmiz) -->
+
+
+<!-- centiles_all <- merge(centiles_all, wc_out, by = c("participant_id", "session_id"), -->
+<!--                         all.x = TRUE) -->
+
+<!-- ggplot(centiles_all, aes(x = weight_at_enc, y = age_at_scan_years, -->
+<!--                          color = weight_cent)) + -->
+<!--   geom_point(size = 0.5, alpha = 0.2) + -->
+<!--   geom_hline(yintercept = 19, color = "#974343", alpha = 0.5) + -->
+<!--   scale_color_gradient(low = "#0595eb",high = "#4fe30e", na.value = "#d73027") + -->
+<!--   labs(x = "Weight at Encounter (kg?)",  -->
+<!--        y = "Age At Scan (yrs)") + -->
+<!--   theme_classic() -->
+
+
+
+<!-- # centiles_all <- centiles_all %>% -->
+<!-- # mutate(weight_at_enc_sds = case_when( -->
+<!-- #     age_at_scan_years<5 ~ sds(value = weight_at_enc, -->
+<!-- #                                             age = age_at_scan_years, -->
+<!-- #                                             sex = sex, -->
+<!-- #                                             item = "weight", -->
+<!-- #                                             ref = who.ref, -->
+<!-- #                                             type = "SDS", -->
+<!-- #                                             male = "Male", -->
+<!-- #                                             female = "Female" -->
+<!-- #                                             ), -->
+<!-- #     age_at_scan_years>5 & age_at_scan_years<19 ~ sds(value = weight_at_enc, -->
+<!-- #                                             age = age_at_scan_years, -->
+<!-- #                                             sex = sex, -->
+<!-- #                                             item = "weight", -->
+<!-- #                                             ref = who2007.ref, -->
+<!-- #                                             type = "SDS", -->
+<!-- #                                             male = "Male", -->
+<!-- #                                             female = "Female" -->
+<!-- #                                             ), -->
+<!-- #     TRUE ~ NA_real_)) -->
+<!-- #  -->
+<!-- # sum(!is.na(centiles_all$weight_at_enc_sds)) -->
+<!-- # sum(!is.na(centiles_all$weight_at_enc)) -->
+<!-- ggplot(centiles_all %>% filter(!is.na(weight_at_enc) & is.na(weight_at_enc_sds)),  -->
+<!--        aes(x = weight_at_enc, y = age_at_scan_years)) + -->
+<!--   geom_point(size = 0.5, alpha = 0.2) + -->
+<!--   geom_hline(yintercept = 19, color = "#974343", alpha = 0.5) + -->
+<!--   labs(x = "Weight at Encounter (kg?)",  -->
+<!--        y = "Age At Scan (yrs)", -->
+<!--        title = "Weight Available but SDS NA") + -->
+<!--   theme_classic() -->
+
+<!-- ggplot(centiles_all %>% filter(age_at_scan_years > 9.5),  -->
+<!--        aes(x = weight_at_enc, y = age_at_scan_years, color = is.na(weight_at_enc_sds))) + -->
+<!--   geom_point(size = 0.5, alpha = 0.2) + -->
+<!--   geom_hline(yintercept = 19, color = "#974343", alpha = 0.5) + -->
+<!--   #scale_color_gradient(low = "#0595eb",high = "#4fe30e", na.value = "#d73027") + -->
+<!--   labs(x = "Weight at Encounter (kg?)",  -->
+<!--        y = "Age At Scan (yrs)", -->
+<!--        title = "Age > 9.5 Years") + -->
+<!--   theme_classic() -->
+
+
+<!-- centiles_all$weight_at_enc_sifelse(centiles_all$age_at_scan_years < 5, -->
+<!--                                          sds(value = centiles_all[centiles_all$age_at_scan_years < 5,]$weight_at_enc, -->
+<!--                                             age = centiles_all[centiles_all$age_at_scan_years < 5,]$age_at_scan_years, -->
+<!--                                             sex = centiles_all[centiles_all$age_at_scan_years < 5,]$sex, -->
+<!--                                             item = "weight", -->
+<!--                                             ref = who.ref, -->
+<!--                                             type = "SDS", -->
+<!--                                             male = "Male", -->
+<!--                                             female = "Female" -->
+<!--                                             ), NA) -->
+
+<!-- centiles_all$weight_at_enc_sds <- ifelse(centiles_all$age_at_scan_years > 5 & centiles_all$age_at_scan_years < 19, -->
+<!--                                          sds(value = centiles_all[centiles_all$age_at_scan_years > 5 & centiles_all$age_at_scan_years < 19,]$weight_at_enc, -->
+<!--                                             age = centiles_all[centiles_all$age_at_scan_years > 5 & centiles_all$age_at_scan_years < 19,]$age_at_scan_years, -->
+<!--                                             sex = centiles_all[centiles_all$age_at_scan_years > 5 & centiles_all$age_at_scan_years < 19,]$sex, -->
+<!--                                             item = "weight", -->
+<!--                                             ref = who2007.ref, -->
+<!--                                             type = "SDS", -->
+<!--                                             male = "Male", -->
+<!--                                             female = "Female" -->
+<!--                                             ), NA) -->
+
+
+<!-- centiles_all$weight_at_enc_sds <- ifelse(centiles_all$age_at_scan_years < 19, -->
+<!--                                          sds(value = centiles_all[centiles_all$age_at_scan_years < 19,]$weight_at_enc, -->
+<!--                                             age = centiles_all[centiles_all$age_at_scan_years < 19,]$age_at_scan, -->
+<!--                                             sex = centiles_all[centiles_all$age_at_scan_years < 19,]$sex, -->
+<!--                                             item = "weight", -->
+<!--                                             ref = who2007.ref, -->
+<!--                                             type = "SDS", -->
+<!--                                             male = "Male", -->
+<!--                                             female = "Female" -->
+<!--                                             ), NA) -->
+<!-- centiles_all$height_at_enc_sds <- sds(value = centiles_all$height_at_enc, -->
+<!--                                             age = centiles_all$age_at_scan, -->
+<!--                                             sex = centiles_all$sex, -->
+<!--                                             item = "height", -->
+<!--                                             ref = who.ref, -->
+<!--                                             type = "SDS", -->
+<!--                                             male = "Male", -->
+<!--                                             female = "Female" -->
+<!--                                             ) -->
+<!-- ``` -->
+
+# Plots with Birth Weight Percentile/Z-score
+```{r, echo = FALSE}
+ggplot(centiles_distinct, aes(x = bwp_fen, y = gestational_age)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(x = "BW Percentile (Fenton)", 
+       y = "Gestational Age (days)") +
+  theme_classic()
+
+ggplot(centiles_distinct, aes(x = bwz_fen, y = gestational_age)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(x = "BW Z-score (Fenton)", 
+       y = "Gestational Age (days)") +
+  theme_classic()
+
+ggplot(centiles_distinct, aes(x = bwz_fen, y = birth_weight_kg)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(x = "BW Z-score (Fenton)", 
+       y = "Birth Weight (kg)") +
+  theme_classic()
+
+```
+
+# SAVE Data Frames
+```{r, echo = FALSE}
+if (save_tables == TRUE){
+#one row per participant
+distinct_filename <- paste0(csv_save_path, "centiles_distinct_", type, "_", Sys.Date(), ".csv")
+print(distinct_filename)
+write.csv(centiles_distinct, distinct_filename)
+#all rows, included repeats of participants at different timepoints/ages
+all_filename <- paste0(csv_save_path, "centiles_all_", type, "_", Sys.Date(), ".csv")
+print(all_filename)
+write.csv(centiles_all, all_filename)
+}
+```
+

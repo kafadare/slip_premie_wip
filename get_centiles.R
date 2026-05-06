@@ -39,13 +39,27 @@ fit_name <- glue("{fits_folder}{model_case}-{pheno}Transformed/FIT.EXTRACT.rds")
 message("Using fit: ", fit_name)
 fit <- readRDS(fit_name)
 #select df with covars and appropriate phenotype
-df <- raw_data %>% select(all_of(c("participant_id", "session_id", "site", "sex", "age_days", "avg_grade", "dx", pheno)))
+if(model_case == "mpr") {
+df <- raw_data %>% select(all_of(c("participant_id", "session_id", "scan_id", "site", "sex", "adjusted_age_in_days", "avg_grade", "dx", pheno))) %>%
+  rename(age_days = adjusted_age_in_days)
+} else if(model_case == "median"){
+  df <- raw_data %>% select(all_of(c("participant_id", "session_id", "site", "sex", "adjusted_age_in_days", "avg_grade", "dx", pheno))) %>%
+    rename(age_days = adjusted_age_in_days)
+}
 #calculate centile scores
 out <- Calc.Novel(df, fit)
 centile_var_name <- glue("{pheno}Transformed.q.wre")
+if(model_case == "mpr") {
 out_df <- out$data %>% 
-  select(all_of(c("participant_id", "session_id", "site", "sex", "age_days", "avg_grade", "dx", centile_var_name))) %>%
+  rename(adjusted_age_in_days = age_days) %>%
+  select(all_of(c("participant_id", "session_id", "scan_id", "site", "sex", "adjusted_age_in_days", "avg_grade", "dx", centile_var_name))) %>%
   rename(!!pheno := !!centile_var_name)
+} else if (model_case == "median"){
+  out_df <- out$data %>% 
+    rename(adjusted_age_in_days = age_days) %>%
+    select(all_of(c("participant_id", "session_id", "site", "sex", "adjusted_age_in_days", "avg_grade", "dx", centile_var_name))) %>%
+    rename(!!pheno := !!centile_var_name) 
+}
 csv_name <- glue("{out_path}{pheno}_centiles.csv")
 write.csv(out_df,csv_name)
 

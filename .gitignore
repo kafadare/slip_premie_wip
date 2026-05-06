@@ -3,6 +3,10 @@ logs/
 SLIP_25_11/
 SLIP_25_11_old/
 SLIP_25_11_liza/
+SLIP_25_11_new_models/
+*.csv
+*.pdf
+*.html
 *.err
 *.out
 data_files/

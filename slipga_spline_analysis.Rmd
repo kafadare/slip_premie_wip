@@ -1,0 +1,2905 @@
+---
+title: "slipga_spline_analysis"
+author: "Eren Kafadar"
+date: "2026-06-02"
+output:
+  html_document:
+    df_print: paged
+params:
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/"
+  qnorm_centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/df_zscore_distinct.csv"
+  lookup_stats: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/lookup_stats_distinct.RData"
+  rm : FALSE
+editor_options: 
+  chunk_output_type: console
+---
+# Define params if they do not exist
+```{r params, echo = FALSE}
+if (!exists("params")) {
+  params <- list(
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/",
+  qnorm_centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/df_zscore_distinct.csv",
+  lookup_stats = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/lookup_stats_distinct.RData",
+  rm = FALSE
+  )
+}
+print(params)
+``` 
+
+# Load Packages
+```{r packages, echo = FALSE}
+# Load libraries
+require(dplyr)
+require(glue)
+require(magrittr)
+require(readr)
+require(stringr)
+require(tidyr)
+require(scales)
+require(mgcv)
+require(pbkrtest)
+require(gamlssTools) # Margaret' package
+require(tibble)
+require(lme4)
+require(purrr)
+# For figures/plotting
+require(ggplot2)
+require(gridExtra)
+require(ggsegDKT)
+require(ggseg)
+require(ggpubr)
+require(ggcorrplot)
+require(cowplot)
+require(ggh4x)
+require(egg)
+require(interactions)
+require(growthstandards)
+require(gtsummary)
+require(svglite)
+require(patchwork)
+
+`%nin%` = Negate(`%in%`)
+```
+
+# Controls
+```{r setup, echo = TRUE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+# set command
+save_tables <- TRUE
+plot <- TRUE
+save_figs <- FALSE
+global_measure_vol <- "global_eTIV"
+global_measure_sa <- "global_SurfaceArea"
+global_measure_th <- "global_MeanThickness"
+set.seed(42)
+
+output_folder <- params$output_folder
+qnorm_centiles_path <- params$qnorm_centiles_path
+lookup_stats <- params$lookup_stats
+rm <- params$rm
+```
+
+# Define Paths
+```{r, echo = TRUE}
+# set folder paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars_2511_new/"
+
+# output folder
+output_folder <- params$output_folder
+if (!dir.exists(output_folder)) dir.create(output_folder)
+##  output subfolder paths
+analysis_dfs_folder <- paste0(output_folder, "analysis_dfs/")
+if (!dir.exists(analysis_dfs_folder)) dir.create(analysis_dfs_folder)
+
+models_folder <- paste0(output_folder, "models/")
+if (!dir.exists(models_folder)) dir.create(models_folder)
+
+csv_output_folder <-  paste0(output_folder, "results_csv/")
+if (!dir.exists(csv_output_folder)) dir.create(csv_output_folder)
+
+  betas_folder <- paste0(csv_output_folder, "full_betas/")
+  if (!dir.exists(betas_folder)) dir.create(betas_folder)
+  dkt_folder <- paste0(csv_output_folder, "dkt_betas/")
+  if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
+  slwindow_folder <- paste0(csv_output_folder, "sliding_window/")
+  if (!dir.exists(slwindow_folder)) dir.create(slwindow_folder)
+  sp_stat_folder <- paste0(csv_output_folder, "spline_stats/")
+  if (!dir.exists(sp_stat_folder)) dir.create(sp_stat_folder)
+
+plot_output_folder <- paste0(output_folder, "plots/")
+if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
+
+  ggseg_plot_folder <- paste0(plot_output_folder, "ggseg_plots/")
+  if (!dir.exists(ggseg_plot_folder)) dir.create(ggseg_output_folder)
+  cmd_plot_folder <- paste0(plot_output_folder, "cmd_plots/")
+  if (!dir.exists(cmd_plot_folder)) dir.create(cmd_plot_folder)
+  modelvis_plot_folder <- paste0(plot_output_folder, "modelvis_plots/")
+  if (!dir.exists(modelvis_plot_folder)) dir.create(modelvis_plot_folder)
+  slwindow_plot_folder <- paste0(plot_output_folder, "sliding_window_plots/")
+  if (!dir.exists(slwindow_plot_folder)) dir.create(slwindow_plot_folder)
+
+```
+
+# Load custom functions
+```{r fcts, echo = FALSE}
+source(glue("{code_path}sliding_window.R"))
+source(glue("{code_path}visualize_model_bartfct.R"))
+source(glue("{code_path}vis_spline_noint_EK.R"))
+source(glue("{code_path}model_fitting_fcts.R"))
+source(glue("{code_path}model_extract_fcts.R"))
+
+panel_save <- function(plot, filename, extension, folder, plot_width = 8, plot_height = 10){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300, width = plot_width, height = plot_height)
+}
+```
+
+# Color Specifications
+```{r, echo = TRUE}
+limits = c(-0.3, 0.3)
+low_color = "#4878CF" # blue
+mid_color = "white"
+high_color = "#D65F5F" # red
+
+ga_color = "#6D8299" #muted blue
+bw_color = "#709085" # muted green
+bwp_color = "#A68A64" # muted beige
+```
+
+# Read in data files
+```{r, echo = FALSE}
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+th_vars_median <- c(paste0(th_vars, ".median"))
+namemap <- read.csv(glue("{vars_path}name_mapping.csv"))
+
+df.zscore <- read.csv(qnorm_centiles_path)
+load(lookup_stats)
+
+#determine if there is both mpr and median for thickness values
+median_th_mpr_flag <- any(grepl(".median", names(df.zscore)))
+
+## Define global vars of interest
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
+global_vars_totest_nothick <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea")
+```
+# Code to map raw onto z-score
+```{r}
+#df.zscore %>%  mutate(ga_raw = map2_dbl(gestational_age, "gestational_age", ~ .x*sd_lookup_all[[.y]] + mean_lookup_all[[.y]]))
+```
+
+
+# Global phenotypes, test non-linear vs linear
+
+## GA
+
+```{r}
+if(median_th_mpr_flag){
+  ga_sp_models_global <- fit_bam_models(df.zscore, global_vars_totest_nothick, 
+                                        predictor = "gestational_age",
+                                        covariates = c("qc_var"), save = FALSE)
+  
+  ga_sp_table_global <- extract_bam_features_main(models = ga_sp_models_global, 
+                                                  data = df.zscore, 
+                                                  predictor = "gestational_age",
+                                                  covariates = c("qc_var"))
+  
+  
+  ga_sp_models_meanthick <- fit_bam_models(df.zscore, "global_MeanThickness", 
+                                        predictor = "gestational_age",
+                                        covariates = c("euler_mean_mpr"), save = FALSE)
+  
+  ga_sp_table_meanthick <- extract_bam_features_main(models = ga_sp_models_meanthick, 
+                                                  data = df.zscore, 
+                                                  predictor = "gestational_age",
+                                                  covariates = c("euler_mean_mpr"))
+  
+  ga_sp_models_global <- c(ga_sp_models_global, ga_sp_models_meanthick)
+  ga_sp_table_global <- rbind(ga_sp_table_global, ga_sp_table_meanthick)
+  
+  rm(ga_sp_models_meanthick, ga_sp_table_meanthick)
+} else {
+
+  ga_sp_models_global <- fit_bam_models(df.zscore, global_vars_totest, 
+                                      predictor = "gestational_age",
+                                      covariates = c("qc_var"), save = FALSE)
+  
+  ga_sp_table_global <- extract_bam_features_main(models = ga_sp_models_global, 
+                                                data = df.zscore, 
+                                                predictor = "gestational_age",
+                                                covariates = c("qc_var"))
+}
+```
+#### fit models
+```{r, echo = FALSE}
+ga_sp_models_global <- lapply(global_vars_totest, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore%>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+                       #random = list(participant_id = ~ 1),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+                          #random = list(participant_id = ~ 1),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+ga_sp_models_global <- setNames(ga_sp_models_global, global_vars_totest)
+
+ga_sp_gam_table_global <- as.data.frame(t(sapply(ga_sp_models_global,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(ga_og_edf = summary_og$s.table[1,1], ga_og_p = summary_og$s.table[1,4],
+    ga_nolin_edf = summary_nolin$s.table[1,1], ga_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(ga_sp_gam_table_global) <- global_vars_totest
+
+ga_sp_gam_table_global$ga_og_p_adj <- p.adjust(ga_sp_gam_table_global$ga_og_p, method = "BH")
+ga_sp_gam_table_global$ga_nolin_p_adj <- p.adjust(ga_sp_gam_table_global$ga_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA Smooth Sig: ", dim(ga_sp_gam_table_global %>% filter(ga_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA Smooth Sig AFTER FDR correction: ", dim(ga_sp_gam_table_global %>% filter(ga_nolin_p_adj < 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "ga_sp_global.csv")
+  write.csv(ga_sp_gam_table_global, filename)
+}
+```
+
+#### Visualize
+```{r}
+ga_sp_plots_global <- lapply(ga_sp_models_global, function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  plot_og_scale = TRUE,
+  mean_lookup = mean_lookup_distinct,
+  sd_lookup = sd_lookup_distinct,
+  pnorm_smooth_var = FALSE,
+  smooth_var = "gestational_age",
+  plabels = "Gestational Age",
+  color_point = ga_color,
+  color_line = ga_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (weeks)",
+         title = glue("{modobj$gam$terms[[2]]}")) +
+    theme(axis.title.y = element_blank())
+})
+
+ga_sp_plots_global <- setNames(ga_sp_plots_global, global_vars_totest)
+
+if(save_figs){
+saveRDS(ga_sp_plots_global, glue("{modelvis_plot_folder}ga_sp_plots_global.rds"))
+}
+```
+
+#### Show plots
+```{r, echo = TRUE}
+wrap_plots(ga_sp_plots_global[1:4], ncol = 2)
+wrap_plots(ga_sp_plots_global[5:7], ncol = 2)
+```
+
+## BW
+#### fit models
+```{r, echo = FALSE}
+bw_sp_models_global <- lapply(global_vars_totest, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bw_sp_models_global <- setNames(bw_sp_models_global, global_vars_totest)
+
+bw_sp_gam_table_global <- as.data.frame(t(sapply(bw_sp_models_global,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bw_og_edf = summary_og$s.table[1,1], bw_og_p = summary_og$s.table[1,4],
+    bw_nolin_edf = summary_nolin$s.table[1,1], bw_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bw_sp_gam_table_global) <- global_vars_totest
+
+bw_sp_gam_table_global$bw_og_p_adj <- p.adjust(bw_sp_gam_table_global$bw_og_p, method = "BH")
+bw_sp_gam_table_global$bw_nolin_p_adj <- p.adjust(bw_sp_gam_table_global$bw_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for BW Smooth Sig: ", dim(bw_sp_gam_table_global %>% filter(bw_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for BW Smooth Sig AFTER FDR correction: ", dim(bw_sp_gam_table_global %>% filter(bw_nolin_p_adj < 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bw_sp_global.csv")
+  write.csv(bw_sp_gam_table_global, filename)
+}
+```
+
+#### Visualize
+```{r}
+bw_sp_plots_global <- lapply(bw_sp_models_global, function(x) {
+  
+  modobj = x$full_spline
+  
+model_plot <- visualize_spline_model(
+modobj = modobj,
+smooth_var = "birth_weight_kg",
+plot_og_scale = TRUE,
+mean_lookup = mean_lookup_distinct,
+sd_lookup = sd_lookup_distinct,
+pnorm_smooth_var = FALSE,
+plabels = "Birth Weight",
+color_point = bw_color,
+color_line = bw_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg))",
+         title = glue("{modobj$gam$terms[[2]]}")) +
+    theme(axis.title.y = element_blank())
+})
+
+bw_sp_plots_global <- setNames(bw_sp_plots_global, global_vars_totest)
+
+if(save_figs){
+saveRDS(bw_sp_plots_global, glue("{modelvis_plot_folder}bw_sp_plots_global.rds"))
+}
+```
+
+#### Show plots
+```{r, echo = TRUE}
+wrap_plots(bw_sp_plots_global[1:4], ncol = 2)
+wrap_plots(bw_sp_plots_global[5:7], ncol = 2)
+```
+
+
+## BWP
+#### fit models
+```{r, echo = FALSE}
+bwp_sp_models_global <- lapply(global_vars_totest, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bwp_sp_models_global <- setNames(bwp_sp_models_global, global_vars_totest)
+
+bwp_sp_gam_table_global <- as.data.frame(t(sapply(bwp_sp_models_global,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bwp_og_edf = summary_og$s.table[1,1], bwp_og_p = summary_og$s.table[1,4],
+    bwp_nolin_edf = summary_nolin$s.table[1,1], bwp_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bwp_sp_gam_table_global) <- global_vars_totest
+
+bwp_sp_gam_table_global$bwp_og_p_adj <- p.adjust(bwp_sp_gam_table_global$bwp_og_p, method = "BH")
+bwp_sp_gam_table_global$bwp_nolin_p_adj <- p.adjust(bwp_sp_gam_table_global$bwp_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for bwp Smooth Sig: ", dim(bwp_sp_gam_table_global %>% filter(bwp_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for bwp Smooth Sig AFTER FDR correction: ", dim(bwp_sp_gam_table_global %>% filter(bwp_nolin_p_adj < 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bwp_sp_global.csv")
+  write.csv(bwp_sp_gam_table_global, filename)
+}
+```
+
+#### Visualize
+```{r}
+bwp_sp_plots_global <- lapply(bwp_sp_models_global, function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  plot_og_scale = TRUE,
+  pnorm_smooth_var = TRUE,
+  smooth_var = "bwp_fen",
+  plabels = "Birth Weight Percentile",
+  color_point = bwp_color,
+  color_line = bwp_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight Percentile)",
+         title = glue("{modobj$gam$terms[[2]]}")) +
+    theme(axis.title.y = element_blank())
+})
+
+bwp_sp_plots_global <- setNames(bwp_sp_plots_global, global_vars_totest)
+
+if(save_figs){
+saveRDS(bwp_sp_plots_global, glue("{modelvis_plot_folder}bwp_sp_plots_global.rds"))
+}
+```
+
+#### Show plots
+```{r, echo = TRUE}
+wrap_plots(bwp_sp_plots_global[1:4], ncol = 2)
+wrap_plots(bwp_sp_plots_global[5:7], ncol = 2)
+```
+
+# Regional phenotypes, test linear vs spline fit
+
+## Volume
+
+### GA
+
+##### fit models
+```{r, echo = FALSE}
+ga_sp_models_vol <- lapply(vol_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+                       #random = list(participant_id = ~ 1),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+                          #random = list(participant_id = ~ 1),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+ga_sp_models_vol <- setNames(ga_sp_models_vol, vol_vars)
+
+ga_sp_gam_table_vol <- as.data.frame(t(sapply(ga_sp_models_vol,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(ga_og_edf = summary_og$s.table[1,1], ga_og_p = summary_og$s.table[1,4],
+    ga_nolin_edf = summary_nolin$s.table[1,1], ga_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(ga_sp_gam_table_vol) <- vol_vars
+
+ga_sp_gam_table_vol$ga_og_p_adj <- p.adjust(ga_sp_gam_table_vol$ga_og_p, method = "BH")
+ga_sp_gam_table_vol$ga_nolin_p_adj <- p.adjust(ga_sp_gam_table_vol$ga_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA Smooth Sig: ", dim(ga_sp_gam_table_vol %>% filter(ga_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA Smooth Sig AFTER FDR correction: ", dim(ga_sp_gam_table_vol %>% filter(ga_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with GA smooth sig but not above linear AFTER FDR correction: ", dim(ga_sp_gam_table_vol %>% filter(ga_og_p_adj < 0.05 & ga_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "ga_sp_vol.csv")
+  write.csv(ga_sp_gam_table_vol, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for GA Smooth Sig: ", rownames(ga_sp_gam_table_vol %>% filter(ga_nolin_p_adj < 0.05))))
+
+print(paste0("GA smooth sig but not above linear AFTER FDR correction: ", rownames(ga_sp_gam_table_vol %>% filter(ga_og_p_adj < 0.05 & ga_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(ga_sp_gam_table_vol), perl = TRUE)
+
+ga_sp_gam_table_vol$label <- rownames(ga_sp_gam_table_vol) %>% 
+  sub("aparc_GrayVol_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+ga_sp_gam_table_vol$label[cols_edit] <- gsub("_", "-", ga_sp_gam_table_vol$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(ga_sp_gam_table_vol, ggseg::dk, by = "label")
+plot_data_aseg <- merge(ga_sp_gam_table_vol, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(ga_sp_vol_noplot <- ga_sp_gam_table_vol[!(ga_sp_gam_table_vol$label %in% plot_data_dkt$label) & !(ga_sp_gam_table_vol$label %in% plot_data_aseg$label),])
+
+# plots
+(ga_sp_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "GA, Spline Sig, Volume"))
+
+(ga_splin_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "GA, Spline Sig over Lin, Volume"))
+
+(ga_sp_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = ga_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "GA, Spline Sig, Volume"))
+
+(ga_splin_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = ga_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "GA, Spline Sig over Lin, Volume"))
+
+if(save_figs == TRUE){
+panel_save(ga_sp_dkt_vol_plot, "ga-sp-dkt-vol", "svg", ggseg_plot_folder)
+panel_save(ga_splin_dkt_vol_plot, "ga-splin-dkt-vol", "svg", ggseg_plot_folder)
+panel_save(ga_sp_aseg_vol_plot , "ga-sp-aseg-vol", "svg", ggseg_plot_folder)
+panel_save(ga_splin_aseg_vol_plot , "ga-splin-aseg-vol", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize models themselves
+```{r}
+ga_sp_plots_vol <- lapply(ga_sp_models_vol, function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  smooth_var = "gestational_age",
+  plabels = "Gestational Age",
+  color_point = ga_color,
+  color_line = ga_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (weeks)",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(breaks = sapply(c(24*7, 26*7, 28*7, 30*7, 32*7, 34*7, 36*7, 38*7, 40*7, 42*7), function(x){
+    map2_dbl(x, "gestational_age", ~ (.x-mean_lookup_distinct[[.y]])/sd_lookup_distinct[[.y]]) }),
+                     labels = c(24, 26, 28, 30, 32, 34, 36, 38, 40, 42)) +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+ga_sp_plots_vol <- setNames(ga_sp_plots_vol, vol_vars)
+
+if(save_figs){
+saveRDS(ga_sp_plots_vol, glue("{modelvis_plot_folder}ga_sp_plots_vol.rds"))
+}
+```
+
+##### Show plots
+```{r, echo = TRUE}
+wrapped_ga_sp_vol <- lapply(split(ga_sp_plots_vol, ceiling(seq_along(ga_sp_plots_vol) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_ga_sp_vol, print)
+```
+
+
+### BW
+##### fit models
+```{r, echo = FALSE}
+bw_sp_models_vol <- lapply(vol_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bw_sp_models_vol <- setNames(bw_sp_models_vol, vol_vars)
+
+bw_sp_gam_table_vol <- as.data.frame(t(sapply(bw_sp_models_vol,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bw_og_edf = summary_og$s.table[1,1], bw_og_p = summary_og$s.table[1,4],
+    bw_nolin_edf = summary_nolin$s.table[1,1], bw_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bw_sp_gam_table_vol) <- vol_vars
+
+bw_sp_gam_table_vol$bw_og_p_adj <- p.adjust(bw_sp_gam_table_vol$bw_og_p, method = "BH")
+bw_sp_gam_table_vol$bw_nolin_p_adj <- p.adjust(bw_sp_gam_table_vol$bw_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for BW Smooth Sig: ", dim(bw_sp_gam_table_vol %>% filter(bw_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for BW Smooth Sig AFTER FDR correction: ", dim(bw_sp_gam_table_vol %>% filter(bw_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with BW smooth sig but not above linear AFTER FDR correction: ", dim(bw_sp_gam_table_vol %>% filter(bw_og_p_adj < 0.05 & bw_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bw_sp_vol.csv")
+  write.csv(bw_sp_gam_table_vol, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for BW Smooth Sig: ", rownames(bw_sp_gam_table_vol %>% filter(bw_nolin_p_adj < 0.05))))
+
+print(paste0("BW smooth sig but not above linear AFTER FDR correction: ", rownames(bw_sp_gam_table_vol %>% filter(bw_og_p_adj < 0.05 & bw_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bw_sp_gam_table_vol), perl = TRUE)
+
+bw_sp_gam_table_vol$label <- rownames(bw_sp_gam_table_vol) %>% 
+  sub("aparc_GrayVol_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bw_sp_gam_table_vol$label[cols_edit] <- gsub("_", "-", bw_sp_gam_table_vol$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw_sp_gam_table_vol, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bw_sp_gam_table_vol, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bw_sp_vol_noplot <- bw_sp_gam_table_vol[!(bw_sp_gam_table_vol$label %in% plot_data_dkt$label) & !(bw_sp_gam_table_vol$label %in% plot_data_aseg$label),])
+
+# plots
+(bw_sp_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BW, Spline Sig, Volume"))
+
+(bw_splin_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BW, Spline Sig over Lin, Volume"))
+
+(bw_sp_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bw_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BW, Spline Sig, Volume"))
+
+(bw_splin_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bw_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BW, Spline Sig over Lin, Volume"))
+
+if(save_figs == TRUE){
+panel_save(bw_sp_dkt_vol_plot, "bw-sp-dkt-vol", "svg", ggseg_plot_folder)
+panel_save(bw_splin_dkt_vol_plot, "bw-splin-dkt-vol", "svg", ggseg_plot_folder)
+panel_save(bw_sp_aseg_vol_plot , "bw-sp-aseg-vol", "svg", ggseg_plot_folder)
+panel_save(bw_splin_aseg_vol_plot , "bw-splin-aseg-vol", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize
+```{r}
+bw_sp_plots_vol <- lapply(bw_sp_models_vol, function(x) {
+  
+  modobj = x$full_spline
+  
+  # model_plot <- visualize_spline_model(
+  # modobj = modobj,
+  # smooth_var = "birth_weight_kg",
+  # plabels = "Birth Weight",
+  # color_point = bw_color,
+  # color_line = bw_color)
+  
+model_plot <- visualize_spline_model(
+modobj = modobj,
+smooth_var = "birth_weight_kg",
+mean_lookup = mean_lookup_distinct,
+sd_lookup = sd_lookup_distinct,
+pnorm_smooth_var = FALSE,ga
+plabels = "Birth Weight",
+color_point = bw_color,
+color_line = bw_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg))",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank())
+  # scale_x_continuous(labels = function(x) round(map2_dbl(x, "birth_weight_kg", ~ (.x*sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]] ) ) ) +
+  # scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+bw_sp_plots_vol <- setNames(bw_sp_plots_vol, vol_vars)
+
+if(save_figs){
+saveRDS(bw_sp_plots_vol, glue("{modelvis_plot_folder}bw_sp_plots_vol.rds"))
+}
+```
+glue("{modobj$gamglue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}"))
+##### Show plots
+```{r, echo = TRUE}
+wrapped_bw_sp_vol <- lapply(split(bw_sp_plots_vol, ceiling(seq_along(bw_sp_plots_vol) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_bw_sp_vol, print)
+```
+
+
+### BWP
+##### fit models
+```{r, echo = FALSE}
+bwp_sp_models_vol <- lapply(vol_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bwp_sp_models_vol <- setNames(bwp_sp_models_vol, vol_vars)
+
+bwp_sp_gam_table_vol <- as.data.frame(t(sapply(bwp_sp_models_vol,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bwp_og_edf = summary_og$s.table[1,1], bwp_og_p = summary_og$s.table[1,4],
+    bwp_nolin_edf = summary_nolin$s.table[1,1], bwp_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bwp_sp_gam_table_vol) <- vol_vars
+
+bwp_sp_gam_table_vol$bwp_og_p_adj <- p.adjust(bwp_sp_gam_table_vol$bwp_og_p, method = "BH")
+bwp_sp_gam_table_vol$bwp_nolin_p_adj <- p.adjust(bwp_sp_gam_table_vol$bwp_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for BWP Smooth Sig: ", dim(bwp_sp_gam_table_vol %>% filter(bwp_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for BWP Smooth Sig AFTER FDR correction: ", dim(bwp_sp_gam_table_vol %>% filter(bwp_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with BWP smooth sig but not above linear AFTER FDR correction: ", dim(bwp_sp_gam_table_vol %>% filter(bwp_og_p_adj < 0.05 & bwp_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bwp_sp_vol.csv")
+  write.csv(bwp_sp_gam_table_vol, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for bwp Smooth Sig: ", rownames(bwp_sp_gam_table_vol %>% filter(bwp_nolin_p_adj < 0.05))))
+
+print(paste0("bwp smooth sig but not above linear AFTER FDR correction: ", rownames(bwp_sp_gam_table_vol %>% filter(bwp_og_p_adj < 0.05 & bwp_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bwp_sp_gam_table_vol), perl = TRUE)
+
+bwp_sp_gam_table_vol$label <- rownames(bwp_sp_gam_table_vol) %>% 
+  sub("aparc_GrayVol_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bwp_sp_gam_table_vol$label[cols_edit] <- gsub("_", "-", bwp_sp_gam_table_vol$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bwp_sp_gam_table_vol, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bwp_sp_gam_table_vol, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bwp_sp_vol_noplot <- bwp_sp_gam_table_vol[!(bwp_sp_gam_table_vol$label %in% plot_data_dkt$label) & !(bwp_sp_gam_table_vol$label %in% plot_data_aseg$label),])
+
+# plots
+(bwp_sp_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwp_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BWP, Spline Sig, Volume"))
+
+(bwp_splin_dkt_vol_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwp_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BWP, Spline Sig over Lin, Volume"))
+
+(bwp_sp_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bwp_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BWP, Spline Sig, Volume"))
+
+(bwp_splin_aseg_vol_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bwp_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BWP, Spline Sig over Lin, Volume"))
+
+if(save_figs == TRUE){
+panel_save(bwp_sp_dkt_vol_plot, "bwp-sp-dkt-vol", "svg", ggseg_plot_folder)
+panel_save(bwp_splin_dkt_vol_plot, "bwp-splin-dkt-vol", "svg", ggseg_plot_folder)
+panel_save(bwp_sp_aseg_vol_plot , "bwp-sp-aseg-vol", "svg", ggseg_plot_folder)
+panel_save(bwp_splin_aseg_vol_plot , "bwp-splin-aseg-vol", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize
+```{r}
+bwp_sp_plots_vol <- lapply(bwp_sp_models_vol, function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  smooth_var = "bwp_fen",
+  plabels = "Birth Weight Percentile",
+  color_point = bwp_color,
+  color_line = bwp_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg))",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) signif(pnorm(x)*100, 2)) +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+bwp_sp_plots_vol <- setNames(bwp_sp_plots_vol, vol_vars)
+
+if(save_figs){
+saveRDS(bwp_sp_plots_vol, glue("{modelvis_plot_folder}bwp_sp_plots_vol.rds"))
+}
+```
+
+##### Show plots
+```{r, echo = TRUE}
+wrapped_bwp_sp_vol <- lapply(split(bwp_sp_plots_vol, ceiling(seq_along(bwp_sp_plots_vol) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_bwp_sp_vol, print)
+```
+
+
+
+## Surface Area
+
+### GA
+
+##### fit models
+```{r, echo = FALSE}
+ga_sp_models_sa <- lapply(sa_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+                       #random = list(participant_id = ~ 1),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+                          #random = list(participant_id = ~ 1),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+ga_sp_models_sa <- setNames(ga_sp_models_sa, sa_vars)
+
+ga_sp_gam_table_sa <- as.data.frame(t(sapply(ga_sp_models_sa,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(ga_og_edf = summary_og$s.table[1,1], ga_og_p = summary_og$s.table[1,4],
+    ga_nolin_edf = summary_nolin$s.table[1,1], ga_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(ga_sp_gam_table_sa) <- sa_vars
+
+ga_sp_gam_table_sa$ga_og_p_adj <- p.adjust(ga_sp_gam_table_sa$ga_og_p, method = "BH")
+ga_sp_gam_table_sa$ga_nolin_p_adj <- p.adjust(ga_sp_gam_table_sa$ga_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA Smooth Sig: ", dim(ga_sp_gam_table_sa %>% filter(ga_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA Smooth Sig AFTER FDR correction: ", dim(ga_sp_gam_table_sa %>% filter(ga_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with GA smooth sig but not above linear AFTER FDR correction: ", dim(ga_sp_gam_table_sa %>% filter(ga_og_p_adj < 0.05 & ga_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "ga_sp_sa.csv")
+  write.csv(ga_sp_gam_table_sa, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for GA Smooth Sig: ", rownames(ga_sp_gam_table_sa %>% filter(ga_nolin_p_adj < 0.05))))
+
+print(paste0("GA smooth sig but not above linear AFTER FDR correction: ", rownames(ga_sp_gam_table_sa %>% filter(ga_og_p_adj < 0.05 & ga_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(ga_sp_gam_table_sa), perl = TRUE)
+
+ga_sp_gam_table_sa$label <- rownames(ga_sp_gam_table_sa) %>% 
+  sub("aparc_Graysa_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+ga_sp_gam_table_sa$label[cols_edit] <- gsub("_", "-", ga_sp_gam_table_sa$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(ga_sp_gam_table_sa, ggseg::dk, by = "label")
+plot_data_aseg <- merge(ga_sp_gam_table_sa, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(ga_sp_sa_noplot <- ga_sp_gam_table_sa[!(ga_sp_gam_table_sa$label %in% plot_data_dkt$label) & !(ga_sp_gam_table_sa$label %in% plot_data_aseg$label),])
+
+# plots
+(ga_sp_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "GA, Spline Sig, SA"))
+
+(ga_splin_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "GA, Spline Sig over Lin, SA"))
+
+(ga_sp_aseg_sa_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = ga_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "GA, Spline Sig, SA"))
+
+(ga_splin_aseg_sa_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = ga_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "GA, Spline Sig over Lin, SA"))
+
+if(save_figs == TRUE){
+panel_save(ga_sp_dkt_sa_plot, "ga-sp-dkt-sa", "svg", ggseg_plot_folder)
+panel_save(ga_splin_dkt_sa_plot, "ga-splin-dkt-sa", "svg", ggseg_plot_folder)
+panel_save(ga_sp_aseg_sa_plot , "ga-sp-aseg-sa", "svg", ggseg_plot_folder)
+panel_save(ga_splin_aseg_sa_plot , "ga-splin-aseg-sa", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize models themselves
+```{r}
+ga_sp_plots_sa <- lapply(ga_sp_models_sa, function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  smooth_var = "gestational_age",
+  plabels = "Gestational Age",
+  color_point = ga_color,
+  color_line = ga_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (weeks)",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(breaks = sapply(c(24*7, 26*7, 28*7, 30*7, 32*7, 34*7, 36*7, 38*7, 40*7, 42*7), function(x){
+    map2_dbl(x, "gestational_age", ~ (.x-mean_lookup_distinct[[.y]])/sd_lookup_distinct[[.y]]) }),
+                     labels = c(24, 26, 28, 30, 32, 34, 36, 38, 40, 42)) +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+ga_sp_plots_sa <- setNames(ga_sp_plots_sa, sa_vars)
+
+if(save_figs){
+saveRDS(ga_sp_plots_sa, glue("{modelvis_plot_folder}ga_sp_plots_sa.rds"))
+}
+```
+
+##### Show plots
+```{r, echo = TRUE}
+wrapped_ga_sp_sa <- lapply(split(ga_sp_plots_sa, ceiling(seq_along(ga_sp_plots_sa) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_ga_sp_sa, print)
+```
+
+
+### BW
+##### fit models
+```{r, echo = FALSE}
+bw_sp_models_sa <- lapply(sa_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bw_sp_models_sa <- setNames(bw_sp_models_sa, sa_vars)
+
+bw_sp_gam_table_sa <- as.data.frame(t(sapply(bw_sp_models_sa,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bw_og_edf = summary_og$s.table[1,1], bw_og_p = summary_og$s.table[1,4],
+    bw_nolin_edf = summary_nolin$s.table[1,1], bw_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bw_sp_gam_table_sa) <- sa_vars
+
+bw_sp_gam_table_sa$bw_og_p_adj <- p.adjust(bw_sp_gam_table_sa$bw_og_p, method = "BH")
+bw_sp_gam_table_sa$bw_nolin_p_adj <- p.adjust(bw_sp_gam_table_sa$bw_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for BW Smooth Sig: ", dim(bw_sp_gam_table_sa %>% filter(bw_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for BW Smooth Sig AFTER FDR correction: ", dim(bw_sp_gam_table_sa %>% filter(bw_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with BW smooth sig but not above linear AFTER FDR correction: ", dim(bw_sp_gam_table_sa %>% filter(bw_og_p_adj < 0.05 & bw_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bw_sp_sa.csv")
+  write.csv(bw_sp_gam_table_sa, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for BW Smooth Sig: ", rownames(bw_sp_gam_table_sa %>% filter(bw_nolin_p_adj < 0.05))))
+
+print(paste0("BW smooth sig but not above linear AFTER FDR correction: ", rownames(bw_sp_gam_table_sa %>% filter(bw_og_p_adj < 0.05 & bw_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bw_sp_gam_table_sa), perl = TRUE)
+
+bw_sp_gam_table_sa$label <- rownames(bw_sp_gam_table_sa) %>% 
+  sub("aparc_Graysa_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bw_sp_gam_table_sa$label[cols_edit] <- gsub("_", "-", bw_sp_gam_table_sa$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw_sp_gam_table_sa, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bw_sp_gam_table_sa, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bw_sp_sa_noplot <- bw_sp_gam_table_sa[!(bw_sp_gam_table_sa$label %in% plot_data_dkt$label) & !(bw_sp_gam_table_sa$label %in% plot_data_aseg$label),])
+
+# plots
+(bw_sp_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BW, Spline Sig, SA"))
+
+(bw_splin_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BW, Spline Sig over Lin, SA"))
+
+(bw_sp_aseg_sa_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bw_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BW, Spline Sig, SA"))
+
+(bw_splin_aseg_sa_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bw_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BW, Spline Sig over Lin, SA"))
+
+if(save_figs == TRUE){
+panel_save(bw_sp_dkt_sa_plot, "bw-sp-dkt-sa", "svg", ggseg_plot_folder)
+panel_save(bw_splin_dkt_sa_plot, "bw-splin-dkt-sa", "svg", ggseg_plot_folder)
+panel_save(bw_sp_aseg_sa_plot , "bw-sp-aseg-sa", "svg", ggseg_plot_folder)
+panel_save(bw_splin_aseg_sa_plot , "bw-splin-aseg-sa", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize
+```{r}
+bw_sp_plots_sa <- lapply(bw_sp_models_sa, function(x) {
+  
+  modobj = x$full_spline
+  
+  # model_plot <- visualize_spline_model(
+  # modobj = modobj,
+  # smooth_var = "birth_weight_kg",
+  # plabels = "Birth Weight",
+  # color_point = bw_color,
+  # color_line = bw_color)
+  
+model_plot <- visualize_spline_model(
+modobj = modobj,
+smooth_var = "birth_weight_kg",
+mean_lookup = mean_lookup_distinct,
+sd_lookup = sd_lookup_distinct,
+pnorm_smooth_var = FALSE,
+plabels = "Birth Weight",
+color_point = bw_color,
+color_line = bw_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg))",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank())
+  # scale_x_continuous(labels = function(x) round(map2_dbl(x, "birth_weight_kg", ~ (.x*sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]] ) ) ) +
+  # scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+bw_sp_plots_sa <- setNames(bw_sp_plots_sa, sa_vars)
+
+if(save_figs){
+saveRDS(bw_sp_plots_sa, glue("{modelvis_plot_folder}bw_sp_plots_sa.rds"))
+}
+```
+glue("{modobj$gamglue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}"))
+##### Show plots
+```{r, echo = TRUE}
+wrapped_bw_sp_sa <- lapply(split(bw_sp_plots_sa, ceiling(seq_along(bw_sp_plots_sa) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_bw_sp_sa, print)
+```
+
+
+### BWP
+##### fit models
+```{r, echo = FALSE}
+bwp_sp_models_sa <- lapply(sa_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bwp_sp_models_sa <- setNames(bwp_sp_models_sa, sa_vars)
+
+bwp_sp_gam_table_sa <- as.data.frame(t(sapply(bwp_sp_models_sa,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bwp_og_edf = summary_og$s.table[1,1], bwp_og_p = summary_og$s.table[1,4],
+    bwp_nolin_edf = summary_nolin$s.table[1,1], bwp_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bwp_sp_gam_table_sa) <- sa_vars
+
+bwp_sp_gam_table_sa$bwp_og_p_adj <- p.adjust(bwp_sp_gam_table_sa$bwp_og_p, method = "BH")
+bwp_sp_gam_table_sa$bwp_nolin_p_adj <- p.adjust(bwp_sp_gam_table_sa$bwp_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for BWP Smooth Sig: ", dim(bwp_sp_gam_table_sa %>% filter(bwp_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for BWP Smooth Sig AFTER FDR correction: ", dim(bwp_sp_gam_table_sa %>% filter(bwp_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with BWP smooth sig but not above linear AFTER FDR correction: ", dim(bwp_sp_gam_table_sa %>% filter(bwp_og_p_adj < 0.05 & bwp_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bwp_sp_sa.csv")
+  write.csv(bwp_sp_gam_table_sa, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for bwp Smooth Sig: ", rownames(bwp_sp_gam_table_sa %>% filter(bwp_nolin_p_adj < 0.05))))
+
+print(paste0("bwp smooth sig but not above linear AFTER FDR correction: ", rownames(bwp_sp_gam_table_sa %>% filter(bwp_og_p_adj < 0.05 & bwp_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bwp_sp_gam_table_sa), perl = TRUE)
+
+bwp_sp_gam_table_sa$label <- rownames(bwp_sp_gam_table_sa) %>% 
+  sub("aparc_Graysa_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bwp_sp_gam_table_sa$label[cols_edit] <- gsub("_", "-", bwp_sp_gam_table_sa$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bwp_sp_gam_table_sa, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bwp_sp_gam_table_sa, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bwp_sp_sa_noplot <- bwp_sp_gam_table_sa[!(bwp_sp_gam_table_sa$label %in% plot_data_dkt$label) & !(bwp_sp_gam_table_sa$label %in% plot_data_aseg$label),])
+
+# plots
+(bwp_sp_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwp_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BWP, Spline Sig, SA"))
+
+(bwp_splin_dkt_sa_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwp_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BWP, Spline Sig over Lin, SA"))
+
+(bwp_sp_aseg_sa_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bwp_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BWP, Spline Sig, SA"))
+
+(bwp_splin_aseg_sa_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bwp_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BWP, Spline Sig over Lin, SA"))
+
+if(save_figs == TRUE){
+panel_save(bwp_sp_dkt_sa_plot, "bwp-sp-dkt-sa", "svg", ggseg_plot_folder)
+panel_save(bwp_splin_dkt_sa_plot, "bwp-splin-dkt-sa", "svg", ggseg_plot_folder)
+panel_save(bwp_sp_aseg_sa_plot , "bwp-sp-aseg-sa", "svg", ggseg_plot_folder)
+panel_save(bwp_splin_aseg_sa_plot , "bwp-splin-aseg-sa", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize
+```{r}
+bwp_sp_plots_sa <- lapply(bwp_sp_models_sa, function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  smooth_var = "bwp_fen",
+  plabels = "Birth Weight Percentile",
+  color_point = bwp_color,
+  color_line = bwp_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg))",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) signif(pnorm(x)*100, 2)) +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+bwp_sp_plots_sa <- setNames(bwp_sp_plots_sa, sa_vars)
+
+if(save_figs){
+saveRDS(bwp_sp_plots_sa, glue("{modelvis_plot_folder}bwp_sp_plots_sa.rds"))
+}
+```
+
+##### Show plots
+```{r, echo = TRUE}
+wrapped_bwp_sp_sa <- lapply(split(bwp_sp_plots_sa, ceiling(seq_along(bwp_sp_plots_sa) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_bwp_sp_sa, print)
+```
+
+
+
+## Thickness
+
+### GA
+
+##### fit models
+```{r, echo = FALSE}
+ga_sp_models_th <- lapply(th_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(gestational_age) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(gestational_age, m = c(2,0)) + gestational_age + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+                       #random = list(participant_id = ~ 1),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+                          #random = list(participant_id = ~ 1),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+ga_sp_models_th <- setNames(ga_sp_models_th, th_vars)
+
+ga_sp_gam_table_th <- as.data.frame(t(sapply(ga_sp_models_th,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(ga_og_edf = summary_og$s.table[1,1], ga_og_p = summary_og$s.table[1,4],
+    ga_nolin_edf = summary_nolin$s.table[1,1], ga_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(ga_sp_gam_table_th) <- th_vars
+
+ga_sp_gam_table_th$ga_og_p_adj <- p.adjust(ga_sp_gam_table_th$ga_og_p, method = "BH")
+ga_sp_gam_table_th$ga_nolin_p_adj <- p.adjust(ga_sp_gam_table_th$ga_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA Smooth Sig: ", dim(ga_sp_gam_table_th %>% filter(ga_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA Smooth Sig AFTER FDR correction: ", dim(ga_sp_gam_table_th %>% filter(ga_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with GA smooth sig but not above linear AFTER FDR correction: ", dim(ga_sp_gam_table_th %>% filter(ga_og_p_adj < 0.05 & ga_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "ga_sp_th.csv")
+  write.csv(ga_sp_gam_table_th, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for GA Smooth Sig: ", rownames(ga_sp_gam_table_th %>% filter(ga_nolin_p_adj < 0.05))))
+
+print(paste0("GA smooth sig but not above linear AFTER FDR correction: ", rownames(ga_sp_gam_table_th %>% filter(ga_og_p_adj < 0.05 & ga_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(ga_sp_gam_table_th), perl = TRUE)
+
+ga_sp_gam_table_th$label <- rownames(ga_sp_gam_table_th) %>% 
+  sub("aparc_ThickAvg_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+ga_sp_gam_table_th$label[cols_edit] <- gsub("_", "-", ga_sp_gam_table_th$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(ga_sp_gam_table_th, ggseg::dk, by = "label")
+
+# Regions not matched in atlases
+(ga_sp_th_noplot <- ga_sp_gam_table_th[!(ga_sp_gam_table_th$label %in% plot_data_dkt$label),])
+
+# plots
+(ga_sp_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "GA, Spline Sig, th"))
+
+(ga_splin_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = ga_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = ga_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "GA, Spline Sig over Lin, th"))
+
+if(save_figs == TRUE){
+panel_save(ga_sp_dkt_th_plot, "ga-sp-dkt-th", "svg", ggseg_plot_folder)
+panel_save(ga_splin_dkt_th_plot, "ga-splin-dkt-th", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize models themselves
+```{r}
+ga_sp_plots_th <- lapply(ga_sp_models_th[rownames(ga_sp_gam_table_th %>% filter(ga_og_p_adj < 0.05))], function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  plot_og_scale = TRUE,
+  mean_lookup = mean_lookup_distinct,
+  sd_lookup = sd_lookup_distinct,
+  pnorm_smooth_var = FALSE,
+  smooth_var = "gestational_age",
+  plabels = "Gestational Age",
+  color_point = ga_color,
+  color_line = ga_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (weeks)",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank())
+  # scale_x_continuous(breaks = sapply(c(24*7, 26*7, 28*7, 30*7, 32*7, 34*7, 36*7, 38*7, 40*7, 42*7), function(x){
+  #   map2_dbl(x, "gestational_age", ~ (.x-mean_lookup_distinct[[.y]])/sd_lookup_distinct[[.y]]) }),
+  #                    labels = c(24, 26, 28, 30, 32, 34, 36, 38, 40, 42)) +
+  # scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+ga_sp_plots_th <- setNames(ga_sp_plots_th, rownames(ga_sp_gam_table_th %>% filter(ga_og_p_adj < 0.05)))
+
+if(save_figs){
+saveRDS(ga_sp_plots_th, glue("{modelvis_plot_folder}ga_sp_plots_th.rds"))
+}
+```
+
+##### Show plots
+```{r, echo = TRUE}
+wrapped_ga_sp_th <- lapply(split(ga_sp_plots_th, ceiling(seq_along(ga_sp_plots_th) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_ga_sp_th, print)
+```
+
+
+### BW
+##### fit models
+```{r, echo = FALSE}
+bw_sp_models_th <- lapply(th_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(birth_weight_kg) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(birth_weight_kg, m = c(2,0)) + birth_weight_kg + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bw_sp_models_th <- setNames(bw_sp_models_th, th_vars)
+
+bw_sp_gam_table_th <- as.data.frame(t(sapply(bw_sp_models_th,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bw_og_edf = summary_og$s.table[1,1], bw_og_p = summary_og$s.table[1,4],
+    bw_nolin_edf = summary_nolin$s.table[1,1], bw_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bw_sp_gam_table_th) <- th_vars
+
+bw_sp_gam_table_th$bw_og_p_adj <- p.adjust(bw_sp_gam_table_th$bw_og_p, method = "BH")
+bw_sp_gam_table_th$bw_nolin_p_adj <- p.adjust(bw_sp_gam_table_th$bw_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for BW Smooth Sig: ", dim(bw_sp_gam_table_th %>% filter(bw_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for BW Smooth Sig AFTER FDR correction: ", dim(bw_sp_gam_table_th %>% filter(bw_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with BW smooth sig but not above linear AFTER FDR correction: ", dim(bw_sp_gam_table_th %>% filter(bw_og_p_adj < 0.05 & bw_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bw_sp_th.csv")
+  write.csv(bw_sp_gam_table_th, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for BW Smooth Sig: ", rownames(bw_sp_gam_table_th %>% filter(bw_nolin_p_adj < 0.05))))
+
+print(paste0("BW smooth sig but not above linear AFTER FDR correction: ", rownames(bw_sp_gam_table_th %>% filter(bw_og_p_adj < 0.05 & bw_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bw_sp_gam_table_th), perl = TRUE)
+
+bw_sp_gam_table_th$label <- rownames(bw_sp_gam_table_th) %>% 
+  sub("aparc_Grayth_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bw_sp_gam_table_th$label[cols_edit] <- gsub("_", "-", bw_sp_gam_table_th$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bw_sp_gam_table_th, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bw_sp_gam_table_th, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bw_sp_th_noplot <- bw_sp_gam_table_th[!(bw_sp_gam_table_th$label %in% plot_data_dkt$label) & !(bw_sp_gam_table_th$label %in% plot_data_aseg$label),])
+
+# plots
+(bw_sp_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BW, Spline Sig, th"))
+
+(bw_splin_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bw_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BW, Spline Sig over Lin, th"))
+
+(bw_sp_aseg_th_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bw_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BW, Spline Sig, th"))
+
+(bw_splin_aseg_th_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bw_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bw_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BW, Spline Sig over Lin, th"))
+
+if(save_figs == TRUE){
+panel_save(bw_sp_dkt_th_plot, "bw-sp-dkt-th", "svg", ggseg_plot_folder)
+panel_save(bw_splin_dkt_th_plot, "bw-splin-dkt-th", "svg", ggseg_plot_folder)
+panel_save(bw_sp_aseg_th_plot , "bw-sp-aseg-th", "svg", ggseg_plot_folder)
+panel_save(bw_splin_aseg_th_plot , "bw-splin-aseg-th", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize
+```{r}
+bw_sp_plots_th <- lapply(bw_sp_models_th, function(x) {
+  
+  modobj = x$full_spline
+  
+  # model_plot <- visualize_spline_model(
+  # modobj = modobj,
+  # smooth_var = "birth_weight_kg",
+  # plabels = "Birth Weight",
+  # color_point = bw_color,
+  # color_line = bw_color)
+  
+model_plot <- visualize_spline_model(
+modobj = modobj,
+smooth_var = "birth_weight_kg",
+mean_lookup = mean_lookup_distinct,
+sd_lookup = sd_lookup_distinct,
+pnorm_smooth_var = FALSE,
+plabels = "Birth Weight",
+color_point = bw_color,
+color_line = bw_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg))",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank())
+  # scale_x_continuous(labels = function(x) round(map2_dbl(x, "birth_weight_kg", ~ (.x*sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]] ) ) ) +
+  # scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+bw_sp_plots_th <- setNames(bw_sp_plots_th, th_vars)
+
+if(save_figs){
+saveRDS(bw_sp_plots_th, glue("{modelvis_plot_folder}bw_sp_plots_th.rds"))
+}
+```
+glue("{modobj$gamg lue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}"))
+##### Show plots
+```{r, echo = TRUE}
+wrapped_bw_sp_th <- lapply(split(bw_sp_plots_th, ceiling(seq_along(bw_sp_plots_th) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_bw_sp_th, print)
+```
+
+
+### BWP
+##### fit models
+```{r, echo = FALSE}
+bwp_sp_models_th <- lapply(th_vars, function(x) {
+  dat <- df.zscore
+  if(grepl("Thick", x)) {
+    dat <- df.zscore %>% filter(age_over2_adj == TRUE)
+      if(median_th_mpr_flag == TRUE){
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + euler_mean_mpr"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + euler_mean_mpr"))
+        }
+      } else {
+         form_og <- as.formula(glue("{x} ~ s(bwp_fen) + qc_var"))
+         form_nolin <- as.formula(glue("{x} ~ s(bwp_fen, m = c(2,0)) + bwp_fen + qc_var"))
+      }
+  gam_model_og <- gamm(as.formula(form_og),
+              data = dat)
+  gam_model_nolin <- gamm(as.formula(form_nolin),
+              data = dat)
+  return(list(full_spline = gam_model_og,
+         no_linear = gam_model_nolin)) })
+
+bwp_sp_models_th <- setNames(bwp_sp_models_th, th_vars)
+
+bwp_sp_gam_table_th <- as.data.frame(t(sapply(bwp_sp_models_th,function(x) {
+  summary_og <- summary(x$full_spline$gam)
+  summary_nolin <- summary(x$no_linear$gam)
+  c(bwp_og_edf = summary_og$s.table[1,1], bwp_og_p = summary_og$s.table[1,4],
+    bwp_nolin_edf = summary_nolin$s.table[1,1], bwp_nolin_p = summary_nolin$s.table[1,4])
+  })))
+
+rownames(bwp_sp_gam_table_th) <- th_vars
+
+bwp_sp_gam_table_th$bwp_og_p_adj <- p.adjust(bwp_sp_gam_table_th$bwp_og_p, method = "BH")
+bwp_sp_gam_table_th$bwp_nolin_p_adj <- p.adjust(bwp_sp_gam_table_th$bwp_nolin_p, method = "BH")
+
+print(paste0("Number of significant IDPs for BWP Smooth Sig: ", dim(bwp_sp_gam_table_th %>% filter(bwp_nolin_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for BWP Smooth Sig AFTER FDR correction: ", dim(bwp_sp_gam_table_th %>% filter(bwp_nolin_p_adj < 0.05))[1]))
+print(paste0("Number of IDPs with BWP smooth sig but not above linear AFTER FDR correction: ", dim(bwp_sp_gam_table_th %>% filter(bwp_og_p_adj < 0.05 & bwp_nolin_p_adj > 0.05))[1]))
+
+if(save_tables == TRUE){
+  output_folder <- sp_stat_folder
+  filename <- paste0(output_folder, "bwp_sp_th.csv")
+  write.csv(bwp_sp_gam_table_th, filename)
+}
+```
+
+##### Print Phenotypes
+```{r}
+print(paste0("Significant IDPs for bwp Smooth Sig: ", rownames(bwp_sp_gam_table_th %>% filter(bwp_nolin_p_adj < 0.05))))
+
+print(paste0("bwp smooth sig but not above linear AFTER FDR correction: ", rownames(bwp_sp_gam_table_th %>% filter(bwp_og_p_adj < 0.05 & bwp_nolin_p_adj > 0.05))))
+```
+
+##### add label column to match to ggseg
+```{r, echo = FALSE}
+cols_edit <- grepl("aseg(?!_CC)", rownames(bwp_sp_gam_table_th), perl = TRUE)
+
+bwp_sp_gam_table_th$label <- rownames(bwp_sp_gam_table_th) %>% 
+  sub("aparc_Grayth_", "", .) %>% 
+  sub("aseg_", "", .) %>%
+  sub("(3|4)", "x\\1", .) %>%
+  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
+
+bwp_sp_gam_table_th$label[cols_edit] <- gsub("_", "-", bwp_sp_gam_table_th$label[cols_edit])
+```
+
+##### visualization on surface maps
+```{r, echo = FALSE}
+# merge with atlas data
+plot_data_dkt <- merge(bwp_sp_gam_table_th, ggseg::dk, by = "label")
+plot_data_aseg <- merge(bwp_sp_gam_table_th, ggseg::aseg, by = "label")
+
+# Regions not matched in atlases
+(bwp_sp_th_noplot <- bwp_sp_gam_table_th[!(bwp_sp_gam_table_th$label %in% plot_data_dkt$label) & !(bwp_sp_gam_table_th$label %in% plot_data_aseg$label),])
+
+# plots
+(bwp_sp_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwp_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BWP, Spline Sig, th"))
+
+(bwp_splin_dkt_th_plot <- ggplot(plot_data_dkt) +
+  geom_brain(atlas = dk, 
+             position = position_brain(hemi ~ side),
+             aes(fill = bwp_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void()+
+  labs(title = "BWP, Spline Sig over Lin, th"))
+
+(bwp_sp_aseg_th_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bwp_og_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BWP, Spline Sig, th"))
+
+(bwp_splin_aseg_th_plot <- ggplot(plot_data_aseg) +
+  geom_brain(atlas = aseg,
+             aes(fill = bwp_nolin_p_adj < 0.05)) +
+  scale_fill_manual(values = c(
+    "TRUE" = bwp_color,
+    "FALSE" = NA)) +
+  theme_void() +
+  labs(title = "BWP, Spline Sig over Lin, th"))
+
+if(save_figs == TRUE){
+panel_save(bwp_sp_dkt_th_plot, "bwp-sp-dkt-th", "svg", ggseg_plot_folder)
+panel_save(bwp_splin_dkt_th_plot, "bwp-splin-dkt-th", "svg", ggseg_plot_folder)
+panel_save(bwp_sp_aseg_th_plot , "bwp-sp-aseg-th", "svg", ggseg_plot_folder)
+panel_save(bwp_splin_aseg_th_plot , "bwp-splin-aseg-th", "svg", ggseg_plot_folder)
+}
+```
+
+##### Visualize
+```{r}
+bwp_sp_plots_th <- lapply(bwp_sp_models_th, function(x) {
+  
+  modobj = x$full_spline
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  smooth_var = "bwp_fen",
+  plabels = "Birth Weight Percentile",
+  color_point = bwp_color,
+  color_line = bwp_color)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg))",
+         title = glue("{namemap[namemap$key == modobj$gam$terms[[2]], \"plot_names\"]}")) +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) signif(pnorm(x)*100, 2)) +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+})
+
+bwp_sp_plots_th <- setNames(bwp_sp_plots_th, th_vars)
+
+if(save_figs){
+saveRDS(bwp_sp_plots_th, glue("{modelvis_plot_folder}bwp_sp_plots_th.rds"))
+}
+```
+
+##### Show plots
+```{r, echo = TRUE}
+wrapped_bwp_sp_th <- lapply(split(bwp_sp_plots_th, ceiling(seq_along(bwp_sp_plots_th) / 6)), function(p_list) {
+  wrap_plots(p_list, ncol = 2)
+})
+
+lapply(wrapped_bwp_sp_th, print)
+```
+
+
+# Regional phenotypes (non-linear models, with interaction term test)
+
+## Volume
+
+### GA
+
+#### fit models
+```{r, echo = FALSE}
+gabyage_sp_models_vol <- lapply(vol_vars, function(x) {
+  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + qc_var"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore)
+  return(gam_model)
+  })
+
+gabyage_sp_models_vol <- setNames(gabyage_sp_models_vol, vol_vars)
+
+gabyage_sp_gam_table_vol <- as.data.frame(t(sapply(gabyage_sp_models_vol,function(x) {
+  summary <- summary(x$gam)
+  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
+  })))
+
+rownames(gabyage_sp_gam_table_vol) <- vol_vars
+
+gabyage_sp_gam_table_vol$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_vol$gabyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_vol %>% filter(gabyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_vol %>% filter(gabyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_vol %>% filter(gabyage_p_adj < 0.05)) ))
+
+gabyage_sp_vol_sig_pheno <- rownames(gabyage_sp_gam_table_vol %>% filter(gabyage_p_adj < 0.05))
+```
+
+#### Visualize models
+```{r}
+gabyage_sp_vol_plot_pheno <- rownames(gabyage_sp_gam_table_vol %>% filter(ga_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
+sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
+
+gabyage_sp_plots_vol <- lapply(gabyage_sp_models_vol[gabyage_sp_vol_plot_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "gestational_age",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (wks)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+gabyage_sp_plots_vol <- setNames(gabyage_sp_plots_vol, gabyage_sp_vol_plot_pheno)
+
+gabyage_sp_plots_vol_nopt <- lapply(gabyage_sp_plots_vol, function(x){
+x$layers[1] <- NULL
+x})
+
+# wrap_plots(gabyage_sp_plots_vol_nopt, ncol = 2, guides = "collect") &
+#   theme(legend.position = "right")
+# 
+# wrap_plots(gabyage_sp_plots_vol, ncol = 2, guides = "collect") &
+#   theme(legend.position = "right")
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(gabyage_sp_plots_vol, ceiling(seq_along(gabyage_sp_plots_vol) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(gabyage_sp_plots_vol_nopt, ceiling(seq_along(gabyage_sp_plots_vol_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+```
+
+### BW
+
+#### fit models
+```{r, echo = FALSE}
+bwbyage_sp_models_vol <- lapply(vol_vars, function(x) {
+  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + qc_var"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore)
+  return(gam_model)
+  })
+
+bwbyage_sp_models_vol <- setNames(bwbyage_sp_models_vol, vol_vars)
+
+bwbyage_sp_gam_table_vol <- as.data.frame(t(sapply(bwbyage_sp_models_vol,function(x) {
+  summary <- summary(x$gam)
+  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
+  })))
+
+rownames(bwbyage_sp_gam_table_vol) <- vol_vars
+
+bwbyage_sp_gam_table_vol$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_vol$bwbyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p_adj < 0.05)) ))
+
+bwbyage_sp_vol_sig_pheno <- rownames(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p_adj < 0.05))
+```
+
+#### Visualize models
+```{r}
+bwbyage_sp_vol_plot_pheno <- rownames(bwbyage_sp_gam_table_vol %>% filter(bw_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
+sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
+
+bwbyage_sp_plots_vol <- lapply(bwbyage_sp_models_vol[bwbyage_sp_vol_plot_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "birth_weight_kg",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+bwbyage_sp_plots_vol <- setNames(bwbyage_sp_plots_vol, bwbyage_sp_vol_plot_pheno)
+
+bwbyage_sp_plots_vol_nopt <- lapply(bwbyage_sp_plots_vol, function(x){
+x$layers[1] <- NULL
+x})
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(bwbyage_sp_plots_vol, ceiling(seq_along(bwbyage_sp_plots_vol) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(bwbyage_sp_plots_vol_nopt, ceiling(seq_along(bwbyage_sp_plots_vol_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+```
+
+
+## Surface Area
+### GA
+
+#### fit models
+```{r, echo = FALSE}
+gabyage_sp_models_sa <- lapply(sa_vars, function(x) {
+  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + qc_var"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore)
+  return(gam_model)
+  })
+
+gabyage_sp_models_sa <- setNames(gabyage_sp_models_sa, sa_vars)
+
+gabyage_sp_gam_table_sa <- as.data.frame(t(sapply(gabyage_sp_models_sa,function(x) {
+  summary <- summary(x$gam)
+  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
+  })))
+
+rownames(gabyage_sp_gam_table_sa) <- sa_vars
+
+gabyage_sp_gam_table_sa$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_sa$gabyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_sa %>% filter(gabyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_sa %>% filter(gabyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_sa %>% filter(gabyage_p_adj < 0.05)) ))
+
+gabyage_sp_sa_sig_pheno <- rownames(gabyage_sp_gam_table_sa %>% filter(gabyage_p_adj < 0.05))
+```
+
+#### Visualize models
+```{r}
+gabyage_sp_sa_plot_pheno <- rownames(gabyage_sp_gam_table_sa %>% filter(ga_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
+sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
+
+gabyage_sp_plots_sa <- lapply(gabyage_sp_models_sa[gabyage_sp_sa_plot_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "gestational_age",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (wks)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+gabyage_sp_plots_sa <- setNames(gabyage_sp_plots_sa, gabyage_sp_sa_plot_pheno)
+
+gabyage_sp_plots_sa_nopt <- lapply(gabyage_sp_plots_sa, function(x){
+x$layers[1] <- NULL
+x})
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(gabyage_sp_plots_sa, ceiling(seq_along(gabyage_sp_plots_sa) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(gabyage_sp_plots_sa_nopt, ceiling(seq_along(gabyage_sp_plots_sa_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+
+#wrapped_list
+```
+
+### BW
+
+#### fit models
+```{r, echo = FALSE}
+bwbyage_sp_models_sa <- lapply(sa_vars, function(x) {
+  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + qc_var"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore)
+  return(gam_model)
+  })
+
+bwbyage_sp_models_sa <- setNames(bwbyage_sp_models_sa, sa_vars)
+
+bwbyage_sp_gam_table_sa <- as.data.frame(t(sapply(bwbyage_sp_models_sa,function(x) {
+  summary <- summary(x$gam)
+  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
+  })))
+
+rownames(bwbyage_sp_gam_table_sa) <- sa_vars
+
+bwbyage_sp_gam_table_sa$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_sa$bwbyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p_adj < 0.05)) ))
+
+bwbyage_sp_sa_sig_pheno <- rownames(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p_adj < 0.05))
+```
+
+#### Visualize models
+```{r}
+bwbyage_sp_sa_plot_pheno <- rownames(bwbyage_sp_gam_table_sa %>% filter(bw_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
+sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
+
+bwbyage_sp_plots_sa <- lapply(bwbyage_sp_models_sa[bwbyage_sp_sa_plot_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "birth_weight_kg",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+bwbyage_sp_plots_sa <- setNames(bwbyage_sp_plots_sa, bwbyage_sp_sa_plot_pheno)
+
+bwbyage_sp_plots_sa_nopt <- lapply(bwbyage_sp_plots_sa, function(x){
+x$layers[1] <- NULL
+x})
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(bwbyage_sp_plots_sa, ceiling(seq_along(bwbyage_sp_plots_sa) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(bwbyage_sp_plots_sa_nopt, ceiling(seq_along(bwbyage_sp_plots_sa_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+```
+
+
+## Thickness median full sample
+### GA
+
+#### fit models
+```{r, echo = FALSE}
+if (median_th_mpr_flag == TRUE){
+gabyage_sp_models_th_median <- lapply(th_vars_median, function(x) {
+  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + qc_var"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore)
+  return(gam_model)
+  })
+
+gabyage_sp_models_th_median <- setNames(gabyage_sp_models_th_median, th_vars)
+
+gabyage_sp_gam_table_th_median <- as.data.frame(t(sapply(gabyage_sp_models_th_median,function(x) {
+  summary <- summary(x$gam)
+  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
+  })))
+
+rownames(gabyage_sp_gam_table_th_median) <- th_vars
+
+gabyage_sp_gam_table_th_median$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_th_median$gabyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_th_median %>% filter(gabyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_th_median %>% filter(gabyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_th_median %>% filter(gabyage_p_adj < 0.05)) ))
+
+gabyage_sp_th_median_sig_pheno <- rownames(gabyage_sp_gam_table_th_median %>% filter(gabyage_p_adj < 0.05))
+}
+```
+
+#### Visualize models
+```{r}
+if (median_th_mpr_flag == TRUE){
+gabyage_sp_th_median_plot_pheno <- rownames(gabyage_sp_gam_table_th_median %>% filter(ga_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
+sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
+
+gabyage_sp_plots_th_median <- lapply(gabyage_sp_models_th_median[gabyage_sp_th_median_sig_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "gestational_age",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (wks)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+gabyage_sp_plots_th_median <- setNames(gabyage_sp_plots_th_median, gabyage_sp_th_median_sig_pheno)
+
+gabyage_sp_plots_th_median_nopt <- lapply(gabyage_sp_plots_th_median, function(x){
+x$layers[1] <- NULL
+x})
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(gabyage_sp_plots_th_median, ceiling(seq_along(gabyage_sp_plots_th_median) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(gabyage_sp_plots_th_median_nopt, ceiling(seq_along(gabyage_sp_plots_th_median_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+}
+```
+
+### BW
+
+#### fit models
+```{r, echo = FALSE}
+if (median_th_mpr_flag == TRUE){
+bwbyage_sp_models_th_median <- lapply(th_vars_median, function(x) {
+  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + qc_var"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore)
+  return(gam_model)
+  })
+
+bwbyage_sp_models_th_median <- setNames(bwbyage_sp_models_th_median, th_vars)
+
+bwbyage_sp_gam_table_th_median <- as.data.frame(t(sapply(bwbyage_sp_models_th_median,function(x) {
+  summary <- summary(x$gam)
+  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
+  })))
+
+rownames(bwbyage_sp_gam_table_th_median) <- th_vars
+
+bwbyage_sp_gam_table_th_median$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_th_median$bwbyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p_adj < 0.05)) ))
+
+bwbyage_sp_th_median_sig_pheno <- rownames(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p_adj < 0.05))
+}
+```
+
+#### Visualize models
+```{r}
+if (median_th_mpr_flag == TRUE){
+bwbyage_sp_th_median_plot_pheno <- rownames(bwbyage_sp_gam_table_th_median %>% filter(bw_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
+sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
+
+bwbyage_sp_plots_th_median <- lapply(bwbyage_sp_models_th_median[bwbyage_sp_th_median_sig_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "birth_weight_kg",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+bwbyage_sp_plots_th_median <- setNames(bwbyage_sp_plots_th_median, bwbyage_sp_th_median_sig_pheno)
+
+bwbyage_sp_plots_th_median_nopt <- lapply(bwbyage_sp_plots_th_median, function(x){
+x$layers[1] <- NULL
+x})
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(bwbyage_sp_plots_th_median, ceiling(seq_along(bwbyage_sp_plots_th_median) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(bwbyage_sp_plots_th_median_nopt, ceiling(seq_along(bwbyage_sp_plots_th_median_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+}
+```
+
+
+## Thickness (mpr, df.zscore_overOne overOne sample)
+### GA
+
+#### fit models
+```{r, echo = FALSE}
+gabyage_sp_models_th <- lapply(th_vars, function(x) {
+  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + euler_mean_mpr"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore_overOne)
+  return(gam_model)
+  })
+
+gabyage_sp_models_th <- setNames(gabyage_sp_models_th, th_vars)
+
+gabyage_sp_gam_table_th <- as.data.frame(t(sapply(gabyage_sp_models_th,function(x) {
+  summary <- summary(x$gam)
+  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
+  })))
+
+rownames(gabyage_sp_gam_table_th) <- th_vars
+
+gabyage_sp_gam_table_th$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_th$gabyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_th %>% filter(gabyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_th %>% filter(gabyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_th %>% filter(gabyage_p_adj < 0.05)) ))
+
+gabyage_sp_th_sig_pheno <- rownames(gabyage_sp_gam_table_th %>% filter(gabyage_p_adj < 0.05))
+```
+
+#### Visualize models
+```{r}
+gabyage_sp_th_plot_pheno <- rownames(gabyage_sp_gam_table_th %>% filter(ga_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
+sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
+
+gabyage_sp_plots_th <- lapply(gabyage_sp_models_th[gabyage_sp_th_sig_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$gestational_age),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "gestational_age",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (wks)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+gabyage_sp_plots_th <- setNames(gabyage_sp_plots_th, gabyage_sp_th_sig_pheno)
+
+gabyage_sp_plots_th_nopt <- lapply(gabyage_sp_plots_th, function(x){
+x$layers[1] <- NULL
+x})
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(gabyage_sp_plots_th, ceiling(seq_along(gabyage_sp_plots_th) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(gabyage_sp_plots_th_nopt, ceiling(seq_along(gabyage_sp_plots_th_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+```
+
+### BW
+
+#### fit models
+```{r, echo = FALSE}
+bwbyage_sp_models_th <- lapply(th_vars, function(x) {
+  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + euler_mean_mpr"))
+  gam_model <- gamm(as.formula(form),
+              data = df.zscore_overOne)
+  return(gam_model)
+  })
+
+bwbyage_sp_models_th <- setNames(bwbyage_sp_models_th, th_vars)
+
+bwbyage_sp_gam_table_th <- as.data.frame(t(sapply(bwbyage_sp_models_th,function(x) {
+  summary <- summary(x$gam)
+  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
+    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
+    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
+  })))
+
+rownames(bwbyage_sp_gam_table_th) <- th_vars
+
+bwbyage_sp_gam_table_th$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_th$bwbyage_p, method = "BH")
+
+print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_th %>% filter(bwbyage_p < 0.05))[1]))
+print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_th %>% filter(bwbyage_p_adj < 0.05))[1]))
+print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_th %>% filter(bwbyage_p_adj < 0.05)) ))
+
+bwbyage_sp_th_sig_pheno <- rownames(bwbyage_sp_gam_table_th %>% filter(bwbyage_p_adj < 0.05))
+```
+
+#### Visualize models
+```{r}
+bwbyage_sp_th_plot_pheno <- rownames(bwbyage_sp_gam_table_th %>% filter(bw_edf > 2))
+font_size <- 16
+theme_set(theme_classic(base_family = "sans",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
+
+mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
+sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+
+mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
+sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
+
+bwbyage_sp_plots_th <- lapply(bwbyage_sp_models_th[bwbyage_sp_th_sig_pheno], function(x) {
+  
+  
+  low_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+  mid_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$birth_weight_kg),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+  high_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$birth_weight_kg),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+  
+  model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "birth_weight_kg",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Birth Weight (kg)",
+         title = glue("{x$gam$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "") +
+  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
+  
+  return(model_plot)
+})
+
+bwbyage_sp_plots_th <- setNames(bwbyage_sp_plots_th, bwbyage_sp_th_sig_pheno)
+
+bwbyage_sp_plots_th_nopt <- lapply(bwbyage_sp_plots_th, function(x){
+x$layers[1] <- NULL
+x})
+
+wrapped_plot_n <- 4 
+
+plot_batches <- split(bwbyage_sp_plots_th, ceiling(seq_along(bwbyage_sp_plots_th) / wrapped_plot_n))
+
+ wrapped_list <- lapply(plot_batches, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list
+
+plot_batches_nopt <- split(bwbyage_sp_plots_th_nopt, ceiling(seq_along(bwbyage_sp_plots_th_nopt) / wrapped_plot_n))
+
+ wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
+   wrap_plots(batch, ncol = 2)
+ })
+
+wrapped_list_nopt
+```
+

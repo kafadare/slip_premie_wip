@@ -1,0 +1,157 @@
+---
+title: "Severity/Admission Data Explore"
+output: html_notebook
+---
+Clinical Indication Needs dx id to icd code to phecode conversion code, look into old code, there is definitely stuff there.
+
+# Load Packages
+```{r}
+library(bigrquery) #package to import SQL tables into R
+library(tidyverse) #package suite for data manipulation, reading data into R, and plotting (ggplot2)
+library(glue) #package to use expressions with strings
+library(ggseg)
+require(gridExtra)
+library(interactions)
+library(boot)
+library(parameters)
+```
+
+# Custom Functions
+```{r}
+panel_save <- function(plot, filename, extension, folder){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300)
+}
+```
+
+# Get project id
+```{r}
+bq_auth()
+# proj_id <- if (exists('proj_id')) proj_id else bq_projects()[1]
+proj_id = "scit605-healthymri-2d73d69f"
+```
+
+# Get centiles
+```{r}
+cent_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/centiles_all_median_th_mpr_2026-04-24.csv"
+cent <- read.csv(cent_path) %>%
+  mutate(proc_ord_id_wrong = proc_ord_id, 
+         proc_ord_id = sub(".*ses-([0-9]+)procId.*", "\\1", session_id))
+
+pat_id_list <- paste0("'", sapply(strsplit(cent$pat_id, ","),trimws), "'", collapse = ", ")
+proc_ord_list <- paste0("'", sapply(strsplit(cent$proc_ord_id, ","),trimws), "'", collapse = ", ")
+```
+
+# Define Queries
+```{r}
+encounter_query <- glue('SELECT
+  pat_id,
+  encounter_id,
+  primary_care_ind,
+  specialty_care_ind,
+  inpatient_ind,
+  ed_ind,
+  urgent_care_ind,
+  enc_type_name,
+  effective_datetime,
+  effective_age,
+  effective_year,
+  length_of_stay,
+  inpatient_data_id,
+  height_cm,
+  weight_kg,
+  height_raw,
+  weight_oz,
+  hosp_admsn_age, 
+  hosp_admsn_datetime, 
+  hosp_disch_age, 
+  hosp_disch_datetime,  
+  inp_adm_age, 
+  inp_adm_datetime,
+  coverage_id
+  FROM arcus.encounter
+  WHERE pat_id IN ({pat_id_list});')
+
+phecode_query <- glue('SELECT
+  *
+  FROM lab.phecodes_20260228
+  WHERE pat_id IN ({pat_id_list});')
+
+proc_query <- glue('SELECT
+  proc.proc_ord_id,
+  proc.pat_id,
+  proc.encounter_id,
+  proc.dx_id,
+  icd10.code
+  FROM arcus.procedure_order_diagnosis as proc
+  LEFT JOIN arcus.diagnosis_icd10 as icd10
+  ON proc.dx_id = icd10.dx_id
+  WHERE proc.proc_ord_id IN ({proc_ord_list});')
+
+proc_enc_query <- glue('SELECT
+  proc.proc_ord_id,
+  proc.pat_id,
+  proc.encounter_id,
+  enc.encounter_id,
+  enc.dx_id,
+  icd10.code as code10,
+  icd9.code as code9
+  FROM arcus.procedure_order as proc
+  INNER JOIN arcus.encounter_diagnosis as enc
+  ON proc.encounter_id = enc.encounter_id
+  LEFT JOIN arcus.diagnosis_icd10 as icd10
+  ON icd10.dx_id = enc.dx_id
+  LEFT JOIN arcus.diagnosis_icd9 as icd9
+  ON icd9.dx_id = enc.dx_id
+  WHERE proc.proc_ord_id IN ({proc_ord_list});')
+```
+
+# Download Tables from Arcus
+```{r}
+# encounter <- bq_project_query(proj_id, encounter_query) %>% bq_table_download(., page_size=3500)
+# print(paste0("arcus.encounter table with 25.11 pat_ids, dimensions: ", dim(encounter)))
+# 
+# phecode <- bq_project_query(proj_id, phecode_query) %>% bq_table_download(., page_size=3500)
+# print(paste0("lab.phecodes table with 25.11 pat_ids, dimensions: ", dim(phecode)))
+
+proc <- bq_project_query(proj_id, proc_query) %>% bq_table_download(., page_size=3500)
+print(paste0("arcus.procedure_order_dx table with 25.11 pat_ids, dimensions: ", dim(proc)))
+
+proc_enc <- bq_project_query(proj_id, proc_enc_query) %>% bq_table_download(., page_size=3500)
+print(paste0("arcus.proc_encedure_order_dx table with 25.11 pat_ids, dimensions: ", dim(proc_enc)))
+```
+# Get annotation table for validation
+```{r}
+indication_icd10 <- read.csv("/mnt/arcus/lab/users/kafadare/indication_files/indication_icd10.csv") %>% select(-X)
+indication_icd9 <- read.csv("/mnt/arcus/lab/users/kafadare/indication_files/indication_icd9.csv") %>% select(-X)
+```
+
+# Check dimensions for procedure order table
+```{r}
+# getting dx from procedure_diagnosis
+length(unique(cent$proc_ord_id))
+sum(cent$proc_ord_id %in% proc$proc_ord_id)/nrow(cent) #57%
+sum(is.na(proc$dx_id)) #0
+sum(is.na(proc$code)) #312
+length(unique(proc$proc_ord_id)) #7642
+
+# getting dx from encounter_diagnosis
+sum(cent$proc_ord_id %in% proc_enc$proc_ord_id)/nrow(cent) #86%
+sum(is.na(proc_enc$dx_id)) #0
+sum(is.na(proc_enc$code10)) #2311
+sum(is.na(proc_enc$code10) & is.na(proc_enc$code9)) #3
+length(unique(proc_enc$proc_ord_id))
+
+sum(!(proc$proc_ord_id %in% proc_enc$proc_ord_id)) #0
+```
+
+# Try to match based on proc_ord_id
+```{r}
+indication_validate <- merge(proc_enc %>%
+                               rename(enc_icd10_code = code10,
+                                      enc_icd9_code = code9), 
+                             indication_icd10 %>%
+                               rename(annot_icd10_code = icd10_code), by = "proc_ord_id")
+
+
+```

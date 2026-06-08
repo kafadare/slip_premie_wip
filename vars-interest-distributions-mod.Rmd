@@ -1,0 +1,688 @@
+---
+title: "vars-interest-distributions"
+author: "Eren Kafadar"
+date: "2025-11-18"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+params:
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/vars_dist/"
+  centiles_distinct_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_distinct_median_2026-04-24.csv"
+  centiles_all_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_all_median_2026-04-24.csv"
+  type: "median"
+---
+
+# Define params if they do not exist
+```{r, echo = FALSE}
+if (!exists("params")) {
+  params <- list(
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/vars_dist/",
+  centiles_distinct_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_distinct_median_2026-04-24.csv",
+  centiles_all_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_all_median_2026-04-24.csv",
+  type = "median"
+  )
+}
+``` 
+
+# Load Packages
+```{r, echo = FALSE}
+#Load libraries
+require(dplyr)
+require(magrittr)
+require(readr)
+require(stringr)
+require(tidyr)
+require(gamlssTools) #Margaret's package
+require(tibble)
+#For figures/plotting
+require(ggplot2)
+require(gridExtra)
+require(ggsegDKT)
+require(ggseg)
+require(glue)
+#require(ggpubr)
+require(ggcorrplot)
+require(cowplot)
+require(egg)
+require(interactions)
+require(growthstandards)
+require(gtsummary)
+require(svglite)
+```
+
+
+# Controls
+```{r, echo = TRUE}
+#set command
+save_tables <- TRUE
+plot <- TRUE
+save_figs <- TRUE
+set.seed(42)
+
+output_folder <- params$output_folder
+centiles_distinct_path <- params$centiles_distinct_path
+centiles_all_path <- params$centiles_all_path
+type <- params$type
+print(centiles_distinct_path)
+print(centiles_all_path)
+print(glue("CENTILE TYPE: {type}"))
+```
+
+# Define Paths
+```{r, echo = TRUE}
+#set folder paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars_2511_new/"
+
+## output/save paths
+if (!dir.exists(output_folder)) dir.create(output_folder)
+csv_save_path <- glue("{output_folder}csv/")
+if (!dir.exists(csv_save_path)) dir.create(csv_save_path)
+plot_save_path <- paste0(output_folder, "plots/")
+if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
+```
+
+# Load custom functions
+```{r, echo = FALSE}
+panel_save <- function(plot, filename, extension, folder, plot_width = 8, plot_height = 10){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300, width = plot_width, height = plot_height)
+}
+```
+
+# Plots specifications
+```{r, echo = TRUE}
+limits = c(-0.3, 0.3)
+low_color = "#4878CF"
+mid_color = "white"
+high_color = "#D65F5F"
+```
+
+# Read in data files and vars
+```{r, echo = FALSE}
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+
+cent_distinct <- read.csv(centiles_distinct_path) %>% select(-("X"))
+cent_all <- read.csv(centiles_all_path) %>% select(-("X"))
+```
+
+# Age Distribution Stats
+
+## Cent-All
+```{r, echo = FALSE}
+N_repeat <- (nrow(cent_all) - length(unique(cent_all$participant_id)))
+
+print(glue("Range of adjusted age in centiles_all {range(cent_all$age_years_adj)}"))
+print(glue("IQR of adjusted age in centiles_all {IQR(cent_all$age_years_adj)}"))
+adj_age_quartiles_all <- quantile(cent_all$age_years_adj, probs = c(0.25, 0.75))
+print(glue("25th centile of adjusted age in centiles_all {adj_age_quartiles_all[1]}"))
+print(glue("75th centile of adjusted age in centiles_all {adj_age_quartiles_all[2]}"))
+print(glue("Median of adjusted age in centiles_all {median(cent_all$age_years_adj)}"))
+
+print(glue("Range of non-adj age in centiles_all {range(cent_all$age_at_scan_years)}"))
+print(glue("IQR of non-adj age in centiles_all {IQR(cent_all$age_at_scan_years)}"))
+unadj_age_quartiles_all <- quantile(cent_all$age_at_scan_years, probs = c(0.25, 0.75))
+print(glue("25th centile of non-adj age in centiles_all {unadj_age_quartiles_all[1]}"))
+print(glue("75th centile of non-adj age in centiles_all {unadj_age_quartiles_all[2]}"))
+print(glue("Median of non-adj age in centiles_all {median(cent_all$age_at_scan_years)}"))
+
+(adj_age_dist_all <- ggplot(cent_all, aes(x = age_years_adj)) +
+  geom_histogram(bins = 30, fill = "#dea1c5", color = "white") +
+  labs(x = "Adjusted Age (yrs)", y = "", title = glue("All, N = {nrow(cent_all)} Data Points, {N_repeat} repeat ids")) +
+  theme_classic())
+
+(unadj_age_dist_all <- ggplot(cent_all, aes(x = age_at_scan_years)) +
+  geom_histogram(bins = 30, fill = "#dea1c5", color = "white") +
+  labs(x = "Age At Scan, UnAdj (yrs)", y = "", title = glue("All, N = {nrow(cent_all)} Data Points, {N_repeat} repeat ids")) +
+  theme_classic())
+
+if(save_figs == TRUE){
+panel_save(adj_age_dist_all, glue("adj-age-dist-all-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+panel_save(unadj_age_dist_all, glue("unadj-age-dist-all-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+```
+
+## Cent-Distinct (first scan for each subject)
+```{r, echo = FALSE}
+print(glue("Range of adjusted age in centiles_distinct {range(cent_distinct$age_years_adj)}"))
+print(glue("IQR of adjusted age in centiles_distinct {IQR(cent_distinct$age_years_adj)}"))
+adj_age_quartiles_distinct <- quantile(cent_distinct$age_years_adj, probs = c(0.25, 0.75))
+print(glue("25th centile of adjusted age in centiles_distinct {adj_age_quartiles_distinct[1]}"))
+print(glue("75th centile of adjusted age in centiles_distinct {adj_age_quartiles_distinct[2]}"))
+print(glue("Median of adjusted age in centiles_distinct {median(cent_distinct$age_years_adj)}"))
+
+print(glue("Range of non-adj age in centiles_distinct {range(cent_distinct$age_at_scan_years)}"))
+print(glue("IQR of non-adj age in centiles_distinct {IQR(cent_distinct$age_at_scan_years)}"))
+unadj_age_quartiles_distinct <- quantile(cent_distinct$age_at_scan_years, probs = c(0.25, 0.75))
+print(glue("25th centile of non-adj age in centiles_distinct {unadj_age_quartiles_distinct[1]}"))
+print(glue("75th centile of non-adj age in centiles_distinct {unadj_age_quartiles_distinct[2]}"))
+print(glue("Median of non-adj age in centiles_distinct {median(cent_distinct$age_at_scan_years)}"))
+
+(adj_age_dist_distinct <- ggplot(cent_distinct, aes(x = age_years_adj)) +
+  geom_histogram(bins = 30, fill = "#dea1c5", color = "white") +
+  labs(x = "Adjusted Age (yrs)", y = "", title = glue("Distinct, N = {nrow(cent_distinct)} Data Points, first scan per id")) +
+  theme_classic())
+
+(unadj_age_dist_distinct <- ggplot(cent_distinct, aes(x = age_at_scan_years)) +
+  geom_histogram(bins = 30, fill = "#dea1c5", color = "white") +
+  labs(x = "Age At Scan, UnAdj (yrs)", y = "", title = glue("Distinct, N = {nrow(cent_distinct)} Data Points, first scan per id")) +
+  theme_classic())
+
+if(save_figs == TRUE){
+panel_save(adj_age_dist_distinct, glue("adj-age-dist-distinct-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+panel_save(unadj_age_dist_distinct, glue("unadj-age-dist-distinct-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+```
+
+# GA/BW numbers
+In Cent-Distinct, one row per subject.
+```{r, echo = FALSE}
+print(glue("Number of Participants with gestational age (post-QC) {sum(!is.na(cent_distinct$gestational_age))}"))
+print(glue("Number of Participants with birth weight (post-QC) {sum(!is.na(cent_distinct$birth_weight_kg))}"))
+print(glue("Number of Participants with BOTH birth weight and gestational age {sum(!is.na(cent_distinct$birth_weight_kg) & !is.na(cent_distinct$gestational_age))}"))
+```
+
+# Sex Distribution in Sample and Sub-samples
+In Cent-Distinct, one row per subject.
+```{r, echo = FALSE}
+print("Whole Sample")
+prop.table(table(cent_distinct$sex))
+print("GA Available")
+prop.table(table(cent_distinct[which(!is.na(cent_distinct$gestational_age)),]$sex))
+print("BW Available")
+prop.table(table(cent_distinct[which(!is.na(cent_distinct$birth_weight_kg)),]$sex))
+print("Both GA and BW Available")
+prop.table(table(cent_distinct[which(!is.na(cent_distinct$birth_weight_kg) & !is.na(cent_distinct$gestational_age)),]$sex))
+```
+
+# Plot age distribution and birth factor availability
+
+## Cent-All
+```{r, echo = FALSE}
+#Whole sample (one session per participant)
+N_total <- nrow(cent_all)
+N_ga <- sum(!is.na(cent_all$gestational_age))
+N_bw <- sum(!is.na(cent_all$birth_weight_kg))
+N_ga_only <- sum(!is.na(cent_all$gestational_age) & is.na(cent_all$birth_weight_kg))
+N_bw_only <- sum(!is.na(cent_all$birth_weight_kg) & is.na(cent_all$gestational_age))
+N_gabw <- sum(!is.na(cent_all$gestational_age) & !is.na(cent_all$birth_weight_kg))
+N_none <- sum(is.na(cent_all$gestational_age) & is.na(cent_all$birth_weight_kg))
+
+
+(age_dist2_plot_all <- ggplot(cent_all, aes(x = age_years_adj)) +
+  geom_histogram(binwidth= 0.1, fill = "#B3B3B3", color = "white", lineplot_width= 0.1) +
+  labs(
+    x = paste0("Adjusted Age (yrs),  N = ", N_total),
+    y = NULL,
+    title = "All Participants for Growth Charts"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+
+if(save_figs == TRUE){
+panel_save(age_dist2_plot_all, "age-dist2-all", "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+
+df_age_all <- cent_all %>%
+  mutate(
+    ga_known  = !is.na(gestational_age),
+    bw_known  = !is.na(birth_weight_kg),
+    group = case_when(
+      ga_known & bw_known ~ "GA & BW Known",
+      ga_known & !bw_known ~ "Only GA Known",
+      bw_known & !ga_known ~ "Only BW Known",
+      TRUE ~ "None"
+    )) %>%
+  mutate(group = factor(group, levels = c(
+    "Only GA Known",
+    "Only BW Known",
+    "GA & BW Known",
+    "None"
+  )))
+
+(age_dist_gabw_plot_all <- ggplot(df_age_all, aes(x = age_years_adj, fill = group)) +
+  geom_histogram(binwidth= 0.1, color = "white", lineplot_width= 0.1) +
+  scale_fill_manual(
+    values = c(
+      "Only GA Known" = "#9EC3D2",
+      "Only BW Known" = "#D6B8A8",
+      "GA & BW Known" = "#6A5A78",
+      "None" = "#E0E0E0"
+    ),
+    labels = c(
+      paste0("Only GA Known, N=", N_ga_only),
+      paste0("Only BW Known, N=", N_bw_only),
+      paste0("GA & BW Known, N=", N_gabw),
+      paste0("Neither Known, N=", N_none)
+    ),name = NULL) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_total),
+    y = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+  theme_bw(base_size = 32) +
+theme(
+  legend.position = "bottom",
+  legend.direction = "horizontal",
+  legend.box = "horizontal",
+  legend.key.plot_width= unit(1.5, "cm"),
+  legend.box.just = "center",
+  panel.grid = element_blank()
+) +
+guides(fill = guide_legend(nrow = 2)))
+
+if(save_figs == TRUE){
+panel_save(age_dist_gabw_plot_all, glue("age-dist-gabw-all-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+
+#GA available
+N_age_ga <- sum(!is.na(cent_all$gestational_age))
+
+(age_dist_ga_plot_all <- ggplot(cent_all %>% filter(!is.na(gestational_age)), aes(x = age_years_adj)) +
+  geom_histogram(binwidth= 0.1, fill = "#9EC3D2", color = "white", lineplot_width= 0.1) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_age_ga),
+    y = NULL,
+    title = "Gestational Age Known"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+if(save_figs == TRUE){
+panel_save(age_dist_ga_plot_all, "age-dist-ga-all", "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+
+#BW available
+N_age_bw <- sum(!is.na(cent_all$birth_weight_kg))
+
+(age_dist_bw_plot_all <- ggplot(cent_all %>% filter(!is.na(birth_weight_kg)), aes(x = age_years_adj)) +
+  geom_histogram(binwidth= 0.1, fill = "#D6B8A8", color = "white", lineplot_width= 0.1) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_age_bw),
+    y = NULL,
+    title = "Birthweight Known"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+if(save_figs == TRUE){
+panel_save(age_dist_bw_plot_all, glue("age-dist-bw-all-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+```
+
+## Cent-Distinct
+```{r, echo = FALSE}
+#Whole sample (one session per participant)
+N_total <- nrow(cent_distinct)
+N_ga <- sum(!is.na(cent_distinct$gestational_age))
+N_bw <- sum(!is.na(cent_distinct$birth_weight_kg))
+N_ga_only <- sum(!is.na(cent_distinct$gestational_age) & is.na(cent_distinct$birth_weight_kg))
+N_bw_only <- sum(!is.na(cent_distinct$birth_weight_kg) & is.na(cent_distinct$gestational_age))
+N_gabw <- sum(!is.na(cent_distinct$gestational_age) & !is.na(cent_distinct$birth_weight_kg))
+N_none <- sum(is.na(cent_distinct$gestational_age) & is.na(cent_distinct$birth_weight_kg))
+
+
+(age_dist2_plot_distinct <- ggplot(cent_distinct, aes(x = age_years_adj)) +
+  geom_histogram(binwidth= 0.1, fill = "#B3B3B3", color = "white", lineplot_width= 0.1) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_total),
+    y = NULL,
+    title = "All Participants for Growth Charts, distinct id rows"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+
+if(save_figs == TRUE){
+panel_save(age_dist2_plot_distinct, glue("age-dist2-distinct-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+
+df_age_distinct <- cent_distinct %>%
+  mutate(
+    ga_known  = !is.na(gestational_age),
+    bw_known  = !is.na(birth_weight_kg),
+    group = case_when(
+      ga_known & bw_known ~ "GA & BW Known",
+      ga_known & !bw_known ~ "Only GA Known",
+      bw_known & !ga_known ~ "Only BW Known",
+      TRUE ~ "None"
+    )) %>%
+  mutate(group = factor(group, levels = c(
+    "Only GA Known",
+    "Only BW Known",
+    "GA & BW Known",
+    "None"
+  )))
+
+(age_dist_gabw_plot_distinct <- ggplot(df_age_distinct, aes(x = age_years_adj, fill = group)) +
+  geom_histogram(binwidth= 0.1, color = "white", lineplot_width= 0.1) +
+  scale_fill_manual(
+    values = c(
+      "Only GA Known" = "#9EC3D2",
+      "Only BW Known" = "#D6B8A8",
+      "GA & BW Known" = "#6A5A78",
+      "None" = "#E0E0E0"
+    ),
+    labels = c(
+      paste0("Only GA Known, N=", N_ga_only),
+      paste0("Only BW Known, N=", N_bw_only),
+      paste0("GA & BW Known, N=", N_gabw),
+      paste0("Neither Known, N=", N_none)
+    ),name = NULL) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_total),
+    y = NULL,
+    title = "Distinct id rows"
+  ) +
+  theme_minimal(base_size = 16) +
+theme(
+  legend.position = "bottom",
+  legend.direction = "horizontal",
+  legend.box = "horizontal",
+  legend.text = element_text(size = 14),
+  legend.key.plot_width= unit(1.5, "cm"),
+  legend.box.just = "center",
+  panel.grid = element_blank()
+) +
+guides(fill = guide_legend(nrow = 2)))
+
+if(save_figs == TRUE){
+panel_save(age_dist_gabw_plot_distinct, glue("age-dist-gabw-distinct-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+
+#GA available
+N_age_ga <- sum(!is.na(cent_distinct$gestational_age))
+
+(age_dist_ga_plot_distinct <- ggplot(cent_distinct %>% filter(!is.na(gestational_age)), aes(x = age_years_adj)) +
+  geom_histogram(binwidth= 0.1, fill = "#9EC3D2", color = "white", lineplot_width= 0.1) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_age_ga),
+    y = NULL,
+    title = "Gestational Age Known, distinct id rows"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+if(save_figs == TRUE){
+panel_save(age_dist_ga_plot_distinct, "age-dist-ga-distinct", "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+
+#BW available
+N_age_bw <- sum(!is.na(cent_distinct$birth_weight_kg))
+
+(age_dist_bw_plot_distinct <- ggplot(cent_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = age_years_adj)) +
+  geom_histogram(binwidth= 0.1, fill = "#D6B8A8", color = "white", lineplot_width= 0.1) +
+  labs(
+    x = paste0("Adjusted Age (years),  N = ", N_age_bw),
+    y = NULL,
+    title = "Birthweight Known, distinct id rows"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  ))
+
+if(save_figs == TRUE){
+panel_save(age_dist_bw_plot_distinct, glue("age-dist-bw-distinct-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+```
+
+# Gestational Age Plots
+Within Distinct, so each subject is represented only once.
+```{r, echo = FALSE}
+table(cent_distinct$preterm)
+
+ga_ptb <- cent_distinct %>%
+  filter(!is.na(gestational_age)) %>%
+  mutate(group = ifelse(gestational_age_weeks_complete < 37, "Preterm", "Term"))
+
+pct_preterm <- round(mean(ga_ptb$group == "Preterm") * 100, 1)
+
+ga_breaks_weeks <- seq(23, 43, by = 2)
+ga_breaks_days  <- ga_breaks_weeks
+
+(ga_preterm_dist_plot <- ggplot(ga_ptb, aes(x = gestational_age_weeks_complete, fill = group)) +
+  geom_histogram(binwidth = 1, color = "white") +
+  scale_fill_manual(values = c("Preterm" = "#F4A475", "Term" = "#A7D9A0")) +
+    scale_x_continuous(breaks = ga_breaks_days, labels = ga_breaks_weeks) +
+  labs(
+    x = paste0("Gestational Age (complete weeks), \n % Preterm(<37wks) = ", pct_preterm),
+    y = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none"
+  ))
+
+if(save_figs == TRUE){
+panel_save(ga_preterm_dist_plot, glue("ga-preterm-dist-plot-{type}"), "svg", plot_save_path, plot_width= 10, plot_height = 7)
+}
+
+cent_distinct <- cent_distinct %>%
+  mutate(preterm = factor(preterm, levels = c("VPM", "LPM", "Term")))
+
+(ga_preterm_age_plot <- ggplot(cent_distinct %>% filter(!is.na(preterm)), aes(x = age_years_adj, fill = preterm)) +
+  geom_histogram(position = "fill", binwidth= 0.5, color = "white") +
+  scale_fill_manual(
+    values = c(
+      "VPM"  = "#E8A0A8",
+      "LPM"  = "#A8C4E8",
+      "Term" = "#A7D9A0"
+    )
+  ) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = "Proportion",
+    fill = "Preterm Status"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal"
+  ))
+
+if(save_figs == TRUE){
+panel_save(ga_preterm_age_plot, glue("ga-preterm-byage-plot-{type}"), "svg", plot_save_path, plot_width= 10, plot_height = 7)
+}
+```
+
+# Birth Weight Plots
+Within Distinct, so each subject is represented only once.
+```{r, echo = FALSE}
+cent_distinct$bw_category <- as.factor(cut(cent_distinct$birth_weight_kg, breaks = c(-Inf, 1.5, 2.5, Inf), labels = c("VLBW", "LBW", "Normal BW"), include.lowest = TRUE))
+
+bw_low <- cent_distinct %>%
+  filter(!is.na(birth_weight_kg)) %>%
+  mutate(group = ifelse(birth_weight_kg < 2.5, "Low BW", "Normal BW"))
+
+pct_lowbw <- round(mean(bw_low$group == "Low BW") * 100, 1)
+
+(bw_low_dist_plot <- ggplot(bw_low, aes(x = birth_weight_kg, fill = group)) +
+    geom_histogram(
+    binwidth = 0.1,
+    boundary = 0,
+    color = "white"
+  ) +
+  scale_fill_manual(values = c("Low BW" = "#C76E6A", "Normal BW" = "#7FAF8A")) +
+  labs(
+    x = paste0("Birth Weight(kg),\n % Low(<2.5kg) = ", pct_lowbw),
+    y = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "none"
+  ))
+
+if(save_figs == TRUE){
+panel_save(bw_low_dist_plot, glue("bw-low-dist-plot-{type}"), "svg", plot_save_path, plot_width= 10, plot_height = 7)
+}
+
+(bw_low_age_plot <- ggplot(cent_distinct %>% filter(!is.na(bw_category)), aes(x = age_years_adj, fill = bw_category)) +
+  geom_histogram(position = "fill", binwidth= 0.5, color = "white") +
+  scale_fill_manual(
+    values = c(
+      "VLBW"  = "#B9836A",
+      "LBW"  = "#6A8F9F",
+      "Normal BW" = "#7FAF8A"
+    )
+  ) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = "Proportion",
+    fill = "Birthweight"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal"
+  ))
+
+if(save_figs == TRUE){
+panel_save(bw_low_age_plot, glue("bw-low-byage-plot-{type}"), "svg", plot_save_path, plot_width= 10, plot_height = 7)
+}
+
+cent_distinct$age_group <- cut(cent_distinct$age_years_adj, breaks = 80, include.lowest = TRUE, labels = FALSE)
+
+cent_distinct <- cent_distinct %>%
+  group_by(age_group) %>%
+  arrange(birth_weight_kg, .by_group = TRUE) %>%
+  ungroup()
+
+#for x axis labeling
+age_labels <- c(0, 5, 10, 15, 20)
+group_width<- (max(cent_distinct$age_years_adj) - min(cent_distinct$age_years_adj)) / 80
+x_breaks <- floor((age_labels - min(cent_distinct$age_years_adj)) / group_width) + 1
+#fix position of 0
+x_breaks[1] <- 1
+
+(bw_cont_age_plot <- ggplot(cent_distinct %>% filter(!is.na(birth_weight_kg)), aes(x = age_group, y = 1, fill = birth_weight_kg)) + geom_bar(stat = "identity", plot_width= 0.8) +
+    scale_fill_gradient2(low = "#F2EAD3", mid = "#E6E2C8", high = "#7FAF8A", limits = range(cent_distinct$birth_weight_kg, na.rm = TRUE)) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = NULL,
+    fill = "Birthweight"
+  ) +
+  scale_x_continuous(
+      breaks = x_breaks,
+      labels = age_labels
+    ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(margin = margin(r = 10))
+  ) +
+  guides(fill = guide_colorbar(
+    barwidth= 10,
+    barheight = 1,
+    title.position = "left",
+    title.vjust = 1
+  )))
+
+if(save_figs == TRUE){
+panel_save(bw_cont_age_plot, glue("bw-cont-byage-plot-{type}"), "svg", plot_save_path, plot_width= 10, plot_height = 7)
+}
+```
+
+# Birthweight Percentile Plots
+Within Distinct, so each subject is represented only once.
+Using Fenton-calculated ones (new)
+```{r, echo = FALSE}
+if(!("age_group" %in% names(cent_distinct))){
+cent_distinct$age_group <- cut(cent_distinct$age_years_adj, breaks = 80, include.lowest = TRUE, labels = FALSE)
+}
+
+cent_distinct <- cent_distinct %>%
+  group_by(age_group) %>%
+  arrange(bwp_fen, .by_group = TRUE) %>%
+  ungroup()
+
+#for x axis labeling
+age_labels <- c(0, 5, 10, 15, 20)
+group_width<- (max(cent_distinct$age_years_adj) - min(cent_distinct$age_years_adj)) / 80
+x_breaks <- floor((age_labels - min(cent_distinct$age_years_adj)) / group_width) + 1
+#fix position of 0
+x_breaks[1] <- 1
+
+(bwp_cont_age_plot <- ggplot(cent_distinct %>% filter(!is.na(bwp_fen)), aes(x = age_group, y = 1, fill = bwp_fen)) + geom_bar(stat = "identity", plot_width= 0.8) +
+    scale_fill_gradient2(low = "#F2EAD3", mid = "#E6E2C8", high = "#7FAF8A", limits = c(0,1)) +
+  labs(
+    x = "Adjusted Age (years)",
+    y = NULL,
+    fill = "Birthweight Percentile"
+  ) +
+  scale_x_continuous(
+      breaks = x_breaks,
+      labels = age_labels
+    ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(margin = margin(r = 10))
+  ) +
+  guides(fill = guide_colorbar(
+    barwidth= 10,
+    barheight = 1,
+    title.position = "left",
+    title.vjust = 1
+  )))
+
+if(save_figs == TRUE){
+panel_save(bwp_cont_age_plot, glue("bwp-cont-byage-plot-{type}"), "svg", plot_save_path, plot_width= 10, plot_height = 7)
+}
+```
+
+# Ages of repeat measurements plot
+```{r, echo = FALSE}
+cent_all <- cent_all %>%
+  group_by(participant_id) %>%
+  mutate(age_at_first_scan_years = min(age_at_scan_years, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(participant_id = reorder(participant_id, age_at_first_scan_years))
+
+(repeat_scans_plot <- ggplot(cent_all, aes(y = participant_id, group = participant_id)) +
+   geom_point(aes(x = age_years_adj, color = preterm), linewidth = 0.1) +
+   geom_line(aes(x = age_years_adj, color = preterm), linewidth = 0.075) +
+   scale_color_manual(values = c(
+      "VPM"  = "#E8A0A8",
+      "LPM"  = "#A8C4E8",
+      "Term" = "#A7D9A0"),
+      name = "") +
+   theme_classic() +
+   labs(x = "Adjusted Age at Scan (yrs)", y = "Participant") +
+   theme(legend.position = "bottom",
+         axis.ticks.y = element_blank(),
+         axis.text.y = element_blank()))
+
+if(save_figs == TRUE){
+panel_save(repeat_scans_plot, glue("repeat-scans-plot-{type}"), "svg", plot_save_path, plot_width= 14, plot_height = 11)
+}
+```

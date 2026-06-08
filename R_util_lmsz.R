@@ -185,7 +185,7 @@ backtransform_centiles <- function(NEWData, FITParam,
 }
 
 
-#paths adapted for lmsz premie adaptation EK Jan 2026
+#function adapted for gestational age inclusion in LMSz EK March 2026
 backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
   # Load data
   pheno_name <- pheno
@@ -194,10 +194,9 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
   
   #old_pheno <- slip_features$old_pheno[slip_features$new_pheno == pheno]
   #if (length(old_pheno) == 0) {
-    #return()
+  #return()
   #}
   growthChartModel <- readRDS(glue("{lmsz_models_path}lmsz_{pheno}.rds"))
-  #sim_list <- sim_list_slip
   # Load SLIP fit model
   if (grepl("Thick",pheno)) {
     fit_file <- glue("{models_path}mpr-{pheno}Transformed/FIT.EXTRACT.rds")
@@ -208,9 +207,9 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
   orig_fit <- readRDS(fit_file)
   
   df_tmp <- df %>%
-    select(participant_id, adjusted_age_days_log, sex, !!pheno, !!raw_name) %>%
-  rename(pheno = !!pheno,
-         normalised_value = !!raw_name) %>%
+    select(participant_id, adjusted_age_days_log, sex, gestational_age, !!pheno, !!raw_name) %>%
+    rename(pheno = !!pheno,
+           normalised_value = !!raw_name) %>%
     na.omit()
   
   # Simulate centiles
@@ -222,22 +221,20 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
                               average_over = FALSE)
   
   # Reformat simulated values
-  lmsz_sim$fanCentiles_Female <- lmsz_sim$fanCentiles_Female %>%
-    pivot_longer(-c(adjusted_age_days_log),
-                 names_to = "centile_cat",
-                 values_to = "value") %>%
-    mutate(sex = "Female")
   
-  lmsz_sim$fanCentiles_Male <- lmsz_sim$fanCentiles_Male %>%
-    pivot_longer(-c(adjusted_age_days_log),
-                 names_to = "centile_cat",
-                 values_to = "value") %>%
-    mutate(sex = "Male")
+  lmsz_sim <- lapply(names(lmsz_sim), function(x){ 
+    out <- lmsz_sim[[x]] %>% pivot_longer(-c(adjusted_age_days_log),
+                                            names_to = "centile_cat",
+                                            values_to = "value")
+    out$sex <- ifelse(grepl("Female", x), "Female", "Male")
+    out$gestational_age <- as.numeric(gsub("\\D+", "", x))
+    return(out)
+  })
   
-  lmsz_df <- bind_rows(lmsz_sim$fanCentiles_Female,
-                       lmsz_sim$fanCentiles_Male) %>%
+  lmsz_df <- bind_rows(lmsz_sim) %>%
     mutate(site = NA,
            sex = factor(sex, levels = c("Female","Male")),
+           gestational_age = as.numeric(gestational_age),
            LMSz_input_fans = value,
            LMSz_input_centile = pnorm(value)) %>%
     mutate(line_size = case_match(centile_cat,
@@ -248,7 +245,7 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
                                   c("cent_0.025","cent_0.975") ~ "dotted",
                                   c("cent_0.25","cent_0.75") ~ "longdash",
                                   c("cent_0.5") ~ "solid"),
-           .after = sex) %>%
+           .after = site) %>%
     select(-c(value))
   
   # Plot original SLIP Model
@@ -277,7 +274,7 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
   
   # Plot backtransformed centiles
   NEWData <- lmsz_df %>%
-    select(adjusted_age_days_log, sex,
+    select(adjusted_age_days_log, sex, gestational_age,
            centile_cat,
            value = LMSz_input_centile) %>% 
     rename(AgeTransformed = adjusted_age_days_log) %>%
@@ -288,13 +285,13 @@ backtransform_centile_fans <- function(pheno, lmsz_models_path, sim_list, df) {
   
   backtransformed_fans <- backtransformed_fans %>%
     rename(adjusted_age_days_log = AgeTransformed) %>%
-    select(adjusted_age_days_log, sex, centile_cat, 
+    select(adjusted_age_days_log, sex, centile_cat, gestational_age,
            LMSz_fans = PRED.pop)
   
   # Join all results
   out_df <- lmsz_df %>%
     inner_join(original_fans, by= join_by(adjusted_age_days_log, centile_cat, sex)) %>%
-    inner_join(backtransformed_fans, by= join_by(adjusted_age_days_log, centile_cat, sex)) %>%
+    inner_join(backtransformed_fans, by= join_by(adjusted_age_days_log, centile_cat, sex, gestational_age)) %>%
     mutate(pheno = pheno, model = "SLIP", .before = adjusted_age_days_log) %>%
     mutate(fit_file = fit_file)
   
@@ -372,4 +369,137 @@ pred_og_centiles <- function(gamlssModel, og.data, get.std.scores = FALSE, new.d
     return(df)
   } 
   
+}
+
+
+lmsz_modeling <- function(df_subset, m_models, s_models, vars, models_path, save_path, save_model = TRUE, reweight = FALSE) {
+  if (!dir.exists(save_path)) dir.create(save_path)
+  source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/wp_taki_EK.R")
+  
+  #create empty list for wormplots
+  worm_plots <- list()
+  # Create tibble to hold best model
+  models_df <- tibble(feature = full_vars,
+                      m_model = "",
+                      s_model = "",
+                      AIC = NA,
+                      BIC = 999999999999,
+                      age_coef = NA,
+                      sex_coef = NA,
+                      intercept_coef = NA,
+                      interaction_coef = NA,
+                      age_sigma_coef = NA,
+                      sex_sigma_coef = NA,
+                      intercept_sigma_coef = NA,
+                      interaction_sigma_coef = NA)
+  
+  # Build the growth chart model
+  p <- "zscore" # specify the phenotype
+  for (pheno in full_vars) {
+    # Define phenotype
+    print(pheno)
+    #pheno_name <- glue("{pheno}Transformed")
+    zscore_name <- glue("{pheno}.zscore")
+    # Load reference SLIP fit model
+    if (grepl("Thick",pheno)) {
+      orig_fit <- readRDS(glue("{models_path}mpr-{pheno}Transformed/FIT.EXTRACT.rds"))
+    } else {
+      orig_fit <- readRDS(glue("{models_path}median-{pheno}Transformed/FIT.EXTRACT.rds"))
+    }
+    
+    # Make subset
+    df_tmp <- df_subset %>%
+      select(participant_id, adjusted_age_days_log, sex, 
+             adjusted_age_years,
+             !!pheno, !!zscore_name) %>%
+      rename(zscore = !!zscore_name) %>%
+      na.omit()
+    
+    # Loop through each mu and sigma model
+    mod <- models_df$feature == pheno
+    for (m in m_models) {
+      for (s in s_models) {
+        print(m)
+        print(s)
+        
+        # Run preliminary model - all subjects
+        growthChartModel_all <- gamlss(formula = as.formula(glue("zscore {m}")),
+                                       sigma.formula = as.formula(glue("zscore {s}")),
+                                       family = NO,
+                                       data = df_tmp,
+                                       control = gamlss.control(n.cyc = 200),  # See (2)
+                                       trace = F)
+        if(reweight == TRUE){
+          # Re-weight observations to exclude individuals with large residuals (> 3.5)
+          df_tmp$weight_tmp <- rep(1, dim(df_tmp)[1])
+          df_tmp$weight_tmp[which(abs(resid(growthChartModel_all)) > 3.5)] <- 0
+          
+          print(glue("The Number of Points Weighted 0 due to large residuals > 3.5 for {pheno} is {sum(df_tmp$weight_tmp == 0)}"))
+          
+          # Run refined model
+          growthChartModel <- gamlss(formula = as.formula(glue("zscore {m}")),
+                                     sigma.formula = as.formula(glue("zscore {s}")),
+                                     family = NO,
+                                     data = df_tmp,
+                                     weights = df_tmp$weight_tmp,
+                                     control = gamlss.control(n.cyc = 500),
+                                     trace = F)
+        } else{
+          growthChartModel = growthChartModel_all
+        }
+        # Check if the model has the lowest BIC and record it
+        if (growthChartModel$sbc <= models_df$BIC[mod]) {
+          fin_model <- growthChartModel
+          models_df$m_model[mod] <- m
+          models_df$s_model[mod] <- s
+          models_df$BIC[mod] <- growthChartModel$sbc
+        }
+        print("--------------")
+      }
+    }
+    
+    # Refine formatting of final models_df
+    models_df$m_model[mod] <- format(fin_model$mu.formula)
+    models_df$s_model[mod] <- format(fin_model$sigma.formula)
+    
+    # Extract model coefficients - mu
+    models_df$intercept_coef[mod]   <- fin_model$mu.coefficients["(Intercept)"]
+    models_df$age_coef[mod]         <- fin_model$mu.coefficients["adjusted_age_days_log"]
+    models_df$sex_coef[mod]         <- fin_model$mu.coefficients["sexMale"]
+    models_df$interaction_coef[mod] <- fin_model$mu.coefficients["adjusted_age_days_log:sexMale"]
+    # Extract model coefficients - sigma
+    models_df$intercept_sigma_coef[mod]   <- fin_model$sigma.coefficients["(Intercept)"]
+    models_df$age_sigma_coef[mod]         <- fin_model$sigma.coefficients["adjusted_age_days_log"]
+    models_df$sex_sigma_coef[mod]         <- fin_model$sigma.coefficients["sexMale"]
+    models_df$interaction_sigma_coef[mod] <- fin_model$sigma.coefficients["adjusted_age_days_log:sexMale"]
+    
+    # Extract final AIC/BIC
+    models_df$AIC[mod] <- fin_model$aic
+    models_df$BIC[mod] <- fin_model$sbc
+    
+    # Save final model
+    if(save_model == TRUE){
+      saveRDS(fin_model,glue("{save_path}lmsz_{pheno}.rds"))
+    }
+    # Assign worm plot
+    worm_plots[[pheno]] <- wp.taki_EK(object = fin_model, df_tmp = df_tmp) +
+      ggtitle(paste0(pheno," LMSz")) +
+      theme_classic(base_size = 12) +
+      theme(plot.title = element_text(size = 12),
+            axis.title = element_text(size = 12))
+    
+    # Update LMSz quantiles
+    df_tmp <- df_tmp %>%
+      add_column(!!glue("{pheno}.lmsz") := pred_og_centiles(fin_model,
+                                                            df_tmp)) %>%
+      select(-c(pheno, zscore, adjusted_age_years))
+    
+    # Add LMSz centile to final dataframe
+    df_subset <- df_subset %>% dplyr::left_join(df_tmp, by = join_by(participant_id, sex, adjusted_age_days_log))
+    
+    
+    print("-------------------------")
+  }
+  return_list <- list(models = models_df, df = df_subset, wp = worm_plots)
+  return(return_list)
 }

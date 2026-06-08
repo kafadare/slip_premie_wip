@@ -6,22 +6,24 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 params:
-  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/"
-  centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_median_centiles.csv"
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-allgrades-25.11/"
+  centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_mpr_centiles.csv"
   participants_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/participants_allvars_useable.csv"
   slip_release_folder: "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/"
   type: "median"  
+  add_qc_flag: "TRUE"
 ---
 
 # Define params if they do not exist
 ```{r}
 if (!exists("params")) {
   params <- list(
-  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/median-distinct-allgrades-25.11/",
-  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_median_centiles.csv",
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/mpr-allgrades-25.11/",
+  centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/centile_csv/slip_mpr_centiles.csv",
   participants_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11/raw_csv/participants_allvars_useable.csv",
   slip_release_folder = "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_release/",
-  type = "median"
+  type = "median",
+  add_qc_flag = "TRUE"
   )
 }
 ``` 
@@ -44,6 +46,7 @@ centiles_path <- params$centiles_path
 participants_path <- params$participants_path
 slip_release_folder <- params$slip_release_folder
 type <- params$type
+add_qc_flag <- params$add_qc_flag
 ```
 
 # Load packages
@@ -67,6 +70,7 @@ library(interactions)
 library(growthstandards)
 library(gtsummary)
 library(svglite)
+library(childsds)
 ```
 
 # Define Paths
@@ -102,10 +106,10 @@ qc_metrics <- read.csv(qc_metrics_path) %>% filter(euler_mean > -60 &
                                                      qc_putamen_pallidum > 0.65 &
                                                      qc_hippocampus_amygdala > 0.65)
 
-centiles <- read.csv(centiles_path) %>% select(-X)
+centiles <- read.csv(centiles_path)
 ```
 
-#Load Phenotype Var Names
+# Load Phenotype Var Names
 ```{r}
 full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
 global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
@@ -132,6 +136,7 @@ ggcorrplot(
 
 ## QC metrics prep
 ```{r}
+if(type == "median"){
 ##group by session-id and take median of euler_mean
 qc_metrics <- qc_metrics %>%
   group_by(session_id) %>%
@@ -139,6 +144,7 @@ qc_metrics <- qc_metrics %>%
             .groups = "drop") %>%
   left_join(qc_metrics, by = "session_id") %>%
   rename(participant_id = subject_id)
+}
 ```
 
 ## Participant DF prep
@@ -151,11 +157,11 @@ sub-HM2BYW325 has NA and 36 recorded for GA in two separate sessions, otherwise 
      filter(n_var > 1)
  participants %>%
      group_by(participant_id) %>%
-     summarise(n_var = n_distinct(birth_weight_kg)) %>%
+     summarise(n_var = n_distinct(birth_weight_kg_qc)) %>%
      filter(n_var > 1)
   participants %>%
      group_by(participant_id) %>%
-     summarise(n_var = n_distinct(gestational_age)) %>%
+     summarise(n_var = n_distinct(ga_days_total_qc)) %>%
      filter(n_var > 1)
 #
 ```
@@ -189,7 +195,7 @@ participants <- participants %>%
 
 ## check for extra variables in the centiles df
 ```{r}
-vars_to_select <- c(full_vars, "participant_id", "session_id", "site", "sex", "age_days", "avg_grade", "dx")
+vars_to_select <- c(full_vars, "participant_id", "session_id", "scan_id", "site", "sex", "adjusted_age_in_days", "avg_grade", "dx")
 vars_extra <- names(centiles)[!(names(centiles) %in% vars_to_select)]
 print(glue("Additional variables in the centiles csv provided: {vars_extra}"))
 ```
@@ -199,7 +205,7 @@ print(glue("Additional variables in the centiles csv provided: {vars_extra}"))
 print(glue("ALL Centiles DF dimensions before 'cleanup' script: {c(dim(centiles))}"))
 
 centiles <- centiles %>% select(any_of(vars_to_select))
-clean_centiles <- slip_centdf_clean(centiles, participants, qc_metrics, type = type)
+clean_centiles <- slip_centdf_clean(centiles, participants, qc_metrics, type = type, add_qc = add_qc_flag)
 centiles_distinct <- clean_centiles$distinct
 centiles_all <- clean_centiles$all
 print(glue("DISTINCT Centiles DF dimensions after 'cleanup' script: {c(dim(centiles_distinct))}"))
@@ -238,6 +244,161 @@ centiles_all <- slip_bwga_qc(cent_df = centiles_all, bw_mean = bw_mean, bw_sd = 
 print("AFTER EXCLUSIONS")
 print(glue("Within DISTINCT participants; participants with BW available {sum(!is.na(centiles_distinct$birth_weight_kg))}"))
 print(glue("Within DISTINCT participants; participants with GA available {sum(!is.na(centiles_distinct$gestational_age))}"))
+```
+
+# Weight/Height Centiles Calculation
+```{r}
+centiles_distinct$weight_at_enc_sds <- sds(value = centiles_distinct$weight_at_enc,
+                                            age = centiles_distinct$adjusted_age_in_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_distinct$height_at_enc_sds <- sds(value = centiles_distinct$height_at_enc,
+                                            age = centiles_distinct$adjusted_age_in_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+
+centiles_all$weight_at_enc_sds <- sds(value = centiles_all$weight_at_enc,
+                                            age = centiles_all$adjusted_age_in_years,
+                                            sex = centiles_all$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_all$height_at_enc_sds <- sds(value = centiles_all$height_at_enc,
+                                            age = centiles_all$adjusted_age_in_years,
+                                            sex = centiles_all$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+
+centiles_distinct$weight_at_enc_cent <- sds(value = centiles_distinct$weight_at_enc,
+                                            age = centiles_distinct$adjusted_age_in_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_distinct$height_at_enc_cent <- sds(value = centiles_distinct$height_at_enc,
+                                            age = centiles_distinct$adjusted_age_in_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+
+centiles_all$weight_at_enc_cent <- sds(value = centiles_all$weight_at_enc,
+                                            age = centiles_all$adjusted_age_in_years,
+                                            sex = centiles_all$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_all$height_at_enc_cent <- sds(value = centiles_all$height_at_enc,
+                                            age = centiles_all$adjusted_age_in_years,
+                                            sex = centiles_all$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+
+centiles_distinct$weight_at_enc_nonadjage_sds <- sds(value = centiles_distinct$weight_at_enc,
+                                            age = centiles_distinct$age_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_distinct$height_at_enc_nonadjage_sds <- sds(value = centiles_distinct$height_at_enc,
+                                            age = centiles_distinct$age_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+
+centiles_all$weight_at_enc_nonadjage_sds <- sds(value = centiles_all$weight_at_enc,
+                                            age = centiles_all$age_years,
+                                            sex = centiles_all$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_all$height_at_enc_nonadjage_sds <- sds(value = centiles_all$height_at_enc,
+                                            age = centiles_all$age_years,
+                                            sex = centiles_all$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "SDS",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+
+centiles_distinct$weight_at_enc_nonadjage_cent <- sds(value = centiles_distinct$weight_at_enc,
+                                            age = centiles_distinct$age_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_distinct$height_at_enc_nonadjage_cent <- sds(value = centiles_distinct$height_at_enc,
+                                            age = centiles_distinct$age_years,
+                                            sex = centiles_distinct$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+
+centiles_all$weight_at_enc_nonadjage_cent <- sds(value = centiles_all$weight_at_enc,
+                                            age = centiles_all$age_years,
+                                            sex = centiles_all$sex,
+                                            item = "weight",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
+centiles_all$height_at_enc_nonadjage_cent <- sds(value = centiles_all$height_at_enc,
+                                            age = centiles_all$age_years,
+                                            sex = centiles_all$sex,
+                                            item = "height",
+                                            ref = who.ref,
+                                            type = "perc",
+                                            male = "Male",
+                                            female = "Female"
+                                            )
 ```
 
 # SAVE Data Frames

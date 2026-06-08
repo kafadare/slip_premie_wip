@@ -7,57 +7,49 @@ main_data_folder <- "/mnt/isilon/bgdlab_processing/releases_clinical/2025_11_rel
 #Read in raw participants file
 slip_participants <- read.csv(paste0(main_data_folder,"BIDS/participants.tsv"), sep='\t') 
 
-#Deal with BW/GA encoding
-slip_participants$gestational_age <- as.numeric(slip_participants$gestational_age)
-slip_participants$birth_weight_kg <- as.numeric(slip_participants$birth_weight_kg)
-slip_participants$birth_length_cm <- as.numeric(slip_participants$birth_length_cm)
+#Deal with BW/GA/height/weight/hc encoding
+slip_participants <- slip_participants %>%
+  mutate(across(c("gestational_age", "birth_weight_kg", "birth_length_cm", 
+  "height_at_enc", "weight_at_enc", "hc_at_enc", "scan_hc_measure_age_diff"),
+  as.numeric))
 
 #Check BW/GA missing values
 slip_participants %>%
   group_by(participant_id) %>%
-  summarise(n_var = n_distinct(birth_length_cm)) %>%
-  filter(n_var > 1)
+  summarise(n_var_bl = n_distinct(birth_length_cm)) %>%
+  filter(n_var_bl > 1)
 slip_participants %>%
   group_by(participant_id) %>%
-  summarise(n_var = n_distinct(birth_weight_kg)) %>%
-  filter(n_var > 1)
+  summarise(n_var_bw = n_distinct(birth_weight_kg)) %>%
+  filter(n_var_bw > 1)
 slip_participants %>%
   group_by(participant_id) %>%
-  summarise(n_var = n_distinct(gestational_age)) %>%
-  filter(n_var > 1)
+  summarise(n_var_ga = n_distinct(gestational_age)) %>%
+  filter(n_var_ga > 1)
 
 #Replace missing bw/ga values for participants across sessions -- if more than one value recorded, then take the mean
 slip_participants <- slip_participants %>%
   group_by(participant_id) %>%
   mutate(
+    birth_length_cm = if (all(is.na(birth_length_cm))) NA_real_
+    else mean(birth_length_cm, na.rm = TRUE),
     gestational_age = if (all(is.na(gestational_age))) NA_real_
-    else mean(gestational_age, na.rm = TRUE)
-  ) %>%
-  ungroup()
-
-slip_participants <- slip_participants %>%
-  group_by(participant_id) %>%
-  mutate(
+    else mean(gestational_age, na.rm = TRUE),
     birth_weight_kg = if (all(is.na(birth_weight_kg))) NA_real_
     else mean(birth_weight_kg, na.rm = TRUE)
   ) %>%
-  ungroup()
-
-slip_participants <- slip_participants %>%
-  group_by(participant_id) %>%
+  ungroup() %>%
   mutate(
-    birth_length_cm = if (all(is.na(birth_length_cm))) NA_real_
-    else mean(birth_length_cm, na.rm = TRUE)
-  ) %>%
-  ungroup()
+    adjusted_age_in_days_EK = ifelse(is.na(gestational_age), age_at_scan + 280, age_at_scan + (gestational_age * 7))
+  ) 
+
+slip_participants_allvars_useable <- slip_participants %>% filter(useable)
+
+write.csv(slip_participants_allvars_useable, 'raw_csv/participants_allvars_useable.csv', row.names=F)
 
 # mutate age column
-slip_participants <- slip_participants %>%
-    mutate(
-        age_days = ifelse(is.na(gestational_age), age_at_scan + 280, age_at_scan + (gestational_age * 7))
-    ) %>%
-    filter(useable) %>%
-    select(participant_id, subject_id, session_id, sex, age_days, 
+slip_participants <- slip_participants %>% filter(useable)%>% 
+    select(participant_id, subject_id, session_id, sex, adjusted_age_in_days,
            device_serial_number, magnetic_field_strength, avg_grade, age_at_scan)
 
 #Read QC data
@@ -109,7 +101,7 @@ slip_scans <- slip_qc_participants %>%
 slip_median <- slip_scans %>%
   filter(sex != 'Unknown')%>%
   rename(site = device_serial_number) %>%
-  group_by(participant_id, session_id, sex, age_days, site, avg_grade) %>%
+  group_by(participant_id, session_id, sex, age_at_scan, site, avg_grade) %>%
   summarise(across(
     .cols = where(is.numeric), 
     .fns = ~median(.x, na.rm = TRUE)
@@ -117,7 +109,7 @@ slip_median <- slip_scans %>%
 
 slip_median <- slip_median %>%
   group_by(participant_id) %>%
-  mutate(session= dense_rank(interaction(session_id, age_days)),
+  mutate(session= dense_rank(interaction(session_id, age_at_scan)),
          dx='CN') %>%
   ungroup()
 
@@ -130,7 +122,7 @@ slip_mpr <- slip_scans %>%
   slice(1) %>%
   ungroup() %>%
   group_by(participant_id) %>%
-  mutate(session = dense_rank(interaction(session_id, age_days)),
+  mutate(session = dense_rank(interaction(session_id, age_at_scan)),
          dx='CN')
 
 slip_median2 <- slip_median %>%

@@ -2,8 +2,8 @@
 #SBATCH --job-name=render_rmd
 #SBATCH --output=/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/logs/render_rmd_%x_%j.out
 #SBATCH --error=/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/logs/render_rmd_%x_%j.err
-#SBATCH --time=02:00:00
-#SBATCH --mem=8G
+#SBATCH --time=04:00:00
+#SBATCH --mem=16G
 #SBATCH --cpus-per-task=1
 
 module load R

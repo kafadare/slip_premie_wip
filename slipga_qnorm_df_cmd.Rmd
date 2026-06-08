@@ -1,0 +1,776 @@
+---
+title: "slipga_qnorm_df_cmd.Rmd"
+author: "Eren Kafadar"
+date: "2026-06-02"
+output:
+  html_document:
+    df_print: paged
+params:
+  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/"
+  centiles_distinct_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_distinct_median_th_mpr_2026-04-24.csv"
+  centiles_all_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_all_median_th_mpr_2026-04-24.csv"
+  gamlss_models_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/gamlss_models_rds/"
+editor_options: 
+  chunk_output_type: console
+---
+# Define params if they do not exist
+```{r params, echo = FALSE}
+if (!exists("params")) {
+  params <- list(
+  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/",
+  centiles_distinct_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_distinct_median_th_mpr_2026-04-24.csv",
+  centiles_all_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_all_median_th_mpr_2026-04-24.csv",
+  gamlss_models_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/gamlss_models_rds/"
+  )
+}
+print(params)
+``` 
+
+# Load Packages
+```{r packages, echo = FALSE}
+# Load libraries
+require(dplyr)
+require(glue)
+require(magrittr)
+require(readr)
+require(stringr)
+require(tidyr)
+require(scales)
+require(mgcv)
+require(pbkrtest)
+require(gamlssTools) # Margaret' package
+require(tibble)
+require(lme4)
+require(purrr)
+# For figures/plotting
+require(ggplot2)
+require(gridExtra)
+require(ggsegDKT)
+require(ggseg)
+require(ggpubr)
+require(ggcorrplot)
+require(cowplot)
+require(ggh4x)
+require(egg)
+require(interactions)
+require(growthstandards)
+require(gtsummary)
+require(svglite)
+require(patchwork)
+
+`%nin%` = Negate(`%in%`)
+```
+
+# Controls
+```{r setup, echo = TRUE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+# set command
+save_tables <- TRUE
+plot <- TRUE
+save_figs <- FALSE
+global_measure_vol <- "global_eTIV"
+global_measure_sa <- "global_SurfaceArea"
+global_measure_th <- "global_MeanThickness"
+set.seed(42)
+
+output_folder <- params$output_folder
+centiles_distinct_path <- params$centiles_distinct_path
+centiles_all_path <- params$centiles_all_path
+gamlss_models_path <- params$gamlss_models_path
+```
+
+# Define Paths
+```{r, echo = TRUE}
+# set folder paths
+code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
+vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars_2511_new/"
+
+# output folder
+output_folder <- params$output_folder
+if (!dir.exists(output_folder)) dir.create(output_folder)
+##  output subfolder paths
+analysis_dfs_folder <- paste0(output_folder, "analysis_dfs/")
+if (!dir.exists(analysis_dfs_folder)) dir.create(analysis_dfs_folder)
+
+csv_output_folder <-  paste0(output_folder, "results_csv/")
+if (!dir.exists(csv_output_folder)) dir.create(csv_output_folder)
+
+  betas_folder <- paste0(csv_output_folder, "full_betas/")
+  if (!dir.exists(betas_folder)) dir.create(betas_folder)
+  dkt_folder <- paste0(csv_output_folder, "dkt_betas/")
+  if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
+  slwindow_folder <- paste0(csv_output_folder, "sliding_window/")
+  if (!dir.exists(slwindow_folder)) dir.create(slwindow_folder)
+  sp_stat_folder <- paste0(csv_output_folder, "spline_stats/")
+  if (!dir.exists(sp_stat_folder)) dir.create(sp_stat_folder)
+
+plot_output_folder <- paste0(output_folder, "plots/")
+if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
+
+  ggseg_plot_folder <- paste0(plot_output_folder, "ggseg_plots/")
+  if (!dir.exists(ggseg_plot_folder)) dir.create(ggseg_output_folder)
+  cmd_plot_folder <- paste0(plot_output_folder, "cmd_plots/")
+  if (!dir.exists(cmd_plot_folder)) dir.create(cmd_plot_folder)
+  modelvis_plot_folder <- paste0(plot_output_folder, "modelvis_plots/")
+  if (!dir.exists(modelvis_plot_folder)) dir.create(modelvis_plot_folder)
+  slwindow_plot_folder <- paste0(plot_output_folder, "sliding_window_plots/")
+  if (!dir.exists(slwindow_plot_folder)) dir.create(slwindow_plot_folder)
+
+```
+
+# Load custom functions
+```{r fcts, echo = FALSE}
+source(glue("{code_path}sliding_window.R"))
+source(glue("{code_path}visualize_model_bartfct.R"))
+source(glue("{code_path}vis_spline_noint_EK.R"))
+
+panel_save <- function(plot, filename, extension, folder, plot_width = 8, plot_height = 10){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300, width = plot_width, height = plot_height)
+}
+```
+
+# Color Specifications
+```{r, echo = TRUE}
+limits = c(-0.3, 0.3)
+low_color = "#4878CF" # blue
+mid_color = "white"
+high_color = "#D65F5F" # red
+
+ga_color = "#6D8299" #muted blue
+bw_color = "#709085" # muted green
+bwp_color = "#A68A64" # muted beige
+```
+
+# Read in data files
+```{r, echo = FALSE}
+full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
+global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+th_vars_median <- c(paste0(th_vars, ".median"))
+namemap <- read.csv(glue("{vars_path}name_mapping.csv"))
+
+cent_distinct <- read.csv(centiles_distinct_path) %>% select(-c("X"))
+cent_all <- read.csv(centiles_all_path) %>% select(-c("X"))
+  
+cent_distinct <-  cent_distinct %>% select(-(grep("_Z", names(cent_distinct)))) # This was for Liza's csvs so I can get their qnorm separately
+
+#determine if there is both mpr and median for thickness values
+median_th_mpr_flag <- any(grepl(".median", names(cent_distinct)))
+
+## Define global vars of interest
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
+```
+
+# Find if any models don't exist, remove from variable list for downstream analysis.
+```{r, echo = FALSE}
+vars_missing <- full_vars[!(full_vars %in% names(cent_all))]
+print(paste0("Phenotype Variables Missing in the Data Provided: ", paste(vars_missing, collapse = ", ")))
+full_vars <- full_vars[!(full_vars %in% vars_missing)]
+global_vars <- global_vars[!(global_vars %in% vars_missing)]
+vol_vars <- vol_vars[!(vol_vars %in% vars_missing)]
+sa_vars <- sa_vars[!(sa_vars %in% vars_missing)]
+th_vars <- th_vars[!(th_vars %in% vars_missing)]
+```
+
+# Find any cells with missing data within the centile scores
+```{r, echo = FALSE}
+if (median_th_mpr_flag){
+check_vars <- c(vol_vars, sa_vars, global_vars, th_vars_median)
+check_vars <- check_vars[check_vars != "global_MeanThickness"]
+missing_data_sessions <- cent_all[rowSums(is.na(cent_all %>% select(all_of(check_vars)))) > 0, ]$session_id
+print(paste0("Number of sessions with any missing centile data: ", length(missing_data_sessions)))
+missing_data_sessions_df <- cent_all %>% filter(session_id %in% missing_data_sessions) %>% select(any_of(c("session_id", "participant_id", "adjusted_age_in_years", full_vars)))
+} else {
+check_vars <- c(full_vars)
+missing_data_sessions <- cent_all[rowSums(is.na(cent_all %>% select(all_of(check_vars)))) > 0, ]$session_id
+print(paste0("Number of sessions with any missing centile data: ", length(missing_data_sessions)))
+missing_data_sessions_df <- cent_all %>% filter(session_id %in% missing_data_sessions) %>% select(any_of(c("session_id", "participant_id", "adjusted_age_in_years", full_vars)))
+}
+# remove sessions with any missing data (especially for calculating CMDs)
+cent_all <- cent_all[!(cent_all$session_id %in% missing_data_sessions),]
+```
+
+# Deal with QC Variable Naming Difference
+```{r, echo = FALSE}
+if(!("median_euler_mean" %in% names(cent_all))){
+    cent_all$qc_var <- cent_all$euler_mean
+    cent_distinct$qc_var <- cent_distinct$euler_mean
+} else if("median_euler_mean" %in% names(cent_all)){
+  cent_all$qc_var <- cent_all$median_euler_mean
+  cent_distinct$qc_var <- cent_distinct$median_euler_mean
+}
+```
+
+# Remove BW outliers, and corresponding BWP
+```{r}
+mu_bw <- mean(cent_distinct$birth_weight_kg, na.rm = TRUE)
+sd_bw <- sd(cent_distinct$birth_weight_kg, na.rm = TRUE)
+
+rm_dist = 5
+
+# cent distinct
+
+nrow(cent_distinct %>% filter(
+  birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) )
+
+cent_distinct <- cent_distinct %>%
+  mutate(birth_weight_kg_inc_out = birth_weight_kg,
+    birth_weight_kg = case_when(
+        (birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) ~ NA,
+        TRUE ~ birth_weight_kg),
+    bwp_fen_inc_out = bwp_fen,
+    bwp_fen = case_when(
+        is.na(birth_weight_kg) ~ NA,
+        TRUE ~ bwp_fen))
+
+sum(!is.na(cent_distinct$birth_weight_kg))
+range(cent_distinct$birth_weight_kg, na.rm = TRUE)
+sum(!is.na(cent_distinct$birth_weight_kg_outrm))
+range(cent_distinct$birth_weight_kg_outrm, na.rm = TRUE)
+
+# cent all
+nrow(cent_all %>% filter(
+  birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) )
+
+cent_all <- cent_all %>%
+  mutate(birth_weight_kg_inc_out = birth_weight_kg,
+    birth_weight_kg = case_when(
+        (birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) ~ NA,
+        TRUE ~ birth_weight_kg),
+    bwp_fen_inc_out = bwp_fen,
+    bwp_fen = case_when(
+        (birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) ~ NA,
+        TRUE ~ bwp_fen))
+```
+# Prepare Df for Analysis
+
+## Set 0/1 centiles to min/max value to avoid Inf/-Inf
+numbers from gamlssTools pkg
+include weight/height centiles here later (when properly calculated and exported from arcus)
+```{r}
+complete_centile_vars <- c(full_vars, th_vars_median, "global_MeanThickness.median", "bwp_fen")
+
+for (x in complete_centile_vars){
+  cent_distinct[cent_distinct[,x] == 0 & !is.na(cent_distinct[,x]), x] <- 0.0000000000000000000000001
+  cent_distinct[cent_distinct[,x] == 1 & !is.na(cent_distinct[,x]), x] <- 0.99999999999999994
+  
+  cent_all[cent_all[,x] == 0 & !is.na(cent_all[,x]), x] <- 0.0000000000000000000000001
+  cent_all[cent_all[,x] == 1 & !is.na(cent_all[,x]), x] <- 0.99999999999999994
+}
+```
+
+## Set marker for >= 2 years (adjusted age) and >= 1 years (unadjusted age) for thickness sensitivity/analyses
+```{r}
+cent_distinct$age_over2_adj <- ifelse(cent_distinct$age_years_adj >=2, TRUE, FALSE)
+cent_distinct$age_over2_adj <- ifelse(cent_distinct$age_years_adj >=2, TRUE, FALSE)
+cent_distinct$age_over1_unadj <- ifelse(cent_distinct$age_at_scan_years >=1, TRUE, FALSE)
+cent_distinct$age_over1_unadj <- ifelse(cent_distinct$age_at_scan_years >=1, TRUE, FALSE)
+
+cent_all$age_over2_adj <- ifelse(cent_all$age_years_adj >=2, TRUE, FALSE)
+cent_all$age_over2_adj <- ifelse(cent_all$age_years_adj >=2, TRUE, FALSE)
+cent_all$age_over1_unadj <- ifelse(cent_all$age_at_scan_years >=1, TRUE, FALSE)
+cent_all$age_over1_unadj <- ifelse(cent_all$age_at_scan_years >=1, TRUE, FALSE)
+```
+
+## zscore centiles (new df)
+```{r, echo = FALSE}
+# zscore centiles and other variables of interest
+if (median_th_mpr_flag) {
+df.zscore <- cent_distinct %>%
+  mutate(across(all_of(c(full_vars, th_vars_median, "global_MeanThickness.median", 
+                         "bwp_fen", "bwp_fen_inc_out")), qnorm)) %>%
+  mutate(across(all_of(c("gestational_age", "birth_weight_kg", 
+                         "birth_weight_kg_inc_out",
+                         "age_at_scan", "age_at_scan_years", "age_days_adj", "age_years_adj",
+                         "qc_var", "euler_mean_mpr", "median_euler_mean")), 
+                ~as.numeric(scale(.x))))
+} else {
+  df.zscore <- cent_distinct %>%
+  mutate(across(all_of(c(full_vars, "bwp_fen", "bwp_fen_inc_out")), qnorm)) %>%
+  mutate(across(all_of(c("gestational_age", "birth_weight_kg", 
+                         "birth_weight_kg_inc_out",
+                         "age_at_scan", "age_at_scan_years", "age_days_adj", "age_years_adj",
+                         "qc_var")), 
+                ~as.numeric(scale(.x))))
+}
+
+# set sex and preterm as factor
+df.zscore$sex <- as.factor(df.zscore$sex)
+df.zscore$preterm <- as.factor(df.zscore$preterm)
+
+# zscore centiles and other variables of interest
+if (median_th_mpr_flag) {
+df.zscore_all <- cent_all %>%
+  mutate(across(all_of(c(full_vars, th_vars_median, "bwp_fen", "bwp_fen_inc_out")), qnorm)) %>%
+  mutate(across(all_of(c("gestational_age", "birth_weight_kg", 
+                         "birth_weight_kg_inc_out",
+                         "age_at_scan", "age_at_scan_years", "age_days_adj", "age_years_adj",
+                         "qc_var", "euler_mean_mpr", "median_euler_mean")), 
+                ~as.numeric(scale(.x))))
+} else {
+  df.zscore_all <- cent_all %>%
+  mutate(across(all_of(c(full_vars, "bwp_fen", "bwp_fen_inc_out")), qnorm)) %>%
+  mutate(across(all_of(c("gestational_age", "birth_weight_kg", 
+                         "birth_weight_kg_inc_out",
+                         "age_at_scan", "age_at_scan_years", "age_days_adj", "age_years_adj",
+                         "qc_var")), 
+                ~as.numeric(scale(.x))))
+}
+
+# set sex and preterm as factor
+df.zscore_all$sex <- as.factor(df.zscore_all$sex)
+df.zscore_all$preterm <- as.factor(df.zscore_all$preterm)
+```
+
+## find Inf cells, sanity check, should be none
+```{r, echo = FALSE}
+inf_nan_table <- as.data.frame(t(sapply(df.zscore[c(full_vars, "bwp_fen")], function(x){
+  c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
+})))
+max(inf_nan_table$inf)
+max(inf_nan_table$nan)
+
+inf_nan_table %>% filter(inf > 0)
+```
+
+## Store non-normalized distribution stats to convert back for plots
+```{r}
+stats_cent_all <- cent_all %>%
+  dplyr::summarise(across(all_of(c("gestational_age", "birth_weight_kg",
+                                   "birth_weight_kg_inc_out",
+                         "age_at_scan", "age_at_scan_years", "age_days_adj", "age_years_adj",
+                         "qc_var", "euler_mean_mpr", "median_euler_mean")),
+                         list(mean = ~ mean(.x, na.rm = TRUE),
+                              sd = ~ sd(.x, na.rm = TRUE)),
+                         .names = "{.col}__{.fn}")) %>%
+  pivot_longer(everything(),
+               names_to = c("var", ".value"),
+               names_pattern = "^(.*)__(mean|sd)$")
+
+stats_cent_distinct <- cent_distinct %>%
+  dplyr::summarise(across(all_of(c("gestational_age", "birth_weight_kg",
+                                   "birth_weight_kg_inc_out",
+                         "age_at_scan", "age_at_scan_years", "age_days_adj", "age_years_adj",
+                         "qc_var", "euler_mean_mpr", "median_euler_mean")),
+                         list(mean = ~ mean(.x, na.rm = TRUE),
+                              sd = ~ sd(.x, na.rm = TRUE)),
+                         .names = "{.col}__{.fn}")) %>%
+  pivot_longer(everything(),
+               names_to = c("var", ".value"),
+               names_pattern = "^(.*)__(mean|sd)$")
+
+mean_lookup_all <- setNames(stats_cent_all$mean, stats_cent_all$var)
+sd_lookup_all <- setNames(stats_cent_all$sd, stats_cent_all$var)
+
+mean_lookup_distinct <- setNames(stats_cent_distinct$mean, stats_cent_distinct$var)
+sd_lookup_distinct <- setNames(stats_cent_distinct$sd, stats_cent_distinct$var)
+
+if(save_tables){
+  save(mean_lookup_distinct, sd_lookup_distinct, file = glue("{analysis_dfs_folder}lookup_stats_distinct.RData"))
+  save(mean_lookup_all,sd_lookup_all, file = glue("{analysis_dfs_folder}lookup_stats_all.RData"))
+}
+
+```
+
+
+# CMD on qnorm(centiles)
+
+## calculate CMDs on distinct
+```{r, echo = FALSE}
+vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
+vol_vars_subcortical <- vol_vars[grep("aseg", vol_vars)]
+names.global <- c("global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol")
+
+# CMD Calculation
+## global
+global.center <- colMeans(df.zscore %>% select(all_of(names.global)))
+global.cov_matrix <- cov(df.zscore %>% select(all_of(names.global)))
+global.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(names.global)), global.center, global.cov_matrix))
+df.zscore$global.cmd <- global.md
+
+## vol
+vol.center <- colMeans(df.zscore %>% select(all_of(vol_vars_cortical)))
+vol.cov_matrix <- cov(df.zscore %>% select(all_of(vol_vars_cortical)))
+vol.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(vol_vars_cortical)), vol.center, vol.cov_matrix))
+df.zscore$vol.cmd <- vol.md
+
+## sa
+sa.center <- colMeans(df.zscore %>% select(all_of(sa_vars)))
+sa.cov_matrix <- cov(df.zscore %>% select(all_of(sa_vars)))
+sa.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(sa_vars)), sa.center, sa.cov_matrix))
+df.zscore$sa.cmd <- sa.md
+
+## th - calculate above 2 year adjusted, using mpr if the df is median-th-mpr
+th.center <- colMeans(df.zscore %>% filter(age_over2_adj == TRUE) %>% select(all_of(th_vars)), na.rm = TRUE)
+th.cov_matrix <- cov(df.zscore %>% filter(age_over2_adj == TRUE) %>% select(all_of(th_vars)), use = "complete.obs")
+th.md <- sqrt(mahalanobis(df.zscore %>% filter(age_over2_adj == TRUE) %>% select(all_of(th_vars)), th.center, th.cov_matrix))
+df.zscore[df.zscore$age_over2_adj == TRUE,"th.cmd"]  <- th.md
+
+## if the df is median-th-mpr th - calculate all ages, using median
+if(median_th_mpr_flag){
+  th.center_median_full <- colMeans(df.zscore %>% select(all_of(th_vars_median)), na.rm = TRUE)
+  th.cov_matrix_median_full <- cov(df.zscore %>% select(all_of(th_vars_median)), use = "complete.obs")
+  th.md_median_full <- sqrt(mahalanobis(df.zscore %>% select(all_of(th_vars_median)), th.center_median_full, th.cov_matrix_median_full))
+  df.zscore$th.cmd_median_full  <- th.md_median_full
+}
+
+## subcort
+subcort.center <- colMeans(df.zscore %>% select(all_of(vol_vars_subcortical)))
+subcort.cov_matrix <- cov(df.zscore %>% select(all_of(vol_vars_subcortical)))
+subcort.md <- sqrt(mahalanobis(df.zscore %>% select(all_of(vol_vars_subcortical)), subcort.center, subcort.cov_matrix))
+df.zscore$subcort.cmd <- subcort.md
+```
+
+## calculate CMDs on all (rm)
+** might need to check how to deal with rm when calculating CMD
+```{r, echo = FALSE}
+vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
+vol_vars_subcortical <- vol_vars[grep("aseg", vol_vars)]
+names.global <- c("global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol")
+
+# CMD Calculation
+## global
+global.center <- colMeans(df.zscore_all %>% select(all_of(names.global)))
+global.cov_matrix <- cov(df.zscore_all %>% select(all_of(names.global)))
+global.md <- sqrt(mahalanobis(df.zscore_all %>% select(all_of(names.global)), global.center, global.cov_matrix))
+df.zscore_all$global.cmd <- global.md
+
+## vol
+vol.center <- colMeans(df.zscore_all %>% select(all_of(vol_vars_cortical)))
+vol.cov_matrix <- cov(df.zscore_all %>% select(all_of(vol_vars_cortical)))
+vol.md <- sqrt(mahalanobis(df.zscore_all %>% select(all_of(vol_vars_cortical)), vol.center, vol.cov_matrix))
+df.zscore_all$vol.cmd <- vol.md
+
+## sa
+sa.center <- colMeans(df.zscore_all %>% select(all_of(sa_vars)))
+sa.cov_matrix <- cov(df.zscore_all %>% select(all_of(sa_vars)))
+sa.md <- sqrt(mahalanobis(df.zscore_all %>% select(all_of(sa_vars)), sa.center, sa.cov_matrix))
+df.zscore_all$sa.cmd <- sa.md
+
+## th - calculate above 2 year adjusted, using mpr if the df is median-th-mpr
+th.center <- colMeans(df.zscore_all %>% filter(age_over2_adj == TRUE) %>% select(all_of(th_vars)), na.rm = TRUE)
+th.cov_matrix <- cov(df.zscore_all %>% filter(age_over2_adj == TRUE) %>% select(all_of(th_vars)), use = "complete.obs")
+th.md <- sqrt(mahalanobis(df.zscore_all %>% filter(age_over2_adj == TRUE) %>% select(all_of(th_vars)), th.center, th.cov_matrix))
+df.zscore_all[df.zscore_all$age_over2_adj == TRUE,"th.cmd"]  <- th.md
+
+## if the df is median-th-mpr th - calculate all ages, using median
+if(median_th_mpr_flag){
+  th.center_median_full <- colMeans(df.zscore_all %>% select(all_of(th_vars_median)), na.rm = TRUE)
+  th.cov_matrix_median_full <- cov(df.zscore_all %>% select(all_of(th_vars_median)), use = "complete.obs")
+  th.md_median_full <- sqrt(mahalanobis(df.zscore_all %>% select(all_of(th_vars_median)), th.center_median_full, th.cov_matrix_median_full))
+  df.zscore_all$th.cmd_median_full  <- th.md_median_full
+}
+
+## subcort
+subcort.center <- colMeans(df.zscore_all %>% select(all_of(vol_vars_subcortical)))
+subcort.cov_matrix <- cov(df.zscore_all %>% select(all_of(vol_vars_subcortical)))
+subcort.md <- sqrt(mahalanobis(df.zscore_all %>% select(all_of(vol_vars_subcortical)), subcort.center, subcort.cov_matrix))
+df.zscore_all$subcort.cmd <- subcort.md
+```
+
+## Remove outliers based on SD from the mean
+
+### Document N of outliers removed for Distinct
+```{r, echo = FALSE}
+sd_remove = 5
+print(glue("SD Distance to Remove: {sd_remove}"))
+
+print(glue("Global CMD N removed: {sum((df.zscore$global.cmd < (mean(df.zscore$global.cmd) - sd_remove*sd(df.zscore$global.cmd))) | 
+      (df.zscore$global.cmd > (mean(df.zscore$global.cmd) + sd_remove*sd(df.zscore$global.cmd))))}"))
+
+print(glue("Volume CMD N removed: {sum((df.zscore$vol.cmd < (mean(df.zscore$vol.cmd) - sd_remove*sd(df.zscore$vol.cmd))) | 
+      (df.zscore$vol.cmd > (mean(df.zscore$vol.cmd) + sd_remove*sd(df.zscore$vol.cmd))))}"))
+
+print(glue("SA CMD N removed: {sum((df.zscore$sa.cmd < (mean(df.zscore$sa.cmd) - sd_remove*sd(df.zscore$sa.cmd))) | 
+      (df.zscore$sa.cmd > (mean(df.zscore$sa.cmd) + sd_remove*sd(df.zscore$sa.cmd))))}"))
+
+print(glue("TH CMD, >= 2yrs adj age N removed: {sum((df.zscore$th.cmd < (mean(df.zscore$th.cmd, na.rm = TRUE) - sd_remove*sd(df.zscore$th.cmd, na.rm = TRUE))) | (df.zscore$th.cmd > (mean(df.zscore$th.cmd, na.rm = TRUE) + sd_remove*sd(df.zscore$th.cmd, na.rm = TRUE))), na.rm = TRUE)}"))
+
+print(glue("SubCort CMD N removed: {sum((df.zscore$subcort.cmd < (mean(df.zscore$subcort.cmd) - sd_remove*sd(df.zscore$subcort.cmd))) | 
+      (df.zscore$subcort.cmd > (mean(df.zscore$subcort.cmd) + sd_remove*sd(df.zscore$subcort.cmd))))}"))
+
+if(median_th_mpr_flag){
+  print(glue("TH CMD, full sample, median N removed: {sum((df.zscore$th.cmd_median_full < (mean(df.zscore$th.cmd_median_full) - sd_remove*sd(df.zscore$th.cmd_median_full))) | 
+      (df.zscore$th.cmd_median_full > (mean(df.zscore$th.cmd_median_full) + sd_remove*sd(df.zscore$th.cmd_median_full))))}"))
+}
+```
+
+### Remove outliers for Distinct
+```{r, echo = FALSE}
+#sd_remove = 5
+#print(glue("SD Distance to Remove: {sd_remove}"))
+#sum(is.na(df.zscore$th.cmd))
+
+df.zscore <- df.zscore %>%
+  mutate(global.cmd = case_when(
+    (global.cmd < (mean(global.cmd) - sd_remove*sd(global.cmd))) | 
+      (global.cmd > (mean(global.cmd) + sd_remove*sd(global.cmd))) ~ NA,
+    TRUE ~ global.cmd),
+    vol.cmd = case_when(
+    (vol.cmd < (mean(vol.cmd) - sd_remove*sd(vol.cmd))) | 
+      (vol.cmd > (mean(vol.cmd) + sd_remove*sd(vol.cmd))) ~ NA,
+    TRUE ~ vol.cmd),
+    sa.cmd = case_when(
+    (sa.cmd < (mean(sa.cmd) - sd_remove*sd(sa.cmd))) | 
+      (sa.cmd > (mean(sa.cmd) + sd_remove*sd(sa.cmd))) ~ NA,
+    TRUE ~ sa.cmd),
+    th.cmd = case_when(
+    (th.cmd < (mean(th.cmd, na.rm = TRUE) - sd_remove*sd(th.cmd, na.rm = TRUE))) | 
+      (th.cmd > (mean(th.cmd, na.rm = TRUE) + sd_remove*sd(th.cmd, na.rm = TRUE))) ~ NA,
+    TRUE ~ th.cmd),
+     subcort.cmd = case_when(
+    (subcort.cmd < (mean(subcort.cmd) - sd_remove*sd(subcort.cmd))) | 
+      (subcort.cmd > (mean(subcort.cmd) + sd_remove*sd(subcort.cmd))) ~ NA,
+    TRUE ~ subcort.cmd) )
+
+if(median_th_mpr_flag){
+  df.zscore <- df.zscore %>%
+  mutate(th.cmd_median_full = case_when(
+    (th.cmd_median_full < (mean(th.cmd_median_full) - sd_remove*sd(th.cmd_median_full))) | 
+      (th.cmd_median_full > (mean(th.cmd_median_full) + sd_remove*sd(th.cmd_median_full))) ~ NA,
+    TRUE ~ th.cmd_median_full) )
+  sum(is.na(df.zscore$th.cmd_median_full))
+  
+}
+
+#sum(is.na(df.zscore$global.cmd))
+#sum(is.na(df.zscore$vol.cmd))
+#sum(is.na(df.zscore$sa.cmd))
+#sum(is.na(df.zscore$th.cmd))
+#sum(is.na(df.zscore$subcort.cmd))
+```
+
+
+### Document N of outliers removed for All (rm)
+```{r, echo = FALSE}
+sd_remove = 5
+print(glue("SD Distance to Remove: {sd_remove}"))
+
+print(glue("Global CMD N removed: {sum((df.zscore_all$global.cmd < (mean(df.zscore_all$global.cmd) - sd_remove*sd(df.zscore_all$global.cmd))) | 
+      (df.zscore_all$global.cmd > (mean(df.zscore_all$global.cmd) + sd_remove*sd(df.zscore_all$global.cmd))))}"))
+
+print(glue("Volume CMD N removed: {sum((df.zscore_all$vol.cmd < (mean(df.zscore_all$vol.cmd) - sd_remove*sd(df.zscore_all$vol.cmd))) | 
+      (df.zscore_all$vol.cmd > (mean(df.zscore_all$vol.cmd) + sd_remove*sd(df.zscore_all$vol.cmd))))}"))
+
+print(glue("SA CMD N removed: {sum((df.zscore_all$sa.cmd < (mean(df.zscore_all$sa.cmd) - sd_remove*sd(df.zscore_all$sa.cmd))) | 
+      (df.zscore_all$sa.cmd > (mean(df.zscore_all$sa.cmd) + sd_remove*sd(df.zscore_all$sa.cmd))))}"))
+
+print(glue("TH CMD, >= 2yrs adj age N removed: {sum((df.zscore_all$th.cmd < (mean(df.zscore_all$th.cmd, na.rm = TRUE) - sd_remove*sd(df.zscore_all$th.cmd, na.rm = TRUE))) | (df.zscore_all$th.cmd > (mean(df.zscore_all$th.cmd, na.rm = TRUE) + sd_remove*sd(df.zscore_all$th.cmd, na.rm = TRUE))), na.rm = TRUE)}"))
+
+print(glue("SubCort CMD N removed: {sum((df.zscore_all$subcort.cmd < (mean(df.zscore_all$subcort.cmd) - sd_remove*sd(df.zscore_all$subcort.cmd))) | 
+      (df.zscore_all$subcort.cmd > (mean(df.zscore_all$subcort.cmd) + sd_remove*sd(df.zscore_all$subcort.cmd))))}"))
+
+if(median_th_mpr_flag){
+  print(glue("TH CMD, full sample, median N removed: {sum((df.zscore_all$th.cmd_median_full < (mean(df.zscore_all$th.cmd_median_full) - sd_remove*sd(df.zscore_all$th.cmd_median_full))) | 
+      (df.zscore_all$th.cmd_median_full > (mean(df.zscore_all$th.cmd_median_full) + sd_remove*sd(df.zscore_all$th.cmd_median_full))))}"))
+}
+```
+
+### Remove outliers for All (rm)
+```{r, echo = FALSE}
+#sd_remove = 5
+#print(glue("SD Distance to Remove: {sd_remove}"))
+#sum(is.na(df.zscore_all$th.cmd))
+
+df.zscore_all <- df.zscore_all %>%
+  mutate(global.cmd = case_when(
+    (global.cmd < (mean(global.cmd) - sd_remove*sd(global.cmd))) | 
+      (global.cmd > (mean(global.cmd) + sd_remove*sd(global.cmd))) ~ NA,
+    TRUE ~ global.cmd),
+    vol.cmd = case_when(
+    (vol.cmd < (mean(vol.cmd) - sd_remove*sd(vol.cmd))) | 
+      (vol.cmd > (mean(vol.cmd) + sd_remove*sd(vol.cmd))) ~ NA,
+    TRUE ~ vol.cmd),
+    sa.cmd = case_when(
+    (sa.cmd < (mean(sa.cmd) - sd_remove*sd(sa.cmd))) | 
+      (sa.cmd > (mean(sa.cmd) + sd_remove*sd(sa.cmd))) ~ NA,
+    TRUE ~ sa.cmd),
+    th.cmd = case_when(
+    (th.cmd < (mean(th.cmd, na.rm = TRUE) - sd_remove*sd(th.cmd, na.rm = TRUE))) | 
+      (th.cmd > (mean(th.cmd, na.rm = TRUE) + sd_remove*sd(th.cmd, na.rm = TRUE))) ~ NA,
+    TRUE ~ th.cmd),
+     subcort.cmd = case_when(
+    (subcort.cmd < (mean(subcort.cmd) - sd_remove*sd(subcort.cmd))) | 
+      (subcort.cmd > (mean(subcort.cmd) + sd_remove*sd(subcort.cmd))) ~ NA,
+    TRUE ~ subcort.cmd) )
+
+if(median_th_mpr_flag){
+  df.zscore_all <- df.zscore_all %>%
+  mutate(th.cmd_median_full = case_when(
+    (th.cmd_median_full < (mean(th.cmd_median_full) - sd_remove*sd(th.cmd_median_full))) | 
+      (th.cmd_median_full > (mean(th.cmd_median_full) + sd_remove*sd(th.cmd_median_full))) ~ NA,
+    TRUE ~ th.cmd_median_full) )
+  sum(is.na(df.zscore_all$th.cmd_median_full))
+  
+}
+
+#sum(is.na(df.zscore_all$global.cmd))
+#sum(is.na(df.zscore_all$vol.cmd))
+#sum(is.na(df.zscore_all$sa.cmd))
+#sum(is.na(df.zscore_all$th.cmd))
+#sum(is.na(df.zscore_all$subcort.cmd))
+```
+
+## Correlate CMDs with each other (using distinct)
+```{r, echo = FALSE}
+# correlations between CMDs across three centiles
+cor_mat <- cor(df.zscore[,c("global.cmd", "vol.cmd", "sa.cmd", "th.cmd", "subcort.cmd")], use = "pairwise.complete.obs")
+
+p_mat <- cor_pmat(df.zscore[,c("global.cmd", "vol.cmd", "sa.cmd", "th.cmd", "subcort.cmd")], use = "pairwise.complete.obs")
+
+(cmd_corrs_plot <- ggcorrplot(
+  cor_mat,
+  p.mat = p_mat,
+  type = "lower",
+  insig = "blank",
+  lab = TRUE
+))
+
+if(save_figs == TRUE){
+panel_save(cmd_corrs_plot, "cmd-cor-matrix", "svg", cmd_plot_folder)
+}
+```
+
+## correlations between CMDs and region-specific centile scores (using distinct)
+```{r, echo = FALSE}
+# volume
+cor_matrix <- cor(df.zscore[,c(vol_vars_cortical, "vol.cmd")], use = "pairwise.complete.obs")
+p_mat <- cor_pmat(df.zscore[,c(vol_vars_cortical, "vol.cmd")])
+
+cor_vol.cmd <- cor_matrix[, "vol.cmd" , drop = FALSE]
+p_vol.cmd <- p_mat[, "vol.cmd" , drop = FALSE]
+
+ggcorrplot(
+  cor_vol.cmd,
+  p.mat = p_vol.cmd,
+  type = "lower",
+  insig = "blank",
+  lab = FALSE
+)
+
+# sa
+cor_matrix <- cor(df.zscore[,c(sa_vars, "sa.cmd")], use = "pairwise.complete.obs")
+p_mat <- cor_pmat(df.zscore[,c(sa_vars, "sa.cmd")])
+
+cor_sa.cmd <- cor_matrix[, "sa.cmd" , drop = FALSE]
+p_sa.cmd <- p_mat[, "sa.cmd" , drop = FALSE]
+
+ggcorrplot(
+  cor_sa.cmd,
+  p.mat = p_sa.cmd,
+  type = "lower",
+  insig = "blank",
+  lab = FALSE
+)
+
+# th
+cor_matrix <- cor(df.zscore[,c(th_vars, "th.cmd")], use = "pairwise.complete.obs")
+p_mat <- cor_pmat(df.zscore[,c(th_vars, "th.cmd")])
+
+cor_th.cmd <- cor_matrix[, "th.cmd" , drop = FALSE]
+p_th.cmd <- p_mat[, "th.cmd" , drop = FALSE]
+
+ggcorrplot(
+  cor_th.cmd,
+  p.mat = p_th.cmd,
+  type = "lower",
+  insig = "blank",
+  lab = FALSE
+)
+```
+
+## CMD Correlations with GA and BW (using distinct)
+```{r, echo = FALSE}
+vars_bf <- c("gestational_age", "birth_weight_kg", "bwp_fen")
+vars_cmd <- c("global.cmd", "vol.cmd", "sa.cmd", "th.cmd", "subcort.cmd")
+
+cmd_bf_plot_df <- df.zscore %>% 
+  select(all_of(c(vars_bf, vars_cmd, 
+                  "participant_id", "session_id"))) %>%
+  pivot_longer(all_of(vars_bf), names_to = "bf_var", values_to = "bf") %>%
+  pivot_longer(all_of(vars_cmd), names_to = "cmd_var", values_to = "cmd") %>%
+  mutate(bf_var = factor(bf_var, levels = vars_bf),
+         cmd_var = factor(cmd_var, levels = vars_cmd))
+
+breaks_ga <- map2_dbl(c(23, 26, 29, 32, 35, 38, 41), "gestational_age", ~ (.x*7 - mean_lookup_distinct[[.y]])/sd_lookup_distinct[[.y]])
+
+breaks_bw <- pretty(df.zscore$birth_weight_kg, n = 5)
+
+breaks_bwp <- qnorm(c(.05,.50,.95))
+
+bf_scales <- list(
+  "gestational_age" = scale_x_continuous(
+    breaks = breaks_ga, 
+    labels = paste0(round(map2_dbl(breaks_ga, "gestational_age", ~ .x*sd_lookup_distinct[[.y]] + mean_lookup_distinct[[.y]])/7))),
+  "birth_weight_kg" = scale_x_continuous(
+    breaks = breaks_bw, 
+    labels = paste0(round(map2_dbl(breaks_bw, "birth_weight_kg", ~ .x*sd_lookup_distinct[[.y]] + mean_lookup_distinct[[.y]]))) ),
+  "bwp_fen" = scale_x_continuous(
+    breaks = breaks_bwp, 
+    labels = paste0(round(pnorm(breaks_bwp)*100))) )
+
+# cmd_scales <- list(
+#   "global.cmd" = scale_y_continuous(breaks = c(0, 50, 100), position = "right")
+# )
+
+cmd_labels <- c("global.cmd" = "Global", 
+                "vol.cmd" = "Volume",
+                "sa.cmd" = "Surface Area",
+                "th.cmd" = "Thickness",
+                "subcort.cmd" = "Subcortical")
+bf_labels  <- c("gestational_age" = "Gestational Age (wks)", 
+                "birth_weight_kg" = "Birth Weight (kg)",
+                "bwp_fen" = "Birth Weight Percentile")
+
+
+(cmd_bf_plot <- ggplot(cmd_bf_plot_df, aes(x = bf, y = cmd, color = bf_var)) +
+  geom_point(alpha = 0.15, size = 0.75) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 0.7) +
+  ggpubr::stat_cor(
+    method = "pearson",
+    aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")),
+    label.x.npc = .4,
+    label.y.npc = .95,
+    size = 5,
+    color = "gray30") +
+  scale_color_manual(values = c("gestational_age" = ga_color,
+                              "birth_weight_kg" = bw_color,
+                              "bwp_fen" = bwp_color)) +
+  facet_grid(cmd_var ~ bf_var, scales = "free",
+             labeller = labeller(cmd_var = cmd_labels, bf_var = bf_labels),
+             switch = "both") +
+  ggh4x::facetted_pos_scales(x = bf_scales) +
+  labs(x = NULL,
+    y = "Centile Mahalanobis Distance") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        strip.placement = "outside",
+        strip.background = element_blank(),
+        strip.text.y = element_text(face = "plain", size = 24),
+        strip.text.x = element_text(face = "plain", size = 30),
+        axis.title.y = element_text(face = "bold", size = 30),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 20),
+        legend.position = "none",
+        panel.spacing.x = unit(0.5, "cm"),
+        panel.spacing.y = unit(0.25, "cm")) )
+
+if(save_figs == TRUE){
+panel_save(cmd_bf_plot, "cmd-bf-facet-plot", "svg", cmd_plot_folder, plot_width = 14, plot_height = 10)
+}
+```
+
+# Save df.zscore dfs with CMDs
+```{r}
+if(save_tables){
+  write.csv(df.zscore, glue("{analysis_dfs_folder}df_zscore_distinct.csv"))
+  write.csv(df.zscore_all, glue("{analysis_dfs_folder}df_zscore_all.csv"))
+}
+```

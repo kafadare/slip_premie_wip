@@ -1,53 +1,69 @@
-slip_centdf_clean <- function (cent_df, participant_df, qc_df, type = c("median", "mpr")) {
+slip_centdf_clean <- function (cent_df, participant_df, qc_df, 
+                               type = c("median", "mpr"), add_qc = TRUE,
+                               participants_vars_select,
+                               cent_df_vars_select) {
   ##Merge centile tables with participant tables
   ##overall including repeat participant IDs
-  cent_df <- merge(cent_df, participant_df %>% select(c("participant_id", 
-                                                          "session_id", 
-                                                          "age_at_scan", 
-                                                          "adjusted_age_in_days",
-                                                          "gestational_age",
-                                                          "birth_weight_kg",
-                                                          "birth_length_cm",
-                                                          "avg_grade",
-                                                          "height_at_enc",
-                                                          "weight_at_enc",
-                                                          "year_of_scan")), by = c("participant_id", "session_id"), 
+  cent_df <- merge(cent_df %>% select(any_of(cent_df_vars_select)), 
+                   participant_df %>% select(all_of(participants_vars_select)), 
+                   by = c("participant_id", "session_id", "sex"), 
                      all.x = TRUE, all.y = FALSE)
   
   ##Merge centile tables with QC metrics
-  ##group by session-id and take median of euler_mean
+  ##group by session_id and take median of euler_mean
   ##merge centile tables with QC metrics if calculated from median of scans
-  #MPRage centiles already have corresponding euler_mean for scan
-  if (type == "median"){
-     qc_df <- qc_df %>%
-      group_by(session_id) %>%
-      summarise(median_euler_mean = first(na.omit(median_euler_mean)),
-                .groups = "drop")
-    
-    cent_df <- merge(cent_df, qc_df %>% select(c("session_id", 
-                                                      "median_euler_mean")), by = c("session_id"), 
-                     all.x = TRUE, all.y = FALSE)
+  #MPRage centiles already have corresponding euler_mean matched on scan_id
+  if(add_qc == TRUE){
+    if (type == "median"){
+       qc_df <- qc_df %>%
+        group_by(session_id) %>%
+        summarise(median_euler_mean = first(na.omit(median_euler_mean)),
+                  .groups = "drop")
+      
+      cent_df <- merge(cent_df, qc_df %>% select(c("session_id", 
+                                                        "median_euler_mean")), 
+                       by = c("session_id"), all.x = TRUE, all.y = FALSE)
+      
+    }  else if (type == "mpr" & !("euler_mean" %in% names(cent_df))) {
+      cent_df <- merge(cent_df, qc_df %>% select(c("scan_id", 
+                                                   "euler_mean")), by = c("scan_id"), 
+                       all.x = TRUE, all.y = FALSE)
+    }
   }
   
   ##New Variables
+  cent_df <- cent_df %>%
+    rename(age_days_adj = age_days)
   
   ###Age Variables
-  cent_df$age_years <- cent_df$age_days/365
-  cent_df$adjusted_age_years <- cent_df$adjusted_age_in_days/365
-  ###Log transform Age (ln)
-  cent_df$age_days_log <- log(cent_df$age_days)
-  cent_df$adjusted_age_days_log <- log(cent_df$adjusted_age_in_days)
+  cent_df$age_at_scan_years <- cent_df$age_at_scan/365.25
+  cent_df$age_years_adj <- cent_df$age_days_adj/365.25
   
   #Assign preterm categories
-  cent_df$preterm <- as.factor(cut(cent_df$gestational_age, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
+  cent_df$preterm <- as.factor(cut(cent_df$gestational_age, 
+                                   breaks = c(-Inf, 31.9*7, 36.9*7, Inf), 
+                                   labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
+  
   #Calculate birth weight percentile
-  cent_df <- cent_df %>%
-    mutate(gestAge_days = gestational_age*7+3) %>%
-    mutate(sex_recode= recode(sex, "M" = "Male", "F" = "Female"))
-  cent_df$bweight_percentile <- igb_wtkg2centile(cent_df$gestAge_days, cent_df$birth_weight_kg, sex = cent_df$sex_recode)/100
+  fenton_table_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/data_files/Fenton_2013_bw_LMS_upload.csv"
+  fenton_lms_table <- read.csv(fenton_table_path)
 
-  ##Subset to distinct participant IDS
-  cent_df_distinct <- cent_df %>% distinct(participant_id, .keep_all = TRUE)
+  cent_df <- merge(cent_df %>%
+                     mutate(gestational_age_weeks_complete = floor(gestational_age/7)),
+                   fenton_lms_table %>% 
+                     rename(gestational_age_weeks_complete = wk,
+                            sex = Sex) %>%
+                     select(L,M,S,gestational_age_weeks_complete,sex), 
+                   by = c("gestational_age_weeks_complete", "sex"), all.x = TRUE, all.y = FALSE) %>%
+    mutate(bwz_fen = ((((birth_weight_kg*1000/M)^L)-1)/(L*S)) ) %>%
+    mutate(bwp_fen = pnorm(bwz_fen) ) %>%
+    select(-c("L", "M", "S"))
+
+  ##Subset to one data point per participant, youngest scan available
+  cent_df_distinct <- cent_df %>% 
+    group_by(participant_id) %>%
+    slice_min(age_days_adj, n = 1, with_ties = FALSE) %>% 
+    ungroup()
   
   return(list(distinct = cent_df_distinct, all = cent_df))
 }

@@ -145,13 +145,107 @@ length(unique(proc_enc$proc_ord_id))
 sum(!(proc$proc_ord_id %in% proc_enc$proc_ord_id)) #0
 ```
 
-# Try to match based on proc_ord_id
+# Match based on proc_ord_id
 ```{r}
 indication_validate <- merge(proc_enc %>%
                                rename(enc_icd10_code = code10,
                                       enc_icd9_code = code9), 
                              indication_icd10 %>%
                                rename(annot_icd10_code = icd10_code), by = "proc_ord_id")
+
+
+# one row per report, with code sets from each pipeline
+report_sets <- indication_validate %>%
+  group_by(proc_ord_id) %>%
+  summarise(
+    enc_icd10_code = list(unique(na.omit(enc_icd10_code))),
+    annot_icd10_code = list(unique(na.omit(annot_icd10_code))),
+    snomed_name = list(unique(na.omit(snomed_name))),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    matched_codes = map2(enc_icd10_code, annot_icd10_code, intersect),
+    unmatched_p1  = map2(enc_icd10_code, annot_icd10_code, setdiff),
+    unmatched_p2  = map2(annot_icd10_code, enc_icd10_code, setdiff),
+    n_matched = lengths(matched_codes),
+    report_match_status = if_else(
+      n_matched > 0,
+      "Report has ≥1 matched code",
+      "Report has 0 matched codes"
+    )
+  )
+
+# plot
+matched_codes_plot_df <- report_sets %>%
+  select(proc_ord_id, matched_codes, ) %>%
+  unnest(matched_codes) %>%
+  rename(code = matched_codes) %>%
+  distinct(proc_ord_id, code) %>%
+  count(code, name = "n_reports") %>%
+  mutate(code = fct_reorder(code, n_reports))
+
+matched_codes_plot_df <- merge(matched_codes_plot_df, indication_icd10 %>% select(icd10_code, snomed_name) %>% rename(code = icd10_code),
+                               by = "code", all.x = TRUE, all.y = FALSE) %>% distinct(snomed_name, .keep_all = TRUE)
+
+
+ggplot(matched_codes_plot_df, aes(x = n_reports, y = snomed_name)) +
+  geom_col() +
+  labs(
+    x = "Number of reports",
+    y = "Matched Snomed Name"
+  ) +
+  theme_classic()
+
+
+ind_long <- indication_validate %>%
+  select(proc_ord_id, enc_icd10_code, annot_icd10_code, snomed_name) %>%
+  pivot_longer(
+    cols = c(enc_icd10_code, annot_icd10_code),
+    names_to = "ind_source",
+    values_to = "code10",
+    values_drop_na = TRUE
+  ) %>%
+  mutate(
+    ind_source = recode(
+      ind_source,
+      enc_icd10_code = "enc_dx_table",
+      annot_icd10_code = "annot"
+    ),
+    code10 = as.character(code10)
+  ) %>%
+  distinct(proc_ord_id, ind_source, code10, snomed_name)
+
+report_code_status <- ind_long %>%
+  count(proc_ord_id, code10, name = "n_source") %>%
+  mutate(code_status = if_else(n_source == 2, "Matched", "Unmatched"))
+
+
+
+ind_match <- indication_validate %>%
+  filter(enc_icd10_code == annot_icd10_code) %>%
+  group_by(proc_ord_id)
+
+length(unique(ind_match$proc_ord_id))/ length(unique(indication_validate$proc_ord_id)) # 76.3%
+
+ind_nomatch <- indication_validate %>%
+  filter(!(proc_ord_id %in% ind_match$proc_ord_id)) %>%
+  group_by(proc_ord_id)
+length(unique(ind_nomatch$proc_ord_id))/ length(unique(indication_validate$proc_ord_id)) # 23.6%
+```
+
+# Show schematic of matching indications and non-matching indications
+```{r}
+table(ind_match$snomed_name)
+
+table(ind_nomatch$snomed_name)
+ind_match_byname <- ind_match %>%
+  group_by(snomed_name) %>%
+  summary()
+
+```
+
+# Plot matches (show N in each filtering step)
+```{r}
 
 
 ```

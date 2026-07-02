@@ -32,15 +32,17 @@ library(interactions)
 library(boot)
 library(parameters)
 
-panel_save <- function(plot, filename, extension, folder){
+panel_save <- function(plot, filename, extension, folder, plot_width = 8, plot_height = 10){
   save_name <- paste0(folder, filename, ".", extension)
-  ggsave(save_name, plot = plot, dpi = 300)
+  ggsave(save_name, plot = plot, dpi = 300, width = plot_width, height = plot_height)
 }
+
+`%nin%` = Negate(`%in%`)
 ```
 
 # Define paths
 ```{r}
-save_path <-  "/mnt/arcus/lab/users/kafadare/swyc_results/"
+save_path <-  "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/"
 if(!dir.exists(save_path)) dir.create(save_path)
 
 plot_output_folder <- paste0(save_path, "plots/")
@@ -59,28 +61,7 @@ dkt_folder <- paste0(csv_output_folder, "dkt_betas/")
 if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
 ```
 
-# Load SWYC and participants table from Arcus
-```{r}
-bq_auth()
-#proj_id <- if (exists('proj_id')) proj_id else bq_projects()[1]
-proj_id = "scit605-healthymri-2d73d69f"
 
-#Download SWYC table
-query <- glue("SELECT * FROM `lab.swyc_normative_scores_2026-04-13`") #the string here is the SQL query
-swyc <- bq_project_query(proj_id, query) %>% bq_table_download(., page_size=3500) #assign the name of the dataframe in R here
-print(paste0("Arcus lab.SWYC table, dimensions: ", dim(swyc))) #pastes the dimensions of the table downloaded
-
-#Download Participants table
-query <- glue("SELECT * FROM arcus.patient") #the string here is the SQL query
-participants <- bq_project_query(proj_id, query) %>% bq_table_download(., page_size=3500) #assign the name of the dataframe in R here
-print(paste0("Arcus arcus.patient table, dimensions: ", dim(participants))) #pastes the dimensions of the table downloaded
-```
-
-# SWYC Date Range
-need to pull this value from arcus at some point
-```{r}
-
-```
 # Load vars names
 ```{r}
 vars_path <- "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
@@ -90,15 +71,23 @@ vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
 sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
 th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
 th_vars_median <- paste0(th_vars, ".median")
+
+global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
 ```
 
 # Load centiles
 ```{r}
-centiles_distinct_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/centiles_distinct_2026-03-18.csv"
-centiles_distinct <- read.csv(centiles_distinct_path)
+df.zscore_distinct_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_distinct.csv"
+df.zscore.distinct <- read.csv(df.zscore_distinct_path)
 
-centiles_all_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/centiles_all_2026-03-18.csv"
+df.zscore_all_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_all.csv"
+df.zscore.all <- read.csv(df.zscore_all_path)
+
+centiles_all_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/centiles_all_median_th_mpr_2026-04-24.csv"
 centiles_all <- read.csv(centiles_all_path)
+
+lookup_distinct <- load("/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData")
+lookup_distinct <- load("/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_all.RData")
 
 #lmsz_ga_centiles_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lmsz_adjusted_centiles_ga.csv"
 #lmsz_ga_centiles <- read.csv(lmsz_GA_centiles_path) %>% select(participant_id, session_id, sex, adjusted_age_in_days, age_at_scan, all_of(full_vars), grep("lmsz", names(.))) %>% mutate(lmsz_subset = "GA")
@@ -115,69 +104,92 @@ centiles_all <- read.csv(centiles_all_path)
 
 #rm(lmsz_vpm_centiles, lmsz_lpm_centiles, lmsz_GA_centiles)
 
-centiles_distinct$pat_id <- sub("sub-", "", centiles_distinct$participant_id)
+#centiles_distinct$pat_id <- sub("sub-", "", centiles_distinct$participant_id)
+df.zscore.distinct$pat_id <- sub("sub-", "", df.zscore.distinct$participant_id)
+df.zscore.all$pat_id <- sub("sub-", "", df.zscore.all$participant_id)
 centiles_all$pat_id <- sub("sub-", "", centiles_all$participant_id)
-centiles_distinct <- centiles_distinct %>% filter(adjusted_age_in_years <= 21)
-centiles_all <- centiles_all %>% filter(adjusted_age_in_years <= 21)
+
+#determine if there is both mpr and median for thickness values
+median_th_mpr_flag <- any(grepl(".median", names(centiles_all)))
 ```
 
-# Set 0/1 centiles to min/max value to avoid Inf/-Inf
-numbers from gamlssTools pkg
+
+# Remove BW outliers, and corresponding BWP
 ```{r}
-complete_centile_vars <- c(full_vars, th_vars_median)
+mu_bw <- mean(centiles_all %>% distinct(participant_id, .keep_all = TRUE) %>% select(birth_weight_kg) %>% pull(.), na.rm = TRUE)
+sd_bw <- sd(centiles_all %>% distinct(participant_id, .keep_all = TRUE) %>% select(birth_weight_kg) %>% pull(.), na.rm = TRUE)
 
-for (x in complete_centile_vars){
-  centiles_all[centiles_all[,x] == 0 & !is.na(centiles_all[,x]), x] <- 0.0000000000000000000000001
-  centiles_all[centiles_all[,x] == 1 & !is.na(centiles_all[,x]), x] <- 0.99999999999999994
-}
+rm_dist = 5
 
-for (x in complete_centile_vars){
-  centiles_all[centiles_all[,x] == 0 & !is.na(centiles_all[,x]), x] <- 0.0000000000000000000000001
-  centiles_all[centiles_all[,x] == 1 & !is.na(centiles_all[,x]), x] <- 0.99999999999999994
-}
+nrow(centiles_all %>% filter(
+  birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) )
+
+centiles_all <- centiles_all %>%
+  mutate(birth_weight_kg_inc_out = birth_weight_kg,
+    birth_weight_kg = case_when(
+        (birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) ~ NA,
+        TRUE ~ birth_weight_kg),
+    bwp_fen_inc_out = bwp_fen,
+    bwp_fen = case_when(
+        (birth_weight_kg < mu_bw-sd_bw*rm_dist | birth_weight_kg > mu_bw+sd_bw*rm_dist) ~ NA,
+        TRUE ~ bwp_fen))
 ```
 
-# Make a birth factors table from arcus.participants
+# Colors
 ```{r}
-bf <- participants %>% select(pat_id, birth_weight_kg, birth_length_cm, gestational_age, gestational_age_num, sex, race, ethnicity) %>%
-  rename(gestational_age_string = gestational_age)
-# convert the string format to days
-# Convert different gestational_age_string formats and convert to both 1) number of days AND 2) number of weeks (rounded up/down) AND 3) number of COMPLETED weeks to the best of our knowledge
-data <- bf$gestational_age_string
+ga_color = "#4F7CAC"
+bwp_color = "#5D9C74"
+swyc_color = "#C77D4A"
+bw_color = "#4A8E85"
 
-data <- sub("\\s", "", data)
-complete_weeks <- as.numeric(sub("^(.{2}).*", "\\1", data))
-indices_plus <- grep("\\+", data)
-indices_fraction <- grep("/", data)
-indices_decimal <- grep("\\.", data)
-days <- rep(NA, length(data))
-days[!is.na(data)] <- 3 #add three days by default if no other information is encoded for days
-days[indices_fraction] <- as.numeric(sub("^.*?(\\d{1}/\\d{1})$", "\\1", data[indices_fraction]) %>% sub("^([0-9]{1}).*", "\\1", .))
-days[indices_plus] <- 3 # add three days if gestational age is entered as [week number]+ (like 40+ of 38+)
-days[indices_decimal] <- round(as.numeric(sub("^.*?(\\.\\d+)$", "\\1", data[indices_decimal]))*7)
+limits = c(-0.3, 0.3)
+low_color = "#4878CF" # blue
+mid_color = "white"
+high_color = "#D65F5F" # red
+```
 
-days_total <- complete_weeks*7 + days
-weeks_rounded <- round(days_total/7)
+# Load SWYC using SQL for patients with centiles
+```{r}
+bq_auth()
+#proj_id <- if (exists('proj_id')) proj_id else bq_projects()[1]
+proj_id = "scit605-healthymri-2d73d69f"
 
-bf$ga_complete_weeks <- complete_weeks
-bf$ga_days_total <- days_total
-bf$ga_weeks_rounded <- weeks_rounded
 
-# QC BW and GA
+pat_id_list <- paste0("'", sapply(strsplit(centiles_all$pat_id, ","),trimws), "'", collapse = ", ")
 
-# GA: remove anyone encoded as > 44*7 ga days or < 22 weeks (there is a single 43.5 weeker, I don't really want to remove this entry)
-# BW: remove anyone with birthweight recorded as > 10kg and < 0.3kg
-bf$ga_days_total_qc <- ifelse(bf$ga_days_total < 22*7 | bf$ga_days_total >= 44*7, NA, bf$ga_days_total)
-sum(!is.na(bf$ga_days_total) & is.na(bf$ga_days_total_qc)) # 21 removed
+#Download SWYC table
+swyc_query <- glue("SELECT * FROM 
+              `lab.swyc_normative_scores_2026-04-13`
+              WHERE pat_id IN ({pat_id_list});")
+swyc <- bq_project_query(proj_id, swyc_query) %>% bq_table_download(., page_size=3500)
+print(paste0("Arcus lab.SWYC table, dimensions: ", dim(swyc)))
+```
 
-bf$gestational_age_num_qc <- ifelse(bf$gestational_age_num < 22 | bf$gestational_age_num >= 44, NA, bf$gestational_age_num)
-sum(!is.na(bf$gestational_age_num) & is.na(bf$gestational_age_num_qc)) # 29 removed
+# SWYC Date Range
+need to pull this value from arcus at some point
+```{r}
+encounter_id_list <- paste0("'", sapply(strsplit(swyc$encounter_id, ","),trimws), "'", collapse = ", ")
 
-bf$birth_weight_kg_qc <- ifelse(bf$birth_weight_kg < 0.3 | bf$birth_weight_kg > 10, NA, bf$birth_weight_kg)
-sum(!is.na(bf$birth_weight_kg) & is.na(bf$birth_weight_kg_qc)) # 86 removed
+#Download encounter table to get datetime
+enc_query <- glue("SELECT encounter_id, effective_datetime, appt_time FROM 
+              `arcus.encounter`
+              WHERE encounter_id IN ({encounter_id_list});")
+encounter <- bq_project_query(proj_id, enc_query) %>% bq_table_download(., page_size=3500)
+print(paste0("Arcus encounter table, dimensions: ", dim(encounter)))
+
+sum(swyc$encounter_id %nin% encounter$encounter_id) #0
+
+#merge
+
+swyc <- merge(swyc, encounter, by = "encounter_id", all.x = TRUE)
+sum(is.na(swyc$effective_datetime)) # 0
+sum(is.na(swyc$appt_time)) # 0
+
+range(swyc$effective_datetime)
 ```
 
 # Make swyc_clean df with one row per patient-form pair
+Appears to be that there is one subject with different sum_answers (hence different DQ) for the exact same appointment time with different encounter id.One of them is called well visit, the other extended well visit. Will use the value from extended well visit.
 ```{r}
 swyc$pat_form <- paste0(swyc$pat_id, swyc$form_friendly_name)
 
@@ -205,25 +217,44 @@ max(dup_df_summary$sd_age_mo)
 max(dup_df_summary$sd_norm_devo_quotient)
 
 swyc_clean <- swyc %>%
+  
   group_by(pat_form) %>%
   slice_max(order_by = n_answers, with_ties = TRUE) %>%
-  slice_max(order_by = effective_age, with_ties = TRUE) %>%
-  distinct(pat_form, .keep_all = TRUE)
+  slice_max(order_by = appt_time, with_ties = TRUE) %>%
+  slice(which.max(grepl("EXTENDED", appt_prc_name))) %>%
+  ungroup(.)
+
+#check after cleaning up based on n_answers and appt_time (choosing the later time), and "extended" over regular visit (if identical time otherwise)
+dup_df_clean <- swyc_clean %>%
+  group_by(pat_form) %>%
+  filter(n() > 1)
+
+length(unique(swyc_clean$pat_id))
+tab_swyc_forms <- table(swyc_clean$form_friendly_name)
+data.frame(form = names(tab_swyc_forms), count = as.vector(tab_swyc_forms))
 ```
 
-# Merge swyc and birth factor tables
+# Add GA to SWYC
 ```{r}
-swyc_clean <- merge(swyc_clean, bf, by = "pat_id",
+swyc_clean <- merge(swyc_clean, centiles_all %>% 
+                      select(pat_id, gestational_age), by = "pat_id",
                     all.x = TRUE, all.y = FALSE)
+
+sum(is.na(swyc_clean$gestational_age))
+dim(unique(swyc_clean %>% filter(is.na(gestational_age)) %>% select(pat_id)))
+
+swyc_clean <- swyc_clean %>%
+  mutate(ga_complete_weeks = floor(gestational_age/7))
 ```
 
-# Calculate prematurity adjusted DQ for SWYC
+# Calculate GA-adjusted DQ for SWYC
 ```{r}
-bf_overlap <- bf[bf$pat_id %in% swyc$pat_id,]
-median_ga <- median(bf_overlap$ga_days_total_qc, na.rm = TRUE)
-median_ga_term <- median(pull(bf_overlap %>% filter(ga_complete_weeks >= 37) %>%
-                           select(ga_days_total_qc)), na.rm = TRUE)
-swyc_clean$ga_diff_termmedian <- median_ga_term - swyc_clean$ga_days_total_qc
+median_ga <- median(swyc_clean %>% distinct(pat_id, .keep_all = TRUE) %>% select(gestational_age) %>% pull(.), 
+                    na.rm = TRUE)
+median_ga_term <- median(swyc_clean %>% distinct(pat_id, .keep_all = TRUE) %>% 
+                           filter(gestational_age >= 7*37) %>% select(gestational_age) %>% pull(.), 
+                         na.rm = TRUE)
+swyc_clean$ga_diff_termmedian <- median_ga_term - swyc_clean$gestational_age
 
 swyc_clean$ga_adj_effective_age <- swyc_clean$effective_age - swyc_clean$ga_diff_termmedian
 swyc_clean$ga_adj_age_mo <- round(swyc_clean$ga_adj_effective_age/30.437)
@@ -233,41 +264,40 @@ swyc_clean$ga_adj_norm_devo_quotient <- swyc_clean$norm_devo_age/swyc_clean$ga_a
 swyc_clean$ga_adj_norm_devo_quotient_round <- round(swyc_clean$ga_adj_norm_devo_quotient, 5)
 plot(swyc_clean$norm_devo_quotient , swyc_clean$ga_adj_norm_devo_quotient)
 
-# ggplot(swyc_clean %>% filter(ga_days_total_qc<=(32*7)), aes(x = norm_devo_quotient, y = ga_adj_norm_devo_quotient_round, color = ga_complete_weeks)) +
-#   geom_point() +
-#   labs(x = "OG DQ",
-#        y = "GA-ADJ DQ",
-#        title = "GA <= 32 weeks") +
-#   theme_classic() +
-#   theme(plot.title = element_text(hjust = 0.5)) +
-#   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#B0B0B0")
-# 
-# 
-# ggplot(swyc_clean %>% filter(ga_days_total_qc >= 37*7), aes(x = norm_devo_quotient, y = ga_adj_norm_devo_quotient_round, color = ga_complete_weeks)) +
-#   geom_point() +
-#   labs(x = "OG DQ",
-#        y = "GA-ADJ DQ",
-#        title = "GA >= 37 weeks") +
-#   theme_classic() +
-#   theme(plot.title = element_text(hjust = 0.5)) +
-#   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#B0B0B0")
-# 
-# ggplot(swyc_clean, aes(x = norm_devo_quotient, y = ga_adj_norm_devo_quotient_round, color = ga_complete_weeks)) +
-#   geom_point() +
-#   labs(x = "OG DQ",
-#        y = "GA-ADJ DQ",
-#        title = "All GA") +
-#   theme_classic() +
-#   theme(plot.title = element_text(hjust = 0.5)) +
-#   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#B0B0B0")
+ggplot(swyc_clean %>% filter(gestational_age<=(32*7)), aes(x = norm_devo_quotient, y = ga_adj_norm_devo_quotient_round, color = ga_complete_weeks)) +
+  geom_point() +
+  labs(x = "OG DQ",
+       y = "GA-ADJ DQ",
+       title = "GA <= 32 weeks") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#B0B0B0")
 
-#cor.test(swyc_clean$ga_adj_norm_devo_quotient, swyc_clean$ga_days_total_qc)
-#cor.test(swyc_clean$norm_devo_quotient, swyc_clean$ga_days_total_qc)
+ggplot(swyc_clean %>% filter(gestational_age >= 37*7), aes(x = norm_devo_quotient, y = ga_adj_norm_devo_quotient_round, color = ga_complete_weeks)) +
+  geom_point() +
+  labs(x = "OG DQ",
+       y = "GA-ADJ DQ",
+       title = "GA >= 37 weeks") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#B0B0B0")
 
-sum((swyc_clean$ga_days_total_qc < median_ga_term) & (swyc_clean$ga_adj_norm_devo_quotient_round < swyc_clean$norm_devo_quotient) & !is.na(swyc_clean$ga_days_total_qc)) # should be 0
+ggplot(swyc_clean, aes(x = norm_devo_quotient, y = ga_adj_norm_devo_quotient_round, color = ga_complete_weeks)) +
+  geom_point() +
+  labs(x = "OG DQ",
+       y = "GA-ADJ DQ",
+       title = "All GA") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#B0B0B0")
 
-swyc_clean[(swyc_clean$ga_days_total_qc < median_ga_term) & (swyc_clean$ga_adj_norm_devo_quotient_round < swyc_clean$norm_devo_quotient) & !is.na(swyc_clean$ga_days_total_qc), 
-           c("ga_days_total_qc", "ga_complete_weeks", "ga_adj_norm_devo_quotient", "norm_devo_quotient", "ga_adj_age_mo", "age_mo", "norm_devo_age")]
+cor.test(swyc_clean$ga_adj_norm_devo_quotient, swyc_clean$gestational_age)
+cor.test(swyc_clean$norm_devo_quotient, swyc_clean$gestational_age)
+
+sum((swyc_clean$gestational_age < median_ga_term) & (swyc_clean$ga_adj_norm_devo_quotient_round < swyc_clean$norm_devo_quotient) & !is.na(swyc_clean$gestational_age)) # should be 0
+
+# swyc_clean[(swyc_clean$gestational_age < median_ga_term) & (swyc_clean$ga_adj_norm_devo_quotient_round < swyc_clean$norm_devo_quotient) & !is.na(swyc_clean$gestational_age), 
+#            c("gestational_age", "ga_complete_weeks", "ga_adj_norm_devo_quotient", "norm_devo_quotient", "ga_adj_age_mo", "age_mo", "norm_devo_age")]
 ```
 
 # Create Swyc-Avg with median DQ for each subject
@@ -275,11 +305,9 @@ swyc_clean[(swyc_clean$ga_days_total_qc < median_ga_term) & (swyc_clean$ga_adj_n
 swyc_avg <- swyc_clean %>%
   group_by(pat_id) %>%
   summarise(n_forms = n(),
-    sex = first(sex),
+    sex = first(sex_abbr),
     ga_complete_weeks = first(ga_complete_weeks),
-    ga_days_total_qc   = first(ga_days_total_qc),
-    birth_weight_kg_qc = first(birth_weight_kg_qc),
-    birth_length_cm = first(birth_length_cm),
+    gestational_age   = first(gestational_age),
     all_2s_sum = sum(all_2s == TRUE, na.rm = TRUE),
     all_0s_sum = sum(all_0s == TRUE, na.rm = TRUE),
     final_swyc_age = max(effective_age, na.rm = TRUE),
@@ -295,82 +323,85 @@ hist(swyc_avg$final_swyc_age/30.437)
 
 # Merge with centiles
 
-## Merge all swyc with all centiles
+## Find SWYCs after a scan and take the median among those (using centiles all)
 ```{r}
-sum(centiles_all$pat_id %in% swyc_clean$pat_id) #869
-swyc_all_centiles <- merge(swyc_clean, centiles_all %>% select(c("pat_id", "session_id", "scan_id_mpr", "site", "weight_at_enc_cent", "height_at_enc_cent",
-                                                                "adjusted_age_in_days", "adjusted_age_in_years", "median_euler_mean", "euler_mean_mpr",
-                                                                "age_at_scan", "bweight_percentile", "preterm", complete_centile_vars)), 
-                     by = "pat_id", all.x = FALSE, all.y = FALSE)
+swyc_clean_all_cent <- merge(swyc_clean %>% 
+                             rename(gestational_age_raw = gestational_age), 
+                           centiles_all %>% select(pat_id, age_at_scan),
+                           by = "pat_id", all.x = TRUE, all.y = FALSE)
 
-length(unique(swyc_all_centiles$pat_id))
-length(unique(swyc_all_centiles$pat_form))
-dim(swyc_all_centiles)
-swyc_all_centiles$scan_swyc_age_diff_days <- swyc_all_centiles$age_at_scan - swyc_all_centiles$effective_age
-swyc_all_centiles$scan_before_swyc <- swyc_all_centiles$age_at_scan < swyc_all_centiles$effective_age
-sum(swyc_all_centiles$age_at_scan == swyc_all_centiles$effective_age) # 0 (none on the same day)
-hist(swyc_all_centiles$scan_swyc_age_diff_days, breaks = 50)
+length(unique(swyc_clean_all_cent$pat_id))
+length(unique(swyc_clean_all_cent$pat_form))
+dim(swyc_clean_all_cent)
+swyc_clean_all_cent$scan_swyc_age_diff_days <- swyc_clean_all_cent$age_at_scan - swyc_clean_all_cent$effective_age
+ggplot(swyc_clean_all_cent, aes(x = scan_swyc_age_diff_days)) + 
+         geom_histogram(bins = 100) + 
+         labs(x = "", y = "Count", 
+              title = "Days Between Scan and SWYC Form") +
+  theme_classic()
+swyc_clean_all_cent$scan_before_swyc <- swyc_clean_all_cent$age_at_scan < swyc_clean_all_cent$effective_age
+sum(swyc_clean_all_cent$scan_before_swyc) # 995
 # if limited scan within two years of swyc
-sum(swyc_all_centiles$scan_swyc_age_diff_days <= (365.25*2)) # 1526 rows/2372 rows
+sum(swyc_clean_all_cent$scan_swyc_age_diff_days <= (365.25*2)) # 1706 rows
+
+sum(swyc_clean_all_cent$scan_swyc_age_diff_days <= (365.25*2) & swyc_clean_all_cent$scan_before_swyc) # 995
+
 # within each pat-form, choose scan closest to swyc
-swyc_all_centiles <- swyc_all_centiles %>%
+swyc_clean_all_cent_subset <- swyc_clean_all_cent %>%
   group_by(pat_form) %>%
   slice_max(order_by = scan_swyc_age_diff_days, with_ties = TRUE) %>%
   ungroup()
-hist(swyc_all_centiles$scan_swyc_age_diff_days, breaks = 50)
-length(unique(swyc_all_centiles$pat_form))
-dim(swyc_all_centiles)
 ```
 
 ## Merge swyc avg with distinct centiles
 ```{r}
-sum(centiles_distinct$pat_id %in% swyc_clean$pat_id) #869
-swyc_avg_centiles <- merge(swyc_avg, centiles_all %>% select(c("pat_id", "session_id", "scan_id_mpr", "site", "weight_at_enc_cent", "height_at_enc_cent",
-                                                                "adjusted_age_in_days", "adjusted_age_in_years", "median_euler_mean", "euler_mean_mpr",
-                                                                "age_at_scan", "bweight_percentile", "preterm", complete_centile_vars)), 
-                     by = "pat_id", all.x = FALSE, all.y = FALSE)
+swyc_avg_centiles <- merge(swyc_avg %>% 
+                             rename(gestational_age_raw = gestational_age) %>%
+                             select(-sex), 
+                           df.zscore.distinct, 
+                     by = "pat_id", all.x = TRUE, all.y = TRUE)
 
-length(unique(swyc_avg_centiles$pat_id))
-swyc_avg_centiles$scan_swyc_age_diff_days <- swyc_avg_centiles$age_at_scan - swyc_avg_centiles$final_swyc_age
+swyc_avg_centiles <- merge(swyc_avg_centiles,
+                           centiles_all %>% select(session_id, age_at_scan) %>%
+                             rename(age_at_scan_raw = age_at_scan), 
+                     by = "session_id", all.x = TRUE, all.y = FALSE)
+
+swyc_avg_centiles$scan_swyc_age_diff_days <- swyc_avg_centiles$age_at_scan_raw - swyc_avg_centiles$final_swyc_age
+
+ggplot(swyc_avg_centiles, aes(x = scan_swyc_age_diff_days)) + 
+         geom_histogram(bins = 100) + 
+         labs(x = "", y = "Count", 
+              title = "Days Between Scan and Final Age Used for SWYC Median") +
+  theme_classic()
+
+swyc_avg_centiles <- swyc_avg_centiles %>%
+  mutate(scan_swyc_twoyears = abs(scan_swyc_age_diff_days) <= (365.25*2))
+
+sum(swyc_avg_centiles$scan_swyc_twoyears, na.rm = T) # 553
+sum(!is.na(swyc_avg_centiles$median_dq)) # 865
 ```
 
-
-
-# Data Availability - all (1 scan per participant)
-
-## all Pat_id centiles overlap with swyc timing
+# Plot Scan-SWYC timing
 ```{r}
-# length(unique(swyc$pat_id))
-# centiles_all$participant_id_modified <- sub("sub-", "", centiles_all$participant_id)
-# sum(centiles_all$participant_id_modified %in% swyc$pat_id) #869
-# swyc_subset <- swyc %>% filter(pat_id %in% centiles_all$participant_id_modified)
-# swyc_subset <- merge(swyc_subset, centiles_all %>% select(c("participant_id_modified", "age_at_scan")), 
-#                      by.x = "pat_id", by.y = "participant_id_modified", all.x = TRUE, all.y = FALSE)
-# swyc_subset$age_diff <- swyc_subset$age_at_scan - swyc_subset$effective_age
-# 
-# hist(swyc_subset$age_diff)
-# summary(swyc_subset$age_diff)
-# sum(swyc_subset$age_diff <= 0)
-# (swyc_overlap_plot <- ggplot(swyc_subset, aes(y = pat_id, group = pat_id)) +
-#   geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
-#   geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
-#   geom_point(data = swyc_subset %>% 
-#               filter(age_at_scan <= max(effective_age) | age_at_scan >= min(effective_age)), 
-#             aes(x = age_at_scan), color = "black", size = 0.1, alpha = 0.5) +
-#   theme(axis.text.y  = element_blank())) 
-# 
-# (swyc_overlap_scanb4swyc_plot <- ggplot(swyc_subset %>% filter(age_diff <= 0),  aes(y = pat_id, group = pat_id)) +
-#   geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
-#   geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
-#   geom_point(aes(x = age_at_scan), color = "black", size = 0.1, alpha = 0.5) +
-#   theme(axis.text.y  = element_blank())) 
-```
-
-## Assess # of repeated measures in SWYC
-```{r}
-# swyc_subset %>%
-#   count(pat_id) %>%
-#   count(n)
+(swyc_distinct_overlap_plot <- ggplot(swyc_avg_centiles %>% 
+                                        filter(!is.na(median_dq) & scan_swyc_twoyears), 
+                                      aes(y = reorder(pat_id, age_at_scan))) +
+  geom_point(aes(x = final_swyc_age, color = "SWYC"), size = 0.5) +
+  geom_point(aes(x = age_at_scan_raw, color = "Scan"), size = 0.5) +
+  scale_x_continuous(labels = \(x) round(x/30.4)) +
+  scale_color_manual( values = c("SWYC" = swyc_color,
+                                 "Scan" = "darkgray")
+                      ) +
+  labs(x = "Age (months)",
+       y = "Patients",
+       title = "Final SWYC Age Within Two Years of Scan") +
+  theme_classic(base_family = "Helvetica", base_size = 14) +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom")
+ )
+panel_save(swyc_distinct_overlap_plot, "swyc_distinct_scan_twoyears_overlap_plot", "svg", plot_output_folder)
 ```
 
 # Prep Data for Analysis
@@ -378,157 +409,73 @@ swyc_avg_centiles$scan_swyc_age_diff_days <- swyc_avg_centiles$age_at_scan - swy
 ## zscore variables of interest
 ```{r, echo = FALSE}
 # zscore swyc allforms birth factors and DQ
-df.zscore.swyc.all <- swyc_clean %>%
-  mutate(across(all_of(c("ga_days_total_qc", "birth_weight_kg_qc", "effective_age", "ga_adj_effective_age", "norm_devo_quotient", "ga_adj_norm_devo_quotient")), scale))
+swyc_avg_centiles <- swyc_avg_centiles %>%
+  mutate(across(all_of(c("median_dq", "ga_adj_median_dq", "final_swyc_age", "final_swyc_age_ga_adj")),
+                ~as.numeric(scale(.x)), .names = "{.col}_zscore"))
 # set sex and preterm as factor
-df.zscore.swyc.all$sex <- as.factor(df.zscore.swyc.all$sex)
-df.zscore.swyc.all$form_friendly_name <- as.factor(df.zscore.swyc.all$form_friendly_name)
+swyc_avg_centiles$sex <- as.factor(swyc_avg_centiles$sex)
+#swyc_avg_centiles$bwp_fen <- as.numeric(swyc_avg_centiles$bwp_fen)
 
-# zscore swyc avg birth factors and DQ
-df.zscore.swyc.avg <- swyc_avg %>%
-  mutate(across(all_of(c("ga_days_total_qc", "birth_weight_kg_qc", "final_swyc_age", "final_swyc_age_ga_adj", "median_dq", "ga_adj_median_dq")), scale))
-# set sex and preterm as factor
-df.zscore.swyc.avg$sex <- as.factor(df.zscore.swyc.avg$sex)
+# keep a column for all median dq available with scans, but set those > 2 years from scan to NULL
 
-####
-
-# zscore allforms centiles and other variables of interest
-df.zscore.swyc.all.cent <- swyc_all_centiles %>%
-  mutate(across(all_of(c(complete_centile_vars, "bweight_percentile")), qnorm)) %>%
-  mutate(across(all_of(c("median_euler_mean", "euler_mean_mpr", "adjusted_age_in_days", "age_at_scan", "ga_days_total_qc", "birth_weight_kg_qc", "effective_age", "ga_adj_effective_age", "norm_devo_quotient", "ga_adj_norm_devo_quotient",
-                         "median_euler_mean", "euler_mean_mpr")), scale))
-# set sex and preterm as factor
-df.zscore.swyc.all.cent$sex <- as.factor(df.zscore.swyc.all.cent$sex)
-df.zscore.swyc.all.cent$preterm <- as.factor(df.zscore.swyc.all.cent$preterm)
-df.zscore.swyc.all.cent$form_friendly_name <- as.factor(df.zscore.swyc.all.cent$form_friendly_name)
-
-# zscore avg centiles and other variables of interest
-df.zscore.swyc.avg.cent <- swyc_avg_centiles %>%
-  mutate(across(all_of(c(complete_centile_vars, "bweight_percentile")), qnorm)) %>%
- mutate(across(all_of(c("median_euler_mean", "euler_mean_mpr", "adjusted_age_in_days", "age_at_scan", "ga_days_total_qc", "birth_weight_kg_qc", "final_swyc_age", "final_swyc_age_ga_adj", "median_dq", "ga_adj_median_dq")), scale))
-# set sex and preterm as factor
-df.zscore.swyc.avg.cent$sex <- as.factor(df.zscore.swyc.avg.cent$sex)
-df.zscore.swyc.avg.cent$preterm <- as.factor(df.zscore.swyc.avg.cent$preterm)
+swyc_avg_centiles <- swyc_avg_centiles %>%
+  mutate(median_dq_full = median_dq,
+         ga_adj_median_dq_full = ga_adj_median_dq,
+         median_dq_zscore_full = median_dq_zscore,
+         ga_adj_median_dq_zscore_full = ga_adj_median_dq_zscore)
+swyc_avg_centiles[which(!swyc_avg_centiles$scan_swyc_twoyears),]$median_dq <- NA
+swyc_avg_centiles[which(!swyc_avg_centiles$scan_swyc_twoyears),]$ga_adj_median_dq <- NA
+swyc_avg_centiles[which(!swyc_avg_centiles$scan_swyc_twoyears),]$median_dq_zscore <- NA
+swyc_avg_centiles[which(!swyc_avg_centiles$scan_swyc_twoyears),]$ga_adj_median_dq_zscore <- NA
 ```
-
-## find Inf cells, make a table of N per phenotype, should be 0
-```{r, echo = FALSE}
-inf_nan_table <- as.data.frame(t(sapply(df.zscore.swyc.all.cent[c(full_vars, "bweight_percentile")], function(x){
-  c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
-})))
-max(inf_nan_table$inf)
-max(inf_nan_table$nan)
-
-inf_nan_table %>% filter(inf > 0)
-
-
-inf_nan_table <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[c(full_vars, "bweight_percentile")], function(x){
-  c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
-})))
-max(inf_nan_table$inf)
-max(inf_nan_table$nan)
-
-inf_nan_table %>% filter(inf > 0)
-```
-
 # CMDs
 
-## Calculate CMDs
-```{r}
-vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
-length_names <- length(c(vol_vars_cortical, sa_vars, th_vars))
-names.global <- c("global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol")
-# Ensure all names are in the same order
-names_base <- names(df.zscore_swyc_all_cent_swyc_all_cent)[grep("aparc_GrayVol", names(df.zscore_swyc_all_cent))] %>% sub("aparc_GrayVol_","",.) %>%
-  gsub("_Z", "", .)
-names.vol <- paste0("aparc_GrayVol_",names_base)
-names.sa <- paste0("aparc_SurfArea_",names_base)
-names.th <- paste0("aparc_ThickAvg_",names_base)
-# CMD Calculation
-## vol
-vol.center <- colMeans(df.zscore_swyc_all_cent %>% select(all_of(names.vol)))
-vol.cov_matrix <- cov(df.zscore_swyc_all_cent %>% select(all_of(names.vol)))
-vol.md <- sqrt(mahalanobis(df.zscore_swyc_all_cent %>% select(all_of(names.vol)), vol.center, vol.cov_matrix))
-df.zscore_swyc_all_cent$vol.cmd <- vol.md
-## sa
-sa.center <- colMeans(df.zscore_swyc_all_cent %>% select(all_of(names.sa)), na.rm = TRUE)
-sa.cov_matrix <- cov(df.zscore_swyc_all_cent %>% select(all_of(names.sa)), use = "complete.obs")
-sa.md <- sqrt(mahalanobis(df.zscore_swyc_all_cent %>% select(all_of(names.sa)), sa.center, sa.cov_matrix))
-df.zscore_swyc_all_cent$sa.cmd <- sa.md
-## th
-th.center <- colMeans(df.zscore_swyc_all_cent %>% select(all_of(names.th)), na.rm = TRUE)
-th.cov_matrix <- cov(df.zscore_swyc_all_cent %>% select(all_of(names.th)), use = "complete.obs")
-th.md <- sqrt(mahalanobis(df.zscore_swyc_all_cent %>% select(all_of(names.th)), th.center, th.cov_matrix))
-df.zscore_swyc_all_cent$th.cmd <- th.md
-## global
-global.center <- colMeans(df.zscore_swyc_all_cent %>% select(all_of(names.global)), na.rm = TRUE)
-global.cov_matrix <- cov(df.zscore_swyc_all_cent %>% select(all_of(names.global)), use = "complete.obs")
-global.md <- sqrt(mahalanobis(df.zscore_swyc_all_cent %>% select(all_of(names.global)), global.center, global.cov_matrix))
-df.zscore_swyc_all_cent$global.cmd <- global.md
-```
-
-## Test associations with CMDs (inc interactions with age)
+## Correlation Matrix
 ```{r, echo = FALSE}
-# Exploratory
-cor.test(df.zscore$vol.cmd, df.zscore$ga_days_total_qc)
-cor.test(df.zscore$vol.cmd, df.zscore$birth_weight_kg)
-cor.test(df.zscore$vol.cmd, df.zscore$median_dq)
-lm_swyc_volcmd <- lm(vol.cmd ~ median_dq, data = df.zscore)
-summary(lm_swyc_volcmd)
+# correlations between CMDs across three centiles
+cor_mat <- cor(swyc_avg_centiles[,c("global.cmd", "vol.cmd", "sa.cmd", "th.cmd", "subcort.cmd",
+                                    "gestational_age", "birth_weight_kg", "bwp_fen",
+                                    "median_dq_zscore", "ga_adj_median_dq_zscore",
+                                    "median_dq_zscore_full", "ga_adj_median_dq_zscore_full")], 
+               use = "pairwise.complete.obs")
 
-lm_swycbyage_volcmd <- lm(vol.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore)
-summary(lm_swycbyage_volcmd)
+p_mat <- cor_pmat(swyc_avg_centiles[,c("global.cmd", "vol.cmd", "sa.cmd", "th.cmd", "subcort.cmd",
+                                    "gestational_age", "birth_weight_kg", "bwp_fen",
+                                    "median_dq_zscore", "ga_adj_median_dq_zscore",
+                                    "median_dq_zscore_full", "ga_adj_median_dq_zscore_full")], 
+                  use = "pairwise.complete.obs")
 
-cor.test(df.zscore$sa.cmd, df.zscore$ga_days_total_qc)
-cor.test(df.zscore$sa.cmd, df.zscore$birth_weight_kg)
-cor.test(df.zscore$sa.cmd, df.zscore$median_dq)
+(cmd_corrs_plot <- ggcorrplot(
+  cor_mat,
+  p.mat = p_mat,
+  insig = "blank",
+  lab = TRUE
+))
 
-lm_swyc_sacmd <- lm(sa.cmd ~ median_dq, data = df.zscore)
-summary(lm_swyc_sacmd)
+if(save_figs == TRUE){
+panel_save(cmd_corrs_plot, "cmd-cor-matrix", "svg", plot_output_folder)
+}
 
-lm_swycbyage_sacmd <- lm(sa.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore)
-summary(lm_swycbyage_sacmd)
-
-cor.test(df.zscore$th.cmd, df.zscore$ga_days_total_qc)
-cor.test(df.zscore$th.cmd, df.zscore$birth_weight_kg)
-cor.test(df.zscore$th.cmd, df.zscore$bweight_percentile)
-cor.test(df.zscore$th.cmd, df.zscore$median_dq)
-
-lm_swyc_thcmd <- lm(th.cmd ~ median_dq, data = df.zscore)
-summary(lm_swyc_thcmd)
-
-lm_swycbyage_thcmd <- lm(th.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore)
-summary(lm_swycbyage_thcmd)
-
-cor.test(df.zscore$global.cmd, df.zscore$ga_days_total_qc)
-cor.test(df.zscore$global.cmd, df.zscore$birth_weight_kg)
-cor.test(df.zscore$global.cmd, df.zscore$bweight_percentile)
-cor.test(df.zscore$global.cmd, df.zscore$median_dq)
-
-lm_swyc_globalcmd <- lm(global.cmd ~ median_dq, data = df.zscore)
-summary(lm_swyc_globalcmd)
-
-lm_swycbyage_globalcmd <- lm(global.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore)
-summary(lm_swycbyage_globalcmd)
 ```
 
 ## CMD plots
 ```{r}
+swyc_N <- sum(!is.na(swyc_avg_centiles$median_dq))
 # Vol CMD
-cor_volCMD_swyc <- cor.test(df.zscore$vol.cmd, df.zscore$median_dq)
+cor_volCMD_swyc <- cor.test(swyc_avg_centiles$vol.cmd, swyc_avg_centiles$median_dq)
 ## plot
 volCMD_swyc_r <- signif(cor_volCMD_swyc$estimate, 3)
 volCMD_swyc_p <- signif(cor_volCMD_swyc$p.value, 3)
 
-(cor_volCMD_swyc_plot <- ggplot(df.zscore, aes(median_dq, vol.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+(cor_volCMD_swyc_plot <- ggplot(swyc_avg_centiles, aes(median_dq_zscore, vol.cmd)) +
+  geom_point(color = swyc_color, alpha = 0.4) +
+  geom_smooth(method = "lm", se = TRUE, color = swyc_color) +
   annotate("label",
            x = 2, y = 10,
            label.size = 0,
            label = paste0("r=",volCMD_swyc_r, "; p=", volCMD_swyc_p)) +
   labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
+    x = paste0("Median SWYC DQ, N = ", swyc_N),
     y = "Volume CMD"
   ) +
   theme_minimal(base_size = 14) +
@@ -538,20 +485,20 @@ volCMD_swyc_p <- signif(cor_volCMD_swyc$p.value, 3)
   ))
 
 # SA CMD
-cor_saCMD_swyc <- cor.test(df.zscore$sa.cmd, df.zscore$median_dq)
+cor_saCMD_swyc <- cor.test(swyc_avg_centiles$sa.cmd, swyc_avg_centiles$median_dq)
 ## plot
 saCMD_swyc_r <- signif(cor_saCMD_swyc$estimate, 3)
 saCMD_swyc_p <- signif(cor_saCMD_swyc$p.value, 3)
 
-(cor_saCMD_swyc_plot <- ggplot(df.zscore, aes(median_dq, sa.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+(cor_saCMD_swyc_plot <- ggplot(swyc_avg_centiles, aes(median_dq, sa.cmd)) +
+  geom_point(color = swyc_color, alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = swyc_color) +
   annotate("label",
            x = 2, y = 10,
            label.size = 0,
            label = paste0("r=",saCMD_swyc_r, "; p=", saCMD_swyc_p)) +
   labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
+    x = paste0("Median SWYC DQ, N = ", swyc_N),
     y = "Surface Area CMD"
   ) +
   theme_minimal(base_size = 14) +
@@ -561,20 +508,21 @@ saCMD_swyc_p <- signif(cor_saCMD_swyc$p.value, 3)
   ))
 
 # Thickness CMD
-cor_thCMD_swyc <- cor.test(df.zscore$th.cmd, df.zscore$median_dq)
+swyc_th_N <- sum(!is.na(swyc_avg_centiles$median_dq) & !is.na(swyc_avg_centiles$th.cmd))
+cor_thCMD_swyc <- cor.test(swyc_avg_centiles$th.cmd, swyc_avg_centiles$median_dq)
 ## plot
 thCMD_swyc_r <- signif(cor_thCMD_swyc$estimate, 3)
 thCMD_swyc_p <- signif(cor_thCMD_swyc$p.value, 3)
 
-(cor_thCMD_swyc_plot <- ggplot(df.zscore, aes(median_dq, th.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+(cor_thCMD_swyc_plot <- ggplot(swyc_avg_centiles, aes(median_dq, th.cmd)) +
+  geom_point(color = swyc_color, alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = swyc_color) +
   annotate("label",
            x = 2, y = 10,
            label.size = 0,
            label = paste0("r=",thCMD_swyc_r, "; p=", thCMD_swyc_p)) +
   labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
+    x = paste0("Median SWYC DQ, N = ", swyc_th_N),
     y = "Cortical Thickness CMD"
   ) +
   theme_minimal(base_size = 14) +
@@ -584,20 +532,20 @@ thCMD_swyc_p <- signif(cor_thCMD_swyc$p.value, 3)
   ))
 
 #Global CMD
-cor_globalCMD_swyc <- cor.test(df.zscore$global.cmd, df.zscore$median_dq)
+cor_globalCMD_swyc <- cor.test(swyc_avg_centiles$global.cmd, swyc_avg_centiles$median_dq)
 ## plot
 globalCMD_swyc_r <- signif(cor_globalCMD_swyc$estimate, 3)
 globalCMD_swyc_p <- signif(cor_globalCMD_swyc$p.value, 3)
 
-(cor_globalCMD_swyc_plot <- ggplot(df.zscore, aes(median_dq, global.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
+(cor_globalCMD_swyc_plot <- ggplot(swyc_avg_centiles, aes(median_dq, global.cmd)) +
+  geom_point(color = swyc_color, alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = swyc_color) +
   annotate("label",
-           x = 2, y = 10,
+           x = 1, y = 7,
            label.size = 0,
            label = paste0("r=",globalCMD_swyc_r, "; p=", globalCMD_swyc_p)) +
   labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
+    x = paste0("Median SWYC DQ, N = ", swyc_N),
     y = "Global CMD"
   ) +
   theme_minimal(base_size = 14) +
@@ -605,555 +553,52 @@ globalCMD_swyc_p <- signif(cor_globalCMD_swyc$p.value, 3)
     panel.grid = element_blank(),
     plot.title = element_blank()
   ))
-```
 
+#Subcort CMD
+cor_subcortCMD_swyc <- cor.test(swyc_avg_centiles$subcort.cmd, swyc_avg_centiles$median_dq)
+## plot
+subcortCMD_swyc_r <- signif(cor_subcortCMD_swyc$estimate, 3)
+subcortCMD_swyc_p <- signif(cor_subcortCMD_swyc$p.value, 3)
 
-# SWYC ~ Birth Factors
-
-## Regressions
-```{r}
-table(df.zscore.swyc.all$form_friendly_name)
-
-ga_reg_table_swyc <- data.frame(
-  model = "Gestational Age",
-  swyc_type = rep(c("All-Forms", "Median", "Month-6", "Month-9", "Month-15", "Month-18", "Month-24", "Month-30"),2),
-  ga_adj = c(rep(TRUE, 8), rep(FALSE,8)),
-  N = NA,
-  beta = NA,
-  p = NA,
-  se = NA,
-  sig = NA,
-  color = NA
-)
-
-swyc_unadj_ga <- lm(median_dq ~ ga_days_total_qc, data = df.zscore.swyc.avg)
-swyc_adj_ga <- lm(ga_adj_median_dq ~ ga_days_total_qc, data = df.zscore.swyc.avg)
-ga_N_median <- sum(!is.na(df.zscore.swyc.avg$ga_days_total_qc))
-
-swyc.all_unadj_ga <- lm(norm_devo_quotient ~ ga_days_total_qc + form_friendly_name, data = df.zscore.swyc.all)
-swyc.all_adj_ga <- lm(ga_adj_norm_devo_quotient ~ ga_days_total_qc + form_friendly_name, data = df.zscore.swyc.all)
-ga_N_allforms <- sum(!is.na(df.zscore.swyc.all$ga_days_total_qc))
-
-swyc.6mo_unadj_ga <- lm(norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 06 Month"))
-swyc.6mo_adj_ga <- lm(ga_adj_norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 06 Month"))
-ga_N_6mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 06 Month") %>% select(ga_days_total_qc)))
-
-swyc.9mo_unadj_ga <- lm(norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 09 Month"))
-swyc.9mo_adj_ga <- lm(ga_adj_norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 09 Month"))
-ga_N_9mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 09 Month") %>% select(ga_days_total_qc)))
-
-swyc.15mo_unadj_ga <- lm(norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 15 Month"))
-swyc.15mo_adj_ga <- lm(ga_adj_norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 15 Month"))
-ga_N_15mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 15 Month") %>% select(ga_days_total_qc)))
-
-swyc.18mo_unadj_ga <- lm(norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 18 Month"))
-swyc.18mo_adj_ga <- lm(ga_adj_norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 18 Month"))
-ga_N_18mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 18 Month") %>% select(ga_days_total_qc)))
-
-swyc.24mo_unadj_ga <- lm(norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 24 Month"))
-swyc.24mo_adj_ga <- lm(ga_adj_norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 24 Month"))
-ga_N_24mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 24 Month") %>% select(ga_days_total_qc)))
-
-swyc.30mo_unadj_ga <- lm(norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 30 Month"))
-swyc.30mo_adj_ga <- lm(ga_adj_norm_devo_quotient ~ ga_days_total_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 30 Month"))
-ga_N_30mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 30 Month") %>% select(ga_days_total_qc)))
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Median" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Median" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Median" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Median" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Median" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Median" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Median", "N"] <- ga_N_median
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "All-Forms" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.all_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "All-Forms" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.all_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "All-Forms" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.all_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "All-Forms" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.all_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "All-Forms" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.all_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "All-Forms" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.all_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "All-Forms", "N"] <- ga_N_allforms
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-6" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.6mo_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-6" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.6mo_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-6" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.6mo_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-6" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.6mo_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-6" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.6mo_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-6" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.6mo_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-6", "N"] <- ga_N_6mo
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-9" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.9mo_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-9" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.9mo_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-9" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.9mo_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-9" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.9mo_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-9" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.9mo_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-9" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.9mo_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-9", "N"] <- ga_N_9mo
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-15" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.15mo_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-15" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.15mo_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-15" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.15mo_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-15" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.15mo_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-15" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.15mo_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-15" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.15mo_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-15", "N"] <- ga_N_15mo
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-18" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.18mo_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-18" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.18mo_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-18" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.18mo_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-18" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.18mo_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-18" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.18mo_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-18" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.18mo_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-18", "N"] <- ga_N_18mo
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-24" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.24mo_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-24" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.24mo_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-24" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.24mo_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-24" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.24mo_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-24" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.24mo_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-24" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.24mo_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-24", "N"] <- ga_N_24mo
-
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-30" & ga_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.30mo_unadj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-30" & ga_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.30mo_adj_ga)$coefficients[2,1]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-30" & ga_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.30mo_unadj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-30" & ga_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.30mo_adj_ga)$coefficients[2,2]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-30" & ga_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.30mo_unadj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-30" & ga_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.30mo_adj_ga)$coefficients[2,4]
-ga_reg_table_swyc[ga_reg_table_swyc$swyc_type == "Month-30", "N"] <- ga_N_30mo
-
-###
-
-bw_reg_table_swyc <- data.frame(
-  model = "Birth Weight",
-  swyc_type = rep(c("All-Forms", "Median", "Month-6", "Month-9", "Month-15", "Month-18", "Month-24", "Month-30"),2),
-  ga_adj = c(rep(TRUE, 8), rep(FALSE,8)),
-  N = NA,
-  beta = NA,
-  p = NA,
-  se = NA,
-  sig = NA,
-  color = NA
-)
-
-swyc_unadj_bw <- lm(median_dq ~ birth_weight_kg_qc, data = df.zscore.swyc.avg)
-swyc_adj_bw <- lm(ga_adj_median_dq ~ birth_weight_kg_qc, data = df.zscore.swyc.avg)
-bw_N_median <- sum(!is.na(df.zscore.swyc.avg$birth_weight_kg_qc))
-
-swyc.all_unadj_bw <- lm(norm_devo_quotient ~ birth_weight_kg_qc + form_friendly_name, data = df.zscore.swyc.all)
-swyc.all_adj_bw <- lm(ga_adj_norm_devo_quotient ~ birth_weight_kg_qc + form_friendly_name, data = df.zscore.swyc.all)
-bw_N_allforms <- sum(!is.na(df.zscore.swyc.all$birth_weight_kg_qc))
-
-swyc.6mo_unadj_bw <- lm(norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 06 Month"))
-swyc.6mo_adj_bw <- lm(ga_adj_norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 06 Month"))
-bw_N_6mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 06 Month") %>% select(birth_weight_kg_qc)))
-
-swyc.9mo_unadj_bw <- lm(norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 09 Month"))
-swyc.9mo_adj_bw <- lm(ga_adj_norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 09 Month"))
-bw_N_9mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 09 Month") %>% select(birth_weight_kg_qc)))
-
-swyc.15mo_unadj_bw <- lm(norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 15 Month"))
-swyc.15mo_adj_bw <- lm(ga_adj_norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 15 Month"))
-bw_N_15mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 15 Month") %>% select(birth_weight_kg_qc)))
-
-swyc.18mo_unadj_bw <- lm(norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 18 Month"))
-swyc.18mo_adj_bw <- lm(ga_adj_norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 18 Month"))
-bw_N_18mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 18 Month") %>% select(birth_weight_kg_qc)))
-
-swyc.24mo_unadj_bw <- lm(norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 24 Month"))
-swyc.24mo_adj_bw <- lm(ga_adj_norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 24 Month"))
-bw_N_24mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 24 Month") %>% select(birth_weight_kg_qc)))
-
-swyc.30mo_unadj_bw <- lm(norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                          filter(form_friendly_name == "SWYC : 30 Month"))
-swyc.30mo_adj_bw <- lm(ga_adj_norm_devo_quotient ~ birth_weight_kg_qc, data = df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 30 Month"))
-bw_N_30mo <- sum(!is.na(df.zscore.swyc.all %>%
-                        filter(form_friendly_name == "SWYC : 30 Month") %>% select(birth_weight_kg_qc)))
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Median" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Median" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Median" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Median" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Median" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Median" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Median", "N"] <- bw_N_median
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "All-Forms" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.all_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "All-Forms" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.all_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "All-Forms" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.all_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "All-Forms" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.all_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "All-Forms" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.all_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "All-Forms" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.all_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "All-Forms", "N"] <- bw_N_allforms
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-6" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.6mo_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-6" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.6mo_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-6" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.6mo_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-6" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.6mo_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-6" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.6mo_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-6" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.6mo_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-6", "N"] <- bw_N_6mo
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-9" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.9mo_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-9" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.9mo_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-9" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.9mo_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-9" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.9mo_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-9" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.9mo_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-9" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.9mo_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-9", "N"] <- bw_N_9mo
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-15" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.15mo_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-15" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.15mo_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-15" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.15mo_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-15" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.15mo_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-15" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.15mo_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-15" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.15mo_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-15", "N"] <- bw_N_15mo
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-18" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.18mo_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-18" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.18mo_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-18" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.18mo_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-18" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.18mo_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-18" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.18mo_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-18" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.18mo_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-18", "N"] <- bw_N_18mo
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-24" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.24mo_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-24" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.24mo_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-24" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.24mo_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-24" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.24mo_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-24" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.24mo_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-24" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.24mo_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-24", "N"] <- bw_N_24mo
-
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-30" & bw_reg_table_swyc$ga_adj == FALSE, "beta"] <- summary(swyc.30mo_unadj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-30" & bw_reg_table_swyc$ga_adj == TRUE, "beta"] <- summary(swyc.30mo_adj_bw)$coefficients[2,1]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-30" & bw_reg_table_swyc$ga_adj == FALSE, "se"] <- summary(swyc.30mo_unadj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-30" & bw_reg_table_swyc$ga_adj == TRUE, "se"] <- summary(swyc.30mo_adj_bw)$coefficients[2,2]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-30" & bw_reg_table_swyc$ga_adj == FALSE, "p"] <- summary(swyc.30mo_unadj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-30" & bw_reg_table_swyc$ga_adj == TRUE, "p"] <- summary(swyc.30mo_adj_bw)$coefficients[2,4]
-bw_reg_table_swyc[bw_reg_table_swyc$swyc_type == "Month-30", "N"] <- bw_N_30mo
-```
-
-### Visualization
-```{r}
-#  Combine and arrange by specific order of swyc types
-bf_swyc_plot_df <- bind_rows(ga_reg_table_swyc, bw_reg_table_swyc) %>%
-  mutate(swyc_type = factor(swyc_type, levels = c("All-Forms", "Median", "Month-6", "Month-9", "Month-15", "Month-18", "Month-24", "Month-30"))) %>% arrange(swyc_type) %>%
-  mutate(sig = p < 0.05,
-          color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   #  muted red
-            sig & beta < 0 ~ "#7293b0",   #  muted blue
-            TRUE ~ "gray70"),
-         y_labels = paste(swyc_type, N, sep = ", N="))
-
-#  Plot
-(swyc_bf_all_plot <- ggplot(bf_swyc_plot_df %>% 
-                                  filter(swyc_type %in% c("All-Forms")), 
-                                aes(x = beta, y = model)) +
-    geom_point(aes(shape = ga_adj, color = color), size = 3) +
-    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
-    scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 17),
-                       labels = c( "TRUE" = "GA-ADJ DQ",
-                                   "FALSE" = "Original DQ")) +
-    scale_color_identity() +
-    scale_x_continuous(limits = c(0, 0.5)) +
-    #scale_y_discrete(limits = rev, labels = phenotype_labs) +
-    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
-    theme_minimal() +
-    theme_bw(base_size = 16) +
-    theme(
-        panel.grid = element_blank(),
-        legend.position = "bottom",
-        legend.title = element_blank(),
-        panel.border = element_blank(),
-        axis.text.y  = element_text(color = "black"),
-        axis.line.x  = element_line(color = "black"),
-        axis.line.y  = element_blank(),
-        legend.justification = c("left", "top")
-    ) +
-    xlab("Std Beta for DQ Across All SWYC Forms") +
-    ylab(""))
-
-(swyc_bf_median_plot <- ggplot(bf_swyc_plot_df %>% 
-                                  filter(swyc_type %in% c("Median")), 
-                                aes(x = beta, y = model)) +
-    geom_point(aes(shape = ga_adj, color = color), size = 3) +
-    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
-    scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 17),
-                       labels = c( "TRUE" = "GA-ADJ DQ",
-                                   "FALSE" = "Original DQ")) +
-    scale_color_identity() +
-    scale_x_continuous(limits = c(0, 0.5)) +
-    #scale_y_discrete(limits = rev, labels = phenotype_labs) +
-    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
-    theme_minimal() +
-    theme_bw(base_size = 16) +
-    theme(
-        panel.grid = element_blank(),
-        legend.position = "bottom",
-        legend.title = element_blank(),
-        panel.border = element_blank(),
-        axis.text.y  = element_text(color = "black"),
-        axis.line.x  = element_line(color = "black"),
-        axis.line.y  = element_blank(),
-        legend.justification = c("left", "top")
-    ) +
-    xlab("Std Beta for DQ Median in Each Subj") +
-    ylab(""))
-
-
-(swyc_bf_allforms_ga <- ggplot(bf_swyc_plot_df %>% 
-                                  filter(swyc_type %in% c("Month-6", "Month-9", "Month-15", "Month-18", "Month-24", "Month-30") &
-                                           model == "Gestational Age"), 
-                                aes(x = beta, y =swyc_type)) +
-    geom_point(aes(shape = ga_adj, color = color), size = 3) +
-    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
-    scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 17),
-                       labels = c( "TRUE" = "GA-ADJ DQ",
-                                   "FALSE" = "Original DQ")) +
-    scale_color_identity() +
-    scale_x_continuous(limits = c(0.1, 0.5)) +
-    scale_y_discrete(labels =
-                       pull(bf_swyc_plot_df %>%
-                                  filter(swyc_type %in% c("Month-6", "Month-9", "Month-15", "Month-18", "Month-24", "Month-30") &
-                                           model == "Gestational Age" & ga_adj == TRUE) %>%
-                       select(y_labels))) +
-    theme_minimal() +
-    theme_bw(base_size = 16) +
-    theme(
-        panel.grid = element_blank(),
-        legend.position = "bottom",
-        legend.title = element_blank(),
-        panel.border = element_blank(),
-        axis.text.y  = element_text(color = "black"),
-        axis.line.x  = element_line(color = "black"),
-        axis.line.y  = element_blank(),
-        legend.justification = c("left", "top")
-    ) +
-    xlab("Std Beta DQ ~ GA, Across Forms > N = 100") +
-    ylab(""))
-
-(swyc_bf_allforms_bw <- ggplot(bf_swyc_plot_df %>% 
-                                  filter(swyc_type %in% c("Month-6", "Month-9", "Month-15", "Month-18", "Month-24", "Month-30") &
-                                           model == "Birth Weight"), 
-                                aes(x = beta, y = swyc_type)) +
-    geom_point(aes(shape = ga_adj, color = color), size = 3) +
-    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
-    scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 17),
-                       labels = c( "TRUE" = "GA-ADJ DQ",
-                                   "FALSE" = "Original DQ")) +
-    scale_color_identity() +
-    scale_x_continuous(limits = c(0.1, 0.5)) +
-    scale_y_discrete(labels = 
-                       pull(bf_swyc_plot_df %>% 
-                                  filter(swyc_type %in% c("Month-6", "Month-9", "Month-15", "Month-18", "Month-24", "Month-30") &
-                                           model == "Birth Weight" & ga_adj == TRUE) %>%
-                       select(y_labels))) +
-    theme_minimal() +
-    theme_bw(base_size = 16) +
-    theme(
-        panel.grid = element_blank(),
-        legend.position = "bottom",
-        legend.title = element_blank(),
-        panel.border = element_blank(),
-        axis.text.y  = element_text(color = "black"),
-        axis.line.x  = element_line(color = "black"),
-        axis.line.y  = element_blank(),
-        legend.justification = c("left", "top")
-    ) +
-    xlab("Std Beta DQ ~ BW, Across Forms > N = 100") +
-    ylab(""))
-
-if(save_figs == TRUE){
-panel_save(swyc_bf_all_plot, "swyc-bf-all", "pdf", plot_output_folder)
-panel_save(swyc_bf_median_plot, "swyc-bf-median", "pdf", plot_output_folder)
-panel_save(swyc_bf_allforms_ga, "swyc-bf-allforms-ga", "pdf", plot_output_folder)
-}
-```
-
-
-## Scatterplots (old)
-
-### BW
-```{r}
-(swyc_bw_plot <- ggplot(df.zscore, aes(x = birth_weight_kg, y = median_dq)) +
-  geom_point(color = "#9B7A8F", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#9B7A8F") +
+(cor_subcortCMD_swyc_plot <- ggplot(swyc_avg_centiles, aes(median_dq, subcort.cmd)) +
+  geom_point(color = swyc_color, alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = swyc_color) +
   annotate("label",
-           x = 0.5, y = 3.2,
-           label = paste0("std beta=", signif(swyc_bw_beta,3), "; p=", signif(swyc_bw_p,3))) +
+           x = 1, y = 10,
+           label.size = 0,
+           label = paste0("r=",subcortCMD_swyc_r, "; p=", subcortCMD_swyc_p)) +
   labs(
-    x = paste0("Birth Weight (z-scored), N = ", bw_N),
-    y = "Median SWYC Score (z-scored)"
+    x = paste0("Median SWYC DQ, N = ", swyc_N),
+    y = "Subcortical CMD"
   ) +
   theme_minimal(base_size = 14) +
   theme(
     panel.grid = element_blank(),
     plot.title = element_blank()
   ))
-
-if(save_figs == TRUE){
-panel_save(swyc_bw_plot, "swyc_bw_all-available", "pdf", plot_output_folder)
-}
-
-#check interaction with age
-lm_swyc_bwbyage <- lm(median_dq ~ birth_weight_kg*effective_age, data = df.zscore)
-lm_swyc_bwbyage_stats <- summary(lm_swyc_bwbyage)
-
-bwbyage_interaction_plot <- interact_plot(lm_swyc_bwbyage, pred = birth_weight_kg, modx = adjusted_age_in_days) + ylab("SWYC") + ggtitle(paste0("bwbyage beta = ", as.character(signif(lm_swyc_bwbyage_stats$coefficients[4,1], 3))))
-
-if(save_figs == TRUE){
-panel_save(bwbyage_interaction_plot, "swyc_bwbyage_interact_plot", "pdf", plot_output_folder)
-}
 ```
 
-### GA
-```{r}
-ga_N <- sum(!is.na(df.zscore$ga_days_total_qc))
-cor.test(df.zscore$ga_days_total_qc, df.zscore$median_dq)
-lm_swyc_ga <- lm(median_dq ~ gestational_age, data = df.zscore)
-lm_swyc_ga_stats <- summary(lm_swyc_ga)
-swyc_ga_beta <- lm_swyc_ga_stats$coefficients[2,1]
-swyc_ga_p <- lm_swyc_ga_stats$coefficients[2,4]
 
-(swyc_ga_plot <- ggplot(df.zscore, aes(x = gestational_age, y = median_dq)) +
-  geom_point(color = "#9B7A8F", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#9B7A8F") +
-  annotate("label",
-           x = 0.5, y = 3.2,
-           label = paste0("std beta=", signif(swyc_ga_beta,3), "; p=", signif(swyc_ga_p,3))) +
-  labs(
-    x = paste0("Gestational Age (z-scored), N = ", ga_N),
-    y = "Median SWYC Score (z-scored)"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    panel.grid = element_blank(),
-    plot.title = element_blank()
-  ))
 
-if(save_figs == TRUE){
-panel_save(swyc_ga_plot, "swyc_ga_all-available", "pdf", plot_output_folder)
-}
+# Linear Regression Global phenotypes (euler mean QC score as covariate)
 
-#check interaction with age
-lm_swyc_gabyage <- lm(median_dq ~ gestational_age*adjusted_age_in_days, data = df.zscore)
-lm_swyc_gabyage_stats <- summary(lm_swyc_gabyage)
-gabyage_interaction_plot <- interact_plot(lm_swyc_gabyage, pred = gestational_age, modx = adjusted_age_in_days) + ylab("SWYC") + ggtitle(paste0("gabyage beta = ", as.character(signif(lm_swyc_gabyage_stats$coefficients[4,1], 3))))
-
-if(save_figs == TRUE){
-panel_save(gabyage_interaction_plot, "swyc_gabyage_interact_plot", "pdf", plot_output_folder)
-}
-```
-
-# Global Variables
-
-## Define global vars of interest
-```{r, echo = TRUE}
-global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
-```
-
-## SWYC ~ global without QC
+## GA
 ```{r, echo = FALSE}
-swyc_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$median_dq)
-  summary <- summary(lm)
-  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
-})))
-
-swyc_reg_table_global$swyc_p_adj <- p.adjust(swyc_reg_table_global$swyc_p, method = "BH")
-
-swyc_reg_table_global %>% filter(swyc_p_adj < 0.05)
-range(swyc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
-```
-
-## SWYC ~ global with QC
-```{r, echo = FALSE}
-swyc.qc_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$median_dq + df.zscore.swyc.avg.cent$median_euler_mean)
-  summary <- summary(lm)
-  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
-})))
-
-swyc.qc_reg_table_global$swyc_p_adj <- p.adjust(swyc.qc_reg_table_global$swyc_p, method = "BH")
-
-swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05)
-range(swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
-```
-
-## SWYC ~ global with QC, SWYC X age interaction
-
-### Regression and results
-```{r, echo = FALSE}
-swycbyage.qc_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$median_dq*df.zscore.swyc.avg.cent$adjusted_age_in_days + df.zscore.swyc.avg.cent$median_euler_mean)
-  summary <- summary(lm)
-  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2],
-   age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
-   swycbyage_beta = summary$coefficients[5,1], swycbyage_p = summary$coefficients[5,4], swycbyage_se = summary$coefficients[5,2])
-})))
-
-swycbyage.qc_reg_table_global$swyc_p_adj <- p.adjust(swycbyage.qc_reg_table_global$swyc_p, method = "BH")
-swycbyage.qc_reg_table_global$age_p_adj <- p.adjust(swycbyage.qc_reg_table_global$age_p, method = "BH")
-swycbyage.qc_reg_table_global$swycbyage_p_adj <- p.adjust(swycbyage.qc_reg_table_global$swycbyage_p, method = "BH")
-
-print(paste0("Age Main significant results: ", dim(swycbyage.qc_reg_table_global %>% filter(age_p_adj < 0.05))[1]))
-print(paste0("Number of significant SWYC x Age IDPs - NO correction: ", dim(swycbyage.qc_reg_table_global %>% filter(swycbyage_p < 0.05))[1]))
-print(paste0("Number of significant SWYC x Age IDPs - AFTER FDR correction: ", dim(swycbyage.qc_reg_table_global %>% filter(swycbyage_p_adj < 0.05))[1]))
-
-range(swycbyage.qc_reg_table_global %>% filter(swycbyage_p_adj < 0.05) %>% select(swycbyage_beta))
-
-if(dim(swycbyage.qc_reg_table_global %>% filter(age_p_adj < 0.05))[1] > 0){
-  age_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  age_reg_table_global$age_p_adj <- p.adjust(age_reg_table_global$age_p, method = "BH")
-  print(paste0("Age Main significant results (no other covariates): ", dim(age_reg_table_global %>% filter(age_p_adj < 0.05))[1]))
-```
-
-## GA without QC
-```{r, echo = FALSE}
-ga_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$ga_days_total_qc)
-  summary <- summary(lm)
-  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
+ga_reg_table_global <- as.data.frame(t(sapply(global_vars_totest, function(x) {
+  dat <- swyc_avg_centiles
+  if (grepl("Thick", x)) {
+    dat <- swyc_avg_centiles %>% filter(age_over2_adj == TRUE)
+    if(median_th_mpr_flag){
+      form <- reformulate(termlabels = c("gestational_age", "euler_mean_mpr"), response = x)
+    }
+    } else {
+     form <- reformulate(termlabels = c("gestational_age", "qc_var"), response = x)
+    }
+   fit <- lm(form, data = dat)
+   summary_fit <- summary(fit)
+  c(ga_beta = summary_fit$coefficients["gestational_age", "Estimate"],
+    ga_p    = summary_fit$coefficients["gestational_age", "Pr(>|t|)"],
+    ga_se   = summary_fit$coefficients["gestational_age", "Std. Error"] )
 })))
 
 ga_reg_table_global$ga_p_adj <- p.adjust(ga_reg_table_global$ga_p, method = "BH")
@@ -1162,26 +607,23 @@ ga_reg_table_global %>% filter(ga_p_adj < 0.05)
 range(ga_reg_table_global %>% filter(ga_p_adj < 0.05) %>% select(ga_beta))
 ```
 
-## GA with QC
+## BW
 ```{r, echo = FALSE}
-ga.qc_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$ga_days_total_qc + df.zscore.swyc.avg.cent$median_euler_mean)
-  summary <- summary(lm)
-  c(ga_beta = summary$coefficients[2,1], ga_p = summary$coefficients[2,4], ga_se = summary$coefficients[2,2])
-})))
-
-ga.qc_reg_table_global$ga_p_adj <- p.adjust(ga.qc_reg_table_global$ga_p, method = "BH")
-
-ga.qc_reg_table_global %>% filter(ga_p_adj < 0.05)
-range(ga.qc_reg_table_global %>% filter(ga_p_adj < 0.05) %>% select(ga_beta))
-```
-
-## BW without QC
-```{r, echo = FALSE}
-bw_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$birth_weight_kg_qc)
-  summary <- summary(lm)
-  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+bw_reg_table_global <- as.data.frame(t(sapply(global_vars_totest, function(x) {
+  dat <- swyc_avg_centiles
+  if (grepl("Thick", x)) {
+    dat <- swyc_avg_centiles %>% filter(age_over2_adj == TRUE)
+    if(median_th_mpr_flag){
+      form <- reformulate(termlabels = c("birth_weight_kg", "euler_mean_mpr"), response = x)
+    }
+    } else {
+     form <- reformulate(termlabels = c("birth_weight_kg", "qc_var"), response = x)
+    }
+   fit <- lm(form, data = dat)
+   summary_fit <- summary(fit)
+  c(bw_beta = summary_fit$coefficients["birth_weight_kg", "Estimate"],
+    bw_p    = summary_fit$coefficients["birth_weight_kg", "Pr(>|t|)"],
+    bw_se   = summary_fit$coefficients["birth_weight_kg", "Std. Error"] )
 })))
 
 bw_reg_table_global$bw_p_adj <- p.adjust(bw_reg_table_global$bw_p, method = "BH")
@@ -1190,26 +632,62 @@ bw_reg_table_global %>% filter(bw_p_adj < 0.05)
 range(bw_reg_table_global %>% filter(bw_p_adj < 0.05) %>% select(bw_beta))
 ```
 
-## BW with QC
+## BWp
 ```{r, echo = FALSE}
-bw.qc_reg_table_global <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$birth_weight_kg_qc + df.zscore.swyc.avg.cent$median_euler_mean)
-  summary <- summary(lm)
-  c(bw_beta = summary$coefficients[2,1], bw_p = summary$coefficients[2,4], bw_se = summary$coefficients[2,2])
+bwp_reg_table_global <- as.data.frame(t(sapply(global_vars_totest, function(x) {
+  dat <- swyc_avg_centiles
+  if (grepl("Thick", x)) {
+    dat <- swyc_avg_centiles %>% filter(age_over2_adj == TRUE)
+    if(median_th_mpr_flag){
+      form <- reformulate(termlabels = c("bwp_fen", "euler_mean_mpr"), response = x)
+    }
+    } else {
+     form <- reformulate(termlabels = c("bwp_fen", "qc_var"), response = x)
+    }
+   fit <- lm(form, data = dat)
+   summary_fit <- summary(fit)
+  c(bwp_beta = summary_fit$coefficients["bwp_fen", "Estimate"],
+    bwp_p    = summary_fit$coefficients["bwp_fen", "Pr(>|t|)"],
+    bwp_se   = summary_fit$coefficients["bwp_fen", "Std. Error"] )
 })))
 
-bw.qc_reg_table_global$bw_p_adj <- p.adjust(bw.qc_reg_table_global$bw_p, method = "BH")
+bwp_reg_table_global$bwp_p_adj <- p.adjust(bwp_reg_table_global$bwp_p, method = "BH")
 
-bw.qc_reg_table_global %>% filter(bw_p_adj < 0.05)
-range(bw.qc_reg_table_global %>% filter(bw_p_adj < 0.05) %>% select(bw_beta))
+bwp_reg_table_global %>% filter(bwp_p_adj < 0.05)
+range(bwp_reg_table_global %>% filter(bwp_p_adj < 0.05) %>% select(bwp_beta))
 ```
 
-## Visualize/Figure Panel without QC
+## SWYC Median DQ
+```{r, echo = FALSE}
+swyc_reg_table_global <- as.data.frame(t(sapply(global_vars_totest, function(x) {
+  dat <- swyc_avg_centiles
+  if (grepl("Thick", x)) {
+    dat <- swyc_avg_centiles %>% filter(age_over2_adj == TRUE)
+    if(median_th_mpr_flag){
+      form <- reformulate(termlabels = c("median_dq_zscore", "euler_mean_mpr"), response = x)
+    }
+    } else {
+     form <- reformulate(termlabels = c("median_dq_zscore", "qc_var"), response = x)
+    }
+   fit <- lm(form, data = dat)
+   summary_fit <- summary(fit)
+  c(swyc_beta = summary_fit$coefficients["median_dq_zscore", "Estimate"],
+    swyc_p    = summary_fit$coefficients["median_dq_zscore", "Pr(>|t|)"],
+    swyc_se   = summary_fit$coefficients["median_dq_zscore", "Std. Error"] )
+})))
+
+swyc_reg_table_global$swyc_p_adj <- p.adjust(swyc_reg_table_global$swyc_p, method = "BH")
+
+swyc_reg_table_global %>% filter(swyc_p_adj < 0.05)
+range(swyc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
+```
+
+## Visualize/Figure Panel
 ```{r, echo = FALSE}
 #  Add phenotype column from rownames
 ga_reg_table_global$phenotype <- rownames(ga_reg_table_global)
-bw_reg_table_global$phenotype <- rownames(bw_reg_table_global)
 swyc_reg_table_global$phenotype <- rownames(swyc_reg_table_global)
+bwp_reg_table_global$phenotype <- rownames(bwp_reg_table_global)
 
 #  Add model identifiers + rename to common column names
 ga_reg_table_global <- ga_reg_table_global %>%
@@ -1219,19 +697,17 @@ ga_reg_table_global <- ga_reg_table_global %>%
          p_adj    = ga_p_adj) %>%
     mutate(sig = p_adj < 0.05,
           color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   #  muted red
-            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            sig ~ ga_color,
             TRUE ~ "gray70"))
 
-bw_reg_table_global <- bw_reg_table_global %>%
-  mutate(model = "Birthweight",
-         beta = bw_beta,
-         se   = bw_se,
-         p_adj    = bw_p_adj) %>%
+bwp_reg_table_global <- bwp_reg_table_global %>%
+  mutate(model = "Birth Weight Percentile",
+         beta = bwp_beta,
+         se   = bwp_se,
+         p_adj    = bwp_p_adj) %>%
     mutate(sig = p_adj < 0.05,
           color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   #  muted red
-            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            sig  ~ bwp_color,
             TRUE ~ "gray70"))
 
 swyc_reg_table_global <- swyc_reg_table_global %>%
@@ -1241,12 +717,11 @@ swyc_reg_table_global <- swyc_reg_table_global %>%
          p_adj    = swyc_p_adj) %>%
     mutate(sig = p_adj < 0.05,
           color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   #  muted red
-            sig & beta < 0 ~ "#7293b0",   #  muted blue
+            sig ~ swyc_color,
             TRUE ~ "gray70"))
 
 #  Combine and arrange by specific order of global phenotypes
-df <- bind_rows(ga_reg_table_global, bw_reg_table_global, swyc_reg_table_global) %>%
+df <- bind_rows(ga_reg_table_global, bwp_reg_table_global, swyc_reg_table_global) %>%
   mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
                                                   "global_SubCortGrayVol", "global_VentricleChoroidVol",
                                                   "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
@@ -1263,17 +738,17 @@ phenotype_labs <- c(
 )
 
 #  Plot
-(global_betas_noqc_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
-    geom_point(aes(shape = model, color = color), size = 3) +
-    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
-    scale_shape_manual(values = c("Gestational Age" = 16, "Birthweight" = 17, "SWYC" = 8),
+(global_betas_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
+    geom_point(aes(shape = model, color = color), size = 6) +
+    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.1) +
+    scale_shape_manual(values = c("Gestational Age" = 16, "Birth Weight Percentile" = 17, "SWYC" = 15),
                        name = "") +
     scale_color_identity() +
-    scale_x_continuous(limits = c(-0.25, 0.35)) +
+    scale_x_continuous(limits = c(-0.2, 0.3)) +
     scale_y_discrete(limits = rev, labels = phenotype_labs) +
     geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
     theme_minimal() +
-    theme_bw(base_size = 16) +
+    theme_bw(base_size = 30) +
     theme(
         panel.grid = element_blank(),
         legend.position = "bottom",
@@ -1284,109 +759,17 @@ phenotype_labs <- c(
         axis.line.y  = element_blank(),
         legend.justification = c("left", "top")
     ) +
-    xlab("Standardized Beta Estimate, without QC covar") +
+    xlab("Standardized Beta Estimate, QC covar") +
     ylab(""))
 
 if(save_figs == TRUE){
-panel_save(global_betas_noqc_plot, "global-betas-noqc-gabwswyc", "pdf", plot_output_folder)
+panel_save(global_betas_plot, "global-betas-gabw", "svg", plot_output_folder, plot_width = 15, plot_height = 15)
 }
 ```
 
-
-
-## Visualize/Figure Panel with QC
-```{r, echo = FALSE}
-#  Add phenotype column from rownames
-ga.qc_reg_table_global$phenotype <- rownames(ga.qc_reg_table_global)
-bw.qc_reg_table_global$phenotype <- rownames(bw.qc_reg_table_global)
-swyc.qc_reg_table_global$phenotype <- rownames(swyc.qc_reg_table_global)
-
-#  Add model identifiers + rename to common column names
-ga.qc_reg_table_global <- ga.qc_reg_table_global %>%
-  mutate(model = "Gestational Age",
-         beta = ga_beta,
-         se   = ga_se,
-         p_adj    = ga_p_adj) %>%
-    mutate(sig = p_adj < 0.05,
-          color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   #  muted red
-            sig & beta < 0 ~ "#7293b0",   #  muted blue
-            TRUE ~ "gray70"))
-
-bw.qc_reg_table_global <- bw.qc_reg_table_global %>%
-  mutate(model = "Birthweight",
-         beta = bw_beta,
-         se   = bw_se,
-         p_adj    = bw_p_adj) %>%
-    mutate(sig = p_adj < 0.05,
-          color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   #  muted red
-            sig & beta < 0 ~ "#7293b0",   #  muted blue
-            TRUE ~ "gray70"))
-
-swyc.qc_reg_table_global <- swyc.qc_reg_table_global %>%
-  mutate(model = "SWYC",
-         beta = swyc_beta,
-         se   = swyc_se,
-         p_adj    = swyc_p_adj) %>%
-    mutate(sig = p_adj < 0.05,
-          color = case_when(
-            sig & beta > 0 ~ "#c87a7a",   #  muted red
-            sig & beta < 0 ~ "#7293b0",   #  muted blue
-            TRUE ~ "gray70"))
-
-#  Combine and arrange by specific order of global phenotypes
-df <- bind_rows(ga.qc_reg_table_global, bw.qc_reg_table_global, swyc.qc_reg_table_global) %>%
-  mutate(phenotype = factor(phenotype, levels = c("global_eTIV", "global_CortexVol", "global_CerebralWhiteMatterVol",
-                                                  "global_SubCortGrayVol", "global_VentricleChoroidVol",
-                                                  "global_SurfaceArea", "global_MeanThickness"))) %>% arrange(phenotype)
-
-#  Labeling for phenotypes on plot
-phenotype_labs <- c(
- global_eTIV = "Intracranial Volume",
- global_MeanThickness = "Mean Cortical Thickness",
- global_VentricleChoroidVol = "Ventricular Volume",
- global_SurfaceArea = "Total Surface Area",
- global_CortexVol = "Cortical Gray Matter Volume",
- global_CerebralWhiteMatterVol = "Cerebral White Matter Volume",
- global_SubCortGrayVol = "Subcortical Gray Matter Volume"
-)
-
-#  Plot
-(global_betas_withqc_plot <- ggplot(df, aes(x = beta, y = phenotype)) +
-    geom_point(aes(shape = model, color = color), size = 3) +
-    geom_errorbarh(aes(xmin = beta - se, xmax = beta + se, color = color), height = 0.2) +
-    scale_shape_manual(values = c("Gestational Age" = 16, "Birthweight" = 17, "SWYC" = 8),
-                       name = "") +
-    scale_color_identity() +
-    scale_x_continuous(limits = c(-0.25, 0.35)) +
-    scale_y_discrete(limits = rev, labels = phenotype_labs) +
-    geom_vline(xintercept = 0, linetype = "dotted", color = "darkgray") +
-    theme_minimal() +
-    theme_bw(base_size = 16) +
-    theme(
-        panel.grid = element_blank(),
-        legend.position = "bottom",
-        legend.title = element_blank(),
-        panel.border = element_blank(),
-        axis.text.y  = element_text(color = "black"),
-        axis.line.x  = element_line(color = "black"),
-        axis.line.y  = element_blank(),
-        legend.justification = c("left", "top")
-    ) +
-    xlab("Standardized Beta Estimate, with QC covar") +
-    ylab(""))
-
-if(save_figs == TRUE){
-panel_save(global_betas_withqc_plot, "global-betas-withqc-gabwswyc", "pdf", plot_output_folder)
-}
-```
-
-
-
-## Individual Scatterplots for SWYC
+# Global Scatterplots for SWYC
 ```{r}
-swyc_N <- sum(!is.na(df.zscore.swyc.avg.cent$median_dq) & !is.na(df.zscore.swyc.avg.cent$global_VentricleChoroidVol))
+swyc_N <- sum(!is.na(swyc_avg_centiles$median_dq) & !is.na(swyc_avg_centiles$global_VentricleChoroidVol))
 
 #Ventricles
 swyc_vent_beta <- swyc.qc_reg_table_global %>% 
@@ -1395,7 +778,7 @@ swyc_vent_beta <- swyc.qc_reg_table_global %>%
 swyc_vent_p_adj <- swyc.qc_reg_table_global %>% 
   filter(phenotype == "global_VentricleChoroidVol") %>% 
   select(swyc_p_adj) %>% pull(swyc_p_adj)
-(swyc_vent_plot <- ggplot(df.zscore.swyc.avg.cent, aes(x = median_dq, y = global_VentricleChoroidVol)) +
+(swyc_vent_plot <- ggplot(swyc_avg_centiles, aes(x = median_dq, y = global_VentricleChoroidVol)) +
   geom_point(color = "#7293b0", alpha = 0.4) +
   geom_smooth(method = "lm", se = FALSE, color = "#7293b0") +
   annotate("label",
@@ -1421,7 +804,7 @@ swyc_scgmv_beta <- swyc.qc_reg_table_global %>%
 swyc_scgmv_p_adj <- swyc.qc_reg_table_global %>% 
   filter(phenotype == "global_SubCortGrayVol") %>% 
   select(swyc_p_adj) %>% pull(swyc_p_adj)
-(swyc_scgmv_plot <- ggplot(df.zscore.swyc.avg.cent, aes(x = median_dq, y = global_SubCortGrayVol)) +
+(swyc_scgmv_plot <- ggplot(swyc_avg_centiles, aes(x = median_dq, y = global_SubCortGrayVol)) +
   geom_point(color = "#c87a7a", alpha = 0.4) +
   geom_smooth(method = "lm", se = FALSE, color = "#c87a7a") +
   annotate("label",
@@ -1448,7 +831,7 @@ swyc_ctxgmv_beta <- swyc.qc_reg_table_global %>%
 swyc_ctxgmv_p_adj <- swyc.qc_reg_table_global %>% 
   filter(phenotype == "global_CortexVol") %>% 
   select(swyc_p_adj) %>% pull(swyc_p_adj)
-(swyc_ctxgmv_plot <- ggplot(df.zscore.swyc.avg.cent, aes(x = median_dq, y = global_CortexVol)) +
+(swyc_ctxgmv_plot <- ggplot(swyc_avg_centiles, aes(x = median_dq, y = global_CortexVol)) +
   geom_point(color = "#c87a7a", alpha = 0.4) +
   geom_smooth(method = "lm", se = FALSE, color = "#c87a7a") +
   annotate("label",
@@ -1470,224 +853,8 @@ panel_save(swyc_ctxgmv_plot, "swyc-ctxgmv-withqc", "pdf", plot_output_folder)
 
 
 ```
-# CMDs
-## Calculate CMDs for swyc allforms df
-```{r}
-vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
-length_names <- length(c(vol_vars_cortical, sa_vars, th_vars))
-names.global <- c("global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol")
-# Ensure all names are in the same order
-names_base <- names(df.zscore.swyc.all.cent)[grep("aparc_GrayVol", names(df.zscore.swyc.all.cent))] %>% sub("aparc_GrayVol_","",.) %>%
-  gsub("_Z", "", .)
-names.vol <- paste0("aparc_GrayVol_",names_base)
-names.sa <- paste0("aparc_SurfArea_",names_base)
-names.th <- paste0("aparc_ThickAvg_",names_base)
-# CMD Calculation
-## vol
-vol.center <- colMeans(df.zscore.swyc.all.cent %>% select(all_of(names.vol)))
-vol.cov_matrix <- cov(df.zscore.swyc.all.cent %>% select(all_of(names.vol)))
-vol.md <- sqrt(mahalanobis(df.zscore.swyc.all.cent %>% select(all_of(names.vol)), vol.center, vol.cov_matrix))
-df.zscore.swyc.all.cent$vol.cmd <- vol.md
-## sa
-sa.center <- colMeans(df.zscore.swyc.all.cent %>% select(all_of(names.sa)), na.rm = TRUE)
-sa.cov_matrix <- cov(df.zscore.swyc.all.cent %>% select(all_of(names.sa)), use = "complete.obs")
-sa.md <- sqrt(mahalanobis(df.zscore.swyc.all.cent %>% select(all_of(names.sa)), sa.center, sa.cov_matrix))
-df.zscore.swyc.all.cent$sa.cmd <- sa.md
-## th
-th.center <- colMeans(df.zscore.swyc.all.cent %>% select(all_of(names.th)), na.rm = TRUE)
-th.cov_matrix <- cov(df.zscore.swyc.all.cent %>% select(all_of(names.th)), use = "complete.obs")
-th.md <- sqrt(mahalanobis(df.zscore.swyc.all.cent %>% select(all_of(names.th)), th.center, th.cov_matrix))
-df.zscore.swyc.all.cent$th.cmd <- th.md
-## global
-global.center <- colMeans(df.zscore.swyc.all.cent %>% select(all_of(names.global)), na.rm = TRUE)
-global.cov_matrix <- cov(df.zscore.swyc.all.cent %>% select(all_of(names.global)), use = "complete.obs")
-global.md <- sqrt(mahalanobis(df.zscore.swyc.all.cent %>% select(all_of(names.global)), global.center, global.cov_matrix))
-df.zscore.swyc.all.cent$global.cmd <- global.md
-```
 
-## Calculate CMDs for swyc avg df
-```{r}
-vol_vars_cortical <- vol_vars[grep("aparc", vol_vars)]
-length_names <- length(c(vol_vars_cortical, sa_vars, th_vars))
-names.global <- c("global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol")
-# Ensure all names are in the same order
-names_base <- names(df.zscore.swyc.avg.cent)[grep("aparc_GrayVol", names(df.zscore.swyc.avg.cent))] %>% sub("aparc_GrayVol_","",.) %>%
-  gsub("_Z", "", .)
-names.vol <- paste0("aparc_GrayVol_",names_base)
-names.sa <- paste0("aparc_SurfArea_",names_base)
-names.th <- paste0("aparc_ThickAvg_",names_base)
-# CMD Calculation
-## vol
-vol.center <- colMeans(df.zscore.swyc.avg.cent %>% select(all_of(names.vol)))
-vol.cov_matrix <- cov(df.zscore.swyc.avg.cent %>% select(all_of(names.vol)))
-vol.md <- sqrt(mahalanobis(df.zscore.swyc.avg.cent %>% select(all_of(names.vol)), vol.center, vol.cov_matrix))
-df.zscore.swyc.avg.cent$vol.cmd <- vol.md
-## sa
-sa.center <- colMeans(df.zscore.swyc.avg.cent %>% select(all_of(names.sa)), na.rm = TRUE)
-sa.cov_matrix <- cov(df.zscore.swyc.avg.cent %>% select(all_of(names.sa)), use = "complete.obs")
-sa.md <- sqrt(mahalanobis(df.zscore.swyc.avg.cent %>% select(all_of(names.sa)), sa.center, sa.cov_matrix))
-df.zscore.swyc.avg.cent$sa.cmd <- sa.md
-## th
-th.center <- colMeans(df.zscore.swyc.avg.cent %>% select(all_of(names.th)), na.rm = TRUE)
-th.cov_matrix <- cov(df.zscore.swyc.avg.cent %>% select(all_of(names.th)), use = "complete.obs")
-th.md <- sqrt(mahalanobis(df.zscore.swyc.avg.cent %>% select(all_of(names.th)), th.center, th.cov_matrix))
-df.zscore.swyc.avg.cent$th.cmd <- th.md
-## global
-global.center <- colMeans(df.zscore.swyc.avg.cent %>% select(all_of(names.global)), na.rm = TRUE)
-global.cov_matrix <- cov(df.zscore.swyc.avg.cent %>% select(all_of(names.global)), use = "complete.obs")
-global.md <- sqrt(mahalanobis(df.zscore.swyc.avg.cent %>% select(all_of(names.global)), global.center, global.cov_matrix))
-df.zscore.swyc.avg.cent$global.cmd <- global.md
-```
-
-## Test associations with CMDs (inc interactions with age)
-```{r, echo = FALSE}
-# Exploratory
-cor.test(df.zscore.swyc.avg.cent$vol.cmd, df.zscore.swyc.avg.cent$ga_days_total_qc)
-cor.test(df.zscore.swyc.avg.cent$vol.cmd, df.zscore.swyc.avg.cent$birth_weight_kg_qc)
-cor.test(df.zscore.swyc.avg.cent$vol.cmd, df.zscore.swyc.avg.cent$median_dq)
-lm_swyc_volcmd <- lm(vol.cmd ~ median_dq, data = df.zscore.swyc.avg.cent)
-summary(lm_swyc_volcmd)
-
-lm_swycbyage_volcmd <- lm(vol.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore.swyc.avg.cent)
-summary(lm_swycbyage_volcmd)
-
-cor.test(df.zscore.swyc.avg.cent$sa.cmd, df.zscore.swyc.avg.cent$ga_days_total_qc)
-cor.test(df.zscore.swyc.avg.cent$sa.cmd, df.zscore.swyc.avg.cent$birth_weight_kg)
-cor.test(df.zscore.swyc.avg.cent$sa.cmd, df.zscore.swyc.avg.cent$median_dq)
-
-lm_swyc_sacmd <- lm(sa.cmd ~ median_dq, data = df.zscore.swyc.avg.cent)
-summary(lm_swyc_sacmd)
-
-lm_swycbyage_sacmd <- lm(sa.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore.swyc.avg.cent)
-summary(lm_swycbyage_sacmd)
-
-cor.test(df.zscore.swyc.avg.cent$th.cmd, df.zscore.swyc.avg.cent$ga_days_total_qc)
-cor.test(df.zscore.swyc.avg.cent$th.cmd, df.zscore.swyc.avg.cent$birth_weight_kg)
-cor.test(df.zscore.swyc.avg.cent$th.cmd, df.zscore.swyc.avg.cent$bweight_percentile)
-cor.test(df.zscore.swyc.avg.cent$th.cmd, df.zscore.swyc.avg.cent$median_dq)
-
-lm_swyc_thcmd <- lm(th.cmd ~ median_dq, data = df.zscore.swyc.avg.cent)
-summary(lm_swyc_thcmd)
-
-lm_swycbyage_thcmd <- lm(th.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore.swyc.avg.cent)
-summary(lm_swycbyage_thcmd)
-
-cor.test(df.zscore.swyc.avg.cent$global.cmd, df.zscore.swyc.avg.cent$ga_days_total_qc)
-cor.test(df.zscore.swyc.avg.cent$global.cmd, df.zscore.swyc.avg.cent$birth_weight_kg)
-cor.test(df.zscore.swyc.avg.cent$global.cmd, df.zscore.swyc.avg.cent$bweight_percentile)
-cor.test(df.zscore.swyc.avg.cent$global.cmd, df.zscore.swyc.avg.cent$median_dq)
-
-lm_swyc_globalcmd <- lm(global.cmd ~ median_dq, data = df.zscore.swyc.avg.cent)
-summary(lm_swyc_globalcmd)
-
-lm_swycbyage_globalcmd <- lm(global.cmd ~ median_dq*adjusted_age_in_days, data = df.zscore.swyc.avg.cent)
-summary(lm_swycbyage_globalcmd)
-```
-
-## CMD plots
-```{r}
-# Vol CMD
-cor_volCMD_swyc <- cor.test(df.zscore.swyc.avg.cent$vol.cmd, df.zscore.swyc.avg.cent$median_dq)
-## plot
-volCMD_swyc_r <- signif(cor_volCMD_swyc$estimate, 3)
-volCMD_swyc_p <- signif(cor_volCMD_swyc$p.value, 3)
-
-(cor_volCMD_swyc_plot <- ggplot(df.zscore.swyc.avg.cent, aes(median_dq, vol.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
-  annotate("label",
-           x = 2, y = 10,
-           label.size = 0,
-           label = paste0("r=",volCMD_swyc_r, "; p=", volCMD_swyc_p)) +
-  labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
-    y = "Volume CMD"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    panel.grid = element_blank(),
-    plot.title = element_blank()
-  ))
-
-# SA CMD
-cor_saCMD_swyc <- cor.test(df.zscore.swyc.avg.cent$sa.cmd, df.zscore.swyc.avg.cent$median_dq)
-## plot
-saCMD_swyc_r <- signif(cor_saCMD_swyc$estimate, 3)
-saCMD_swyc_p <- signif(cor_saCMD_swyc$p.value, 3)
-
-(cor_saCMD_swyc_plot <- ggplot(df.zscore.swyc.avg.cent, aes(median_dq, sa.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
-  annotate("label",
-           x = 2, y = 10,
-           label.size = 0,
-           label = paste0("r=",saCMD_swyc_r, "; p=", saCMD_swyc_p)) +
-  labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
-    y = "Surface Area CMD"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    panel.grid = element_blank(),
-    plot.title = element_blank()
-  ))
-
-# Thickness CMD
-cor_thCMD_swyc <- cor.test(df.zscore.swyc.avg.cent$th.cmd, df.zscore.swyc.avg.cent$median_dq)
-## plot
-thCMD_swyc_r <- signif(cor_thCMD_swyc$estimate, 3)
-thCMD_swyc_p <- signif(cor_thCMD_swyc$p.value, 3)
-
-(cor_thCMD_swyc_plot <- ggplot(df.zscore.swyc.avg.cent, aes(median_dq, th.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
-  annotate("label",
-           x = 2, y = 10,
-           label.size = 0,
-           label = paste0("r=",thCMD_swyc_r, "; p=", thCMD_swyc_p)) +
-  labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
-    y = "Cortical Thickness CMD"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    panel.grid = element_blank(),
-    plot.title = element_blank()
-  ))
-
-#Global CMD
-cor_globalCMD_swyc <- cor.test(df.zscore.swyc.avg.cent$global.cmd, df.zscore.swyc.avg.cent$median_dq)
-## plot
-globalCMD_swyc_r <- signif(cor_globalCMD_swyc$estimate, 3)
-globalCMD_swyc_p <- signif(cor_globalCMD_swyc$p.value, 3)
-
-(cor_globalCMD_swyc_plot <- ggplot(df.zscore.swyc.avg.cent, aes(median_dq, global.cmd)) +
-  geom_point(color = "#8C7FAF", alpha = 0.4) +
-  geom_smooth(method = "lm", se = FALSE, color = "#8C7FAF") +
-  annotate("label",
-           x = 2, y = 10,
-           label.size = 0,
-           label = paste0("r=",globalCMD_swyc_r, "; p=", globalCMD_swyc_p)) +
-  labs(
-    x = paste0("Median SWYC DQ, N = ", bw_N),
-    y = "Global CMD"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    panel.grid = element_blank(),
-    plot.title = element_blank()
-  ))
-```
-
-# Regional Variables
-
-## Set limits for ggseg visualization
-```{r}
-limits <- c(-0.3, 0.3)
-low_color = "#4878CF"
-mid_color = "white"
-high_color = "#D65F5F"
-```
+# Regional Variables --- only for SWYC
 
 ## Volume with QC covar
 
@@ -1696,8 +863,8 @@ high_color = "#D65F5F"
 #### compute regressions
 ```{r, echo = FALSE}
 # Regional -- including cortical and subcortical
-swyc_vol <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ median_dq + median_euler_mean, data = df.zscore.swyc.avg.cent)
+swyc_vol <- as.data.frame(t(sapply(swyc_avg_centiles[, which(names(swyc_avg_centiles) %in% vol_vars)], function(x) {
+  lm <- lm(x ~ median_dq_zscore + median_euler_mean, data = swyc_avg_centiles)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -1772,36 +939,8 @@ plot_data_aseg <- merge(swyc_vol_sig_MC, ggseg::aseg, by = "label")
   labs(title = "Median SWYC Volume"))
 
 if(save_figs == TRUE){
-panel_save(swyc_dkt_vol_plot, "swyc-median-dkt-vol", "pdf", plot_output_folder)
-panel_save(swyc_aseg_vol_plot , "swyc-median-aseg-vol", "pdf", plot_output_folder)
-}
-```
-
-#### Scatterplot for top betas
-```{r, echo = FALSE}
-if (dim(swyc_vol_sig_MC)[1] > 0){
-top_n = if(dim(swyc_vol_sig_MC)[1] > 10) {10} else {dim(swyc_vol_sig_MC)[1]}
-top <- swyc_vol_sig_MC[order(swyc_vol_sig_MC$swyc_beta, decreasing = TRUE)[1:top_n],]
-scatterplots_swyc_vol <- vector(mode = "list", length = top_n)
-for(i in 1:top_n){
-  pheno <- rownames(top)[i]
-  title <- top$label[i]
-  names(scatterplots_swyc_vol[i]) <- pheno
-  scatterplots_swyc_vol[[i]] <- ggplot(df.zscore.swyc.avg.cent, aes(x = median_dq, y = !!sym(pheno))) +
-    geom_point() +
-    geom_smooth(method = "lm") +
-    theme_minimal() +
-    labs(x = "Median SWYC (z-scored)", y = "Centile (z-scored)", title = title)
-}
-
-nCol <- 2
-nRow <- 2
-breaks <- c(seq(from = 0, to = top_n , by = (nCol*nRow)), top_n) %>% unique(.)
-for(k in 1:(length(breaks)-1)){
-  start <- breaks[k]+1
-  end <- breaks[k+1]
-  do.call("grid.arrange", c(scatterplots_swyc_vol[start:end], ncol=nCol))
-}
+panel_save(swyc_dkt_vol_plot, "swyc-median-dkt-vol", "svg", plot_output_folder)
+panel_save(swyc_aseg_vol_plot , "swyc-median-aseg-vol", "svg", plot_output_folder)
 }
 ```
 
@@ -1809,8 +948,8 @@ for(k in 1:(length(breaks)-1)){
 
 #### Regression and results
 ```{r, echo = FALSE}
-swycbyage.qc_reg_table_vol <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$median_dq*df.zscore.swyc.avg.cent$adjusted_age_in_days + df.zscore.swyc.avg.cent$median_euler_mean)
+swycbyage.qc_reg_table_vol <- as.data.frame(t(sapply(swyc_avg_centiles[, which(names(swyc_avg_centiles) %in% vol_vars)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles$median_dq_zscore*swyc_avg_centiles$age_days_adj + swyc_avg_centiles$median_euler_mean)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
@@ -1826,16 +965,8 @@ print(paste0("Number of significant SWYC x Age IDPs - NO correction: ", dim(swyc
 print(paste0("Number of significant SWYC x Age IDPs - AFTER FDR correction: ", dim(swycbyage.qc_reg_table_vol %>% filter(swycbyage_p_adj < 0.05))[1]))
 
 range(swycbyage.qc_reg_table_vol %>% filter(swycbyage_p_adj < 0.05) %>% select(swycbyage_beta))
-
-if(dim(swycbyage.qc_reg_table_vol %>% filter(age_p_adj < 0.05))[1] > 0){
-  age_reg_table_vol <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  age_reg_table_vol$age_p_adj <- p.adjust(age_reg_table_vol$age_p, method = "BH")
-  print(paste0("Age Main significant results (no other covariates): ", dim(age_reg_table_vol %>% filter(age_p_adj < 0.05))[1]))
 ```
+
 
 ## Surface Area
 
@@ -1843,10 +974,10 @@ if(dim(swycbyage.qc_reg_table_vol %>% filter(age_p_adj < 0.05))[1] > 0){
 
 #### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore.swyc.avg.cent$median_dq))
+sum(!is.na(swyc_avg_centiles$median_dq_zscore))
 # Regional -- including cortical and subcortical
-swyc_sa <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ median_dq + median_euler_mean, data = df.zscore.swyc.avg.cent)
+swyc_sa <- as.data.frame(t(sapply(swyc_avg_centiles[, which(names(swyc_avg_centiles) %in% sa_vars)], function(x) {
+  lm <- lm(x ~ median_dq_zscore + median_euler_mean, data = swyc_avg_centiles)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -1904,35 +1035,7 @@ plot_data_dkt <- merge(swyc_sa_sig_MC, ggseg::dk, by = "label")
   labs(title = "Median SWYC Surface Area"))
 
 if(save_figs == TRUE){
-panel_save(swyc_dkt_sa_plot, "swyc-median-dkt-sa", "pdf", plot_output_folder)
-}
-```
-
-#### Scatterplot for top betas
-```{r, echo = FALSE}
-if (dim(swyc_sa_sig_MC)[1] > 0){
-top_n = if(dim(swyc_sa_sig_MC)[1] > 10) {10} else {dim(swyc_sa_sig_MC)[1]}
-top <- swyc_sa_sig_MC[order(swyc_sa_sig_MC$swyc_beta, decreasing = TRUE)[1:top_n],]
-scatterplots_swyc_sa <- vector(mode = "list", length = top_n)
-for(i in 1:top_n){
-  pheno <- rownames(top)[i]
-  title <- top$label[i]
-  names(scatterplots_swyc_sa[i]) <- pheno
-  scatterplots_swyc_sa[[i]] <- ggplot(df.zscore.swyc.avg.cent, aes(x = median_dq, y = !!sym(pheno))) +
-    geom_point() +
-    geom_smooth(method = "lm") +
-    theme_minimal() +
-    labs(x = "Median SWYC (z-scored)", y = "Centile (z-scored)", title = title)
-}
-
-nCol <- 2
-nRow <- 2
-breaks <- c(seq(from = 0, to = top_n , by = (nCol*nRow)), top_n) %>% unique(.)
-for(k in 1:(length(breaks)-1)){
-  start <- breaks[k]+1
-  end <- breaks[k+1]
-  do.call("grid.arrange", c(scatterplots_swyc_sa[start:end], ncol=nCol))
-}
+panel_save(swyc_dkt_sa_plot, "swyc-median-dkt-sa", "svg", plot_output_folder)
 }
 ```
 
@@ -1940,8 +1043,8 @@ for(k in 1:(length(breaks)-1)){
 
 #### Regression and results
 ```{r, echo = FALSE}
-swycbyage.qc_reg_table_sa <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$median_dq*df.zscore.swyc.avg.cent$adjusted_age_in_days + df.zscore.swyc.avg.cent$median_euler_mean)
+swycbyage.qc_reg_table_sa <- as.data.frame(t(sapply(swyc_avg_centiles[, which(names(swyc_avg_centiles) %in% sa_vars)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles$median_dq_zscore*swyc_avg_centiles$age_days_adj + swyc_avg_centiles$median_euler_mean)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
@@ -1957,25 +1060,6 @@ print(paste0("Number of significant SWYC x Age IDPs - NO correction: ", dim(swyc
 print(paste0("Number of significant SWYC x Age IDPs - AFTER FDR correction: ", dim(swycbyage.qc_reg_table_sa %>% filter(swycbyage_p_adj < 0.05))[1]))
 
 range(swycbyage.qc_reg_table_sa %>% filter(swycbyage_p_adj < 0.05) %>% select(swycbyage_beta))
-
-if(dim(swycbyage.qc_reg_table_sa %>% filter(age_p_adj < 0.05))[1] > 0){
-  age_reg_table_sa <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  age_reg_table_sa$age_p_adj <- p.adjust(age_reg_table_sa$age_p, method = "BH")
-  print(paste0("Age Main significant results (no other covariates): ", dim(age_reg_table_sa %>% filter(age_p_adj < 0.05))[1]))
-  
-  
-  full_age_reg_table_sa <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent_fullcentall[, which(names(df.zscore.swyc.avg.cent_fullcentall) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent_fullcentall$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  full_age_reg_table_sa$age_p_adj <- p.adjust(full_age_reg_table_sa$age_p, method = "BH")
-  print(paste0("Age Main significant results full all sample (no other covariates): ", dim(full_age_reg_table_sa %>% filter(age_p_adj < 0.05))[1]))
-}
 ```
 
 ## Thickness
@@ -1984,10 +1068,10 @@ if(dim(swycbyage.qc_reg_table_sa %>% filter(age_p_adj < 0.05))[1] > 0){
 
 #### compute regressions
 ```{r, echo = FALSE}
-sum(!is.na(df.zscore.swyc.avg.cent$aparc_ThickAvg_lh_bankssts))
+sum(!is.na(swyc_avg_centiles$aparc_ThickAvg_lh_bankssts))
 # Regional -- including cortical and subcortical
-swyc_th <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% th_vars)], function(x) {
-  lm <- lm(x ~ median_dq + euler_mean_mpr, data = df.zscore.swyc.avg.cent)
+swyc_th <- as.data.frame(t(sapply(swyc_avg_centiles[, which(names(swyc_avg_centiles) %in% th_vars)], function(x) {
+  lm <- lm(x ~ median_dq_zscore + euler_mean_mpr, data = swyc_avg_centiles)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -2045,48 +1129,16 @@ plot_data_dkt <- merge(swyc_th_sig_MC, ggseg::dk, by = "label")
   labs(title = "Median SWYC Cortical Thickness"))
 
 if(save_figs == TRUE){
-panel_save(swyc_dkt_th_plot, "swyc-median-dkt-th", "pdf", plot_output_folder)
+panel_save(swyc_dkt_th_plot, "swyc-median-dkt-th", "svg", plot_output_folder)
 }
 ```
-
-#### Scatterplot for top betas
-```{r, echo = FALSE}
-if (dim(swyc_th_sig_MC)[1] > 0){
-top_n = if(dim(swyc_th_sig_MC)[1] > 10) {10} else {dim(swyc_th_sig_MC)[1]}
-top <- swyc_th_sig_MC[order(abs(swyc_th_sig_MC$swyc_beta), decreasing = TRUE)[1:top_n],]
-scatterplots_swyc_th <- vector(mode = "list", length = top_n)
-for(i in 1:top_n){
-  print(i)
-  pheno <- rownames(top)[i]
-  print(pheno)
-  title <- top$label[i]
-  names(scatterplots_swyc_th)[i] <- pheno
-  scatterplots_swyc_th[[i]] <- ggplot(df.zscore.swyc.avg.cent, aes(x = median_dq, y = !!sym(pheno))) +
-    geom_point() +
-    geom_smooth(method = "lm") +
-    theme_minimal() +
-    labs(x = "Median SWYC (z-scored)", y = "Centile (z-scored)", title = title)
-}
-
-nCol <- 2
-nRow <- 2
-breaks <- c(seq(from = 0, to = top_n , by = (nCol*nRow)), top_n) %>% unique(.)
-for(k in 1:(length(breaks)-1)){
-  start <- breaks[k]+1
-  end <- breaks[k+1]
-  do.call("grid.arrange", c(scatterplots_swyc_th[start:end], ncol=nCol))
-}
-}
-```
-
-
 
 ### SWYC X age interaction
 
 #### Regression and results
 ```{r, echo = FALSE}
-swycbyage.qc_reg_table_th <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% th_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$median_dq*df.zscore.swyc.avg.cent$adjusted_age_in_days + df.zscore.swyc.avg.cent$median_euler_mean)
+swycbyage.qc_reg_table_th <- as.data.frame(t(sapply(swyc_avg_centiles[, which(names(swyc_avg_centiles) %in% th_vars)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles$median_dq_zscore*swyc_avg_centiles$age_days_adj + swyc_avg_centiles$median_euler_mean)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2],
    age_beta = summary$coefficients[3,1], age_p = summary$coefficients[3,4], age_se = summary$coefficients[3,2],
@@ -2102,25 +1154,6 @@ print(paste0("Number of significant SWYC x Age IDPs - NO correction: ", dim(swyc
 print(paste0("Number of significant SWYC x Age IDPs - AFTER FDR correction: ", dim(swycbyage.qc_reg_table_th %>% filter(swycbyage_p_adj < 0.05))[1]))
 
 range(swycbyage.qc_reg_table_th %>% filter(swycbyage_p_adj < 0.05) %>% select(swycbyage_beta))
-
-if(dim(swycbyage.qc_reg_table_th %>% filter(age_p_adj < 0.05))[1] > 0){
-  age_reg_table_th <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent[, which(names(df.zscore.swyc.avg.cent) %in% th_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  age_reg_table_th$age_p_adj <- p.adjust(age_reg_table_th$age_p, method = "BH")
-  print(paste0("Age Main significant results (no other covariates): ", dim(age_reg_table_th %>% filter(age_p_adj < 0.05))[1]))
-  
-  
-  full_age_reg_table_th <- as.data.frame(t(sapply(df.zscore.swyc.avg.cent_fullcentall[, which(names(df.zscore.swyc.avg.cent_fullcentall) %in% th_vars)], function(x) {
-  lm <- lm(x ~ df.zscore.swyc.avg.cent_fullcentall$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  full_age_reg_table_th$age_p_adj <- p.adjust(full_age_reg_table_th$age_p, method = "BH")
-  print(paste0("Age Main significant results full all sample (no other covariates): ", dim(full_age_reg_table_th %>% filter(age_p_adj < 0.05))[1]))
-}
 ```
 
 # Test Mediation
@@ -2129,18 +1162,18 @@ if(dim(swycbyage.qc_reg_table_th %>% filter(age_p_adj < 0.05))[1] > 0){
 
 ## Brain covars with BW
 ```{r}
-lm_swyc_bw_globalcmd <- lm(median_dq ~ birth_weight_kg + global.cmd, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_thcmd <- lm(median_dq ~ birth_weight_kg + th.cmd, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_subcort <- lm(median_dq ~ birth_weight_kg + global_SubCortGrayVol, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_vent <- lm(median_dq ~ birth_weight_kg + global_VentricleChoroidVol, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_allcmd <- lm(median_dq ~ birth_weight_kg + global.cmd + vol.cmd + sa.cmd + th.cmd, data = df.zscore.swyc.avg.cent)
+lm_swyc_bw_globalcmd <- lm(median_dq ~ birth_weight_kg + global.cmd, data = swyc_avg_centiles)
+lm_swyc_bw_thcmd <- lm(median_dq ~ birth_weight_kg + th.cmd, data = swyc_avg_centiles)
+lm_swyc_bw_subcort <- lm(median_dq ~ birth_weight_kg + global_SubCortGrayVol, data = swyc_avg_centiles)
+lm_swyc_bw_vent <- lm(median_dq ~ birth_weight_kg + global_VentricleChoroidVol, data = swyc_avg_centiles)
+lm_swyc_bw_allcmd <- lm(median_dq ~ birth_weight_kg + global.cmd + vol.cmd + sa.cmd + th.cmd, data = swyc_avg_centiles)
 
-lm_swyc_bw_globalcmd_euler <- lm(median_dq ~ birth_weight_kg + global.cmd + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_thcmd_euler <- lm(median_dq ~ birth_weight_kg + th.cmd + euler_mean_mpr, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_subcort_euler <- lm(median_dq ~ birth_weight_kg + global_SubCortGrayVol + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_vent_euler <- lm(median_dq ~ birth_weight_kg + global_VentricleChoroidVol + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_allcmd_euler <- lm(median_dq ~ birth_weight_kg + + global.cmd + vol.cmd + sa.cmd + th.cmd + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bw_euler <- lm(median_dq ~ birth_weight_kg + median_euler_mean, data = df.zscore.swyc.avg.cent)
+lm_swyc_bw_globalcmd_euler <- lm(median_dq ~ birth_weight_kg + global.cmd + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bw_thcmd_euler <- lm(median_dq ~ birth_weight_kg + th.cmd + euler_mean_mpr, data = swyc_avg_centiles)
+lm_swyc_bw_subcort_euler <- lm(median_dq ~ birth_weight_kg + global_SubCortGrayVol + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bw_vent_euler <- lm(median_dq ~ birth_weight_kg + global_VentricleChoroidVol + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bw_allcmd_euler <- lm(median_dq ~ birth_weight_kg + + global.cmd + vol.cmd + sa.cmd + th.cmd + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bw_euler <- lm(median_dq ~ birth_weight_kg + median_euler_mean, data = swyc_avg_centiles)
 
 #plot
 mediation_swycbw <- data.frame(
@@ -2192,45 +1225,33 @@ ggplot(mediation_swycbw, aes(x = model, y = estimate)) +
 
 ## Brain covars with BWp
 ```{r}
-lm_swyc_bwp <- lm(median_dq ~ bweight_percentile, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_globalcmd <- lm(median_dq ~ bweight_percentile + global.cmd, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_thcmd <- lm(median_dq ~ bweight_percentile + th.cmd, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_subcort <- lm(median_dq ~ bweight_percentile + global_SubCortGrayVol, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_vent <- lm(median_dq ~ bweight_percentile + global_VentricleChoroidVol, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_allcmd <- lm(median_dq ~ bweight_percentile + global.cmd + vol.cmd + sa.cmd + th.cmd, data = df.zscore.swyc.avg.cent)
+lm_swyc_bwp_subcort_euler <- lm(median_dq_zscore ~ bwp_fen +  global_SubCortGrayVol + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bwp_vent_euler <- lm(median_dq_zscore ~ bwp_fen + global_VentricleChoroidVol + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bwp_cortex_euler <- lm(median_dq_zscore ~ bwp_fen + global_CortexVol + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bwp_cbWM_euler <- lm(median_dq_zscore ~ bwp_fen + global_CerebralWhiteMatterVol + median_euler_mean, data = swyc_avg_centiles)
 
-lm_swyc_bwp_globalcmd_euler <- lm(median_dq ~ bweight_percentile + global.cmd + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_thcmd_euler <- lm(median_dq ~ bweight_percentile + th.cmd + euler_mean_mpr, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_subcort_euler <- lm(median_dq ~ bweight_percentile + global_SubCortGrayVol + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_vent_euler <- lm(median_dq ~ bweight_percentile + global_VentricleChoroidVol + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_allcmd_euler <- lm(median_dq ~ bweight_percentile + + global.cmd + vol.cmd + sa.cmd + th.cmd + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_bwp_euler <- lm(median_dq ~ bweight_percentile + median_euler_mean, data = df.zscore.swyc.avg.cent)
+lm_swyc_bwp_allvol_euler <- lm(median_dq_zscore ~ bwp_fen + global_CortexVol + global_CerebralWhiteMatterVol + global_SubCortGrayVol + global_VentricleChoroidVol + median_euler_mean, data = swyc_avg_centiles)
+
+lm_swyc_bwp_allcmd_euler <- lm(median_dq_zscore ~ bwp_fen + + global.cmd + vol.cmd + sa.cmd + th.cmd + subcort.cmd + median_euler_mean, data = swyc_avg_centiles)
+lm_swyc_bwp_euler <- lm(median_dq_zscore ~ bwp_fen + median_euler_mean, data = swyc_avg_centiles)
 
 #plot
 mediation_swycbwp <- data.frame(
-  model = c("no covar", "global.cmd", "th.cmd", "subcort.vol", "vent.vol", "all.cmd", "global.cmd-euler", "th.cmd-euler", "subcort.vol-euler", "vent.vol-euler", "all.cmd-euler", "only euler"),
+  model = c("no covar", "subcort.vol-euler", "vent.vol-euler", "cortex.vol-euler", "cbWM.vol-euler", "all.vol-euler", "all.cmd-euler", "only euler"),
   estimate = c(summary(lm_swyc_bwp)$coefficients[2, "Estimate"],
-               summary(lm_swyc_bwp_globalcmd)$coefficients[2, "Estimate"],
-               summary(lm_swyc_bwp_thcmd)$coefficients[2, "Estimate"],
-               summary(lm_swyc_bwp_subcort)$coefficients[2, "Estimate"],
-               summary(lm_swyc_bwp_vent)$coefficients[2, "Estimate"],
-               summary(lm_swyc_bwp_allcmd)$coefficients[2, "Estimate"],
-               summary(lm_swyc_bwp_globalcmd_euler)$coefficients[2, "Estimate"],
-               summary(lm_swyc_bwp_thcmd_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_bwp_subcort_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_bwp_vent_euler)$coefficients[2, "Estimate"],
+               summary(lm_swyc_bwp_cortex_euler)$coefficients[2, "Estimate"],
+               summary(lm_swyc_bwp_cbWM_euler)$coefficients[2, "Estimate"],
+               summary(lm_swyc_bwp_allvol_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_bwp_allcmd_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_bwp_euler)$coefficients[2, "Estimate"]),
   se = c(summary(lm_swyc_bwp)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_bwp_globalcmd)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_bwp_thcmd)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_bwp_subcort)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_bwp_vent)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_bwp_allcmd)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_bwp_globalcmd_euler)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_bwp_thcmd_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_bwp_subcort_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_bwp_vent_euler)$coefficients[2, "Std. Error"],
+               summary(lm_swyc_bwp_cortex_euler)$coefficients[2, "Std. Error"],
+               summary(lm_swyc_bwp_cbWM_euler)$coefficients[2, "Std. Error"],
+               summary(lm_swyc_bwp_allvol_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_bwp_allcmd_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_bwp_euler)$coefficients[2, "Std. Error"])
 ) %>%
@@ -2248,7 +1269,7 @@ ggplot(mediation_swycbwp, aes(x = model, y = estimate)) +
   geom_hline(yintercept = beta_swyc_bwp_nocov, linetype = "dashed", color = "#7A7A7A", linewidth = 0.5) +
   geom_hline(yintercept = sehigh_swyc_bwp_nocov, linetype = "dashed", color = "#BDBDBD", linewidth = 0.5) +
   geom_hline(yintercept = selow_swyc_bwp_nocov, linetype = "dashed", color = "#BDBDBD", linewidth = 0.5) +
-  scale_x_discrete(limits = c("no covar", "global.cmd", "th.cmd", "subcort.vol", "vent.vol", "all.cmd", "global.cmd-euler", "th.cmd-euler", "subcort.vol-euler", "vent.vol-euler", "all.cmd-euler", "only euler")) +
+  scale_x_discrete(limits = c("no covar", "subcort.vol-euler", "vent.vol-euler", "cortex.vol-euler", "cbWM.vol-euler", "all.vol-euler", "all.cmd-euler", "only euler")) +
   labs(y = "Beta Estimate with Std Error", x = "LM Model covariates", title = "SWYC-DQ ~ Birth Weight Percentile") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5))
@@ -2256,44 +1277,45 @@ ggplot(mediation_swycbwp, aes(x = model, y = estimate)) +
 
 ## Brain covars with GA
 ```{r}
-lm_swyc_ga_globalcmd <- lm(median_dq ~ gestational_age + global.cmd, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_thcmd <- lm(median_dq ~ gestational_age + th.cmd, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_subcort <- lm(median_dq ~ gestational_age + global_SubCortGrayVol, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_vent <- lm(median_dq ~ gestational_age + global_VentricleChoroidVol, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_allcmd <- lm(median_dq ~ gestational_age + global.cmd + vol.cmd + sa.cmd + th.cmd, data = df.zscore.swyc.avg.cent)
+# lm_swyc_ga <- lm(median_dq_zscore ~ gestational_age, data = swyc_avg_centiles)
+# lm_swyc_ga_subcort_euler <- lm(median_dq_zscore ~ gestational_age +  global_SubCortGrayVol + median_euler_mean, data = swyc_avg_centiles)
+# lm_swyc_ga_vent_euler <- lm(median_dq_zscore ~ gestational_age + global_VentricleChoroidVol + median_euler_mean, data = swyc_avg_centiles)
+# lm_swyc_ga_cortex_euler <- lm(median_dq_zscore ~ gestational_age + global_CortexVol + median_euler_mean, data = swyc_avg_centiles)
+# lm_swyc_ga_cbWM_euler <- lm(median_dq_zscore ~ gestational_age + global_CerebralWhiteMatterVol + median_euler_mean, data = swyc_avg_centiles)
+# 
+# lm_swyc_ga_allvol_euler <- lm(median_dq_zscore ~ gestational_age + global_CortexVol + global_CerebralWhiteMatterVol + global_SubCortGrayVol + global_VentricleChoroidVol + median_euler_mean, data = swyc_avg_centiles)
+# 
+# lm_swyc_ga_allcmd_euler <- lm(median_dq_zscore ~ gestational_age + + global.cmd + vol.cmd + sa.cmd + th.cmd + subcort.cmd + median_euler_mean, data = swyc_avg_centiles)
+# lm_swyc_ga_euler <- lm(median_dq_zscore ~ gestational_age + median_euler_mean, data = swyc_avg_centiles)
 
-lm_swyc_ga_globalcmd_euler <- lm(median_dq ~ gestational_age + global.cmd + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_thcmd_euler <- lm(median_dq ~ gestational_age + th.cmd + euler_mean_mpr, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_subcort_euler <- lm(median_dq ~ gestational_age + global_SubCortGrayVol + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_vent_euler <- lm(median_dq ~ gestational_age + global_VentricleChoroidVol + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_allcmd_euler <- lm(median_dq ~ gestational_age + + global.cmd + vol.cmd + sa.cmd + th.cmd + median_euler_mean, data = df.zscore.swyc.avg.cent)
-lm_swyc_ga_euler <- lm(median_dq ~ gestational_age + median_euler_mean, data = df.zscore.swyc.avg.cent)
+lm_swyc_ga <- lm(ga_adj_median_dq_zscore ~ gestational_age, data = swyc_avg_centiles)
+lm_swyc_ga_subcort_euler <- lm(ga_adj_median_dq_zscore ~ gestational_age +  global_SubCortGrayVol , data = swyc_avg_centiles)
+lm_swyc_ga_vent_euler <- lm(ga_adj_median_dq_zscore ~ gestational_age + global_VentricleChoroidVol , data = swyc_avg_centiles)
+lm_swyc_ga_cortex_euler <- lm(ga_adj_median_dq_zscore ~ gestational_age + global_CortexVol , data = swyc_avg_centiles)
+lm_swyc_ga_cbWM_euler <- lm(ga_adj_median_dq_zscore ~ gestational_age + global_CerebralWhiteMatterVol , data = swyc_avg_centiles)
+
+lm_swyc_ga_allvol_euler <- lm(ga_adj_median_dq_zscore ~ gestational_age + global_CortexVol + global_CerebralWhiteMatterVol + global_SubCortGrayVol + global_VentricleChoroidVol , data = swyc_avg_centiles)
+
+lm_swyc_ga_allcmd_euler <- lm(ga_adj_median_dq_zscore ~ gestational_age + + global.cmd + vol.cmd + sa.cmd + th.cmd + subcort.cmd , data = swyc_avg_centiles)
+lm_swyc_ga_euler <- lm(ga_adj_median_dq_zscore ~ gestational_age , data = swyc_avg_centiles)
 
 #plot
 mediation_swycga <- data.frame(
-  model = c("no covar", "global.cmd", "th.cmd", "subcort.vol", "vent.vol", "all.cmd", "global.cmd-euler", "th.cmd-euler", "subcort.vol-euler", "vent.vol-euler", "all.cmd-euler", "only euler"),
+  model = c("no covar", "subcort.vol-euler", "vent.vol-euler", "cortex.vol-euler", "cbWM.vol-euler", "all.vol-euler", "all.cmd-euler", "only euler"),
   estimate = c(summary(lm_swyc_ga)$coefficients[2, "Estimate"],
-               summary(lm_swyc_ga_globalcmd)$coefficients[2, "Estimate"],
-               summary(lm_swyc_ga_thcmd)$coefficients[2, "Estimate"],
-               summary(lm_swyc_ga_subcort)$coefficients[2, "Estimate"],
-               summary(lm_swyc_ga_vent)$coefficients[2, "Estimate"],
-               summary(lm_swyc_ga_allcmd)$coefficients[2, "Estimate"],
-               summary(lm_swyc_ga_globalcmd_euler)$coefficients[2, "Estimate"],
-               summary(lm_swyc_ga_thcmd_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_ga_subcort_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_ga_vent_euler)$coefficients[2, "Estimate"],
+               summary(lm_swyc_ga_cortex_euler)$coefficients[2, "Estimate"],
+               summary(lm_swyc_ga_cbWM_euler)$coefficients[2, "Estimate"],
+               summary(lm_swyc_ga_allvol_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_ga_allcmd_euler)$coefficients[2, "Estimate"],
                summary(lm_swyc_ga_euler)$coefficients[2, "Estimate"]),
   se = c(summary(lm_swyc_ga)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_ga_globalcmd)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_ga_thcmd)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_ga_subcort)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_ga_vent)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_ga_allcmd)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_ga_globalcmd_euler)$coefficients[2, "Std. Error"],
-               summary(lm_swyc_ga_thcmd_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_ga_subcort_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_ga_vent_euler)$coefficients[2, "Std. Error"],
+               summary(lm_swyc_ga_cortex_euler)$coefficients[2, "Std. Error"],
+               summary(lm_swyc_ga_cbWM_euler)$coefficients[2, "Std. Error"],
+               summary(lm_swyc_ga_allvol_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_ga_allcmd_euler)$coefficients[2, "Std. Error"],
                summary(lm_swyc_ga_euler)$coefficients[2, "Std. Error"])
 ) %>%
@@ -2311,7 +1333,7 @@ ggplot(mediation_swycga, aes(x = model, y = estimate)) +
   geom_hline(yintercept = beta_swyc_ga_nocov, linetype = "dashed", color = "#7A7A7A", linewidth = 0.5) +
   geom_hline(yintercept = sehigh_swyc_ga_nocov, linetype = "dashed", color = "#BDBDBD", linewidth = 0.5) +
   geom_hline(yintercept = selow_swyc_ga_nocov, linetype = "dashed", color = "#BDBDBD", linewidth = 0.5) +
-  scale_x_discrete(limits = c("no covar", "global.cmd", "th.cmd", "subcort.vol", "vent.vol", "all.cmd", "global.cmd-euler", "th.cmd-euler", "subcort.vol-euler", "vent.vol-euler", "all.cmd-euler", "only euler")) +
+  scale_x_discrete(limits = c("no covar", "subcort.vol-euler", "vent.vol-euler", "cortex.vol-euler", "cbWM.vol-euler", "all.vol-euler", "all.cmd-euler", "only euler")) +
   labs(y = "Beta Estimate with Std Error", x = "LM Model covariates", title = "SWYC-DQ ~ Gestational Age") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5))
@@ -2335,10 +1357,10 @@ bootga_subcort_euler$model <- "subcort_euler"
 bootga_vent_euler <- bootstrap_model(lm_swyc_ga_vent_euler, iterations = 100)
 bootga_vent_euler$model <- "vent_euler"
 
-t.test(bootga$ga_days_total_qc,bootga_thcmd_euler$ga_days_total_qc,paired=FALSE)
-t.test(bootga$ga_days_total_qc,bootga_globalcmd_euler$ga_days_total_qc,paired=FALSE)
-t.test(bootga$ga_days_total_qc,bootga_subcort_euler$ga_days_total_qc,paired=FALSE)
-t.test(bootga$ga_days_total_qc,bootga_vent_euler$ga_days_total_qc,paired=FALSE)
+t.test(bootga$gestational_age,bootga_thcmd_euler$gestational_age,paired=FALSE)
+t.test(bootga$gestational_age,bootga_globalcmd_euler$gestational_age,paired=FALSE)
+t.test(bootga$gestational_age,bootga_subcort_euler$gestational_age,paired=FALSE)
+t.test(bootga$gestational_age,bootga_vent_euler$gestational_age,paired=FALSE)
 
 models_tested_ga <- list(global.cmd_euler = bootga_globalcmd_euler %>% select(gestational_age, model),
                         th.cmd_euler = bootga_thcmd_euler %>% select(gestational_age, model),
@@ -2386,14 +1408,14 @@ ggplot(bootga_plot_summary_df, aes(x = model, y = ga_beta_mean)) +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5))
 
-hist(bootga$ga_days_total_qc)
-mean(bootga$ga_days_total_qc)
-median(bootga$ga_days_total_qc)
+hist(bootga$gestational_age)
+mean(bootga$gestational_age)
+median(bootga$gestational_age)
 
-hist(bootga_globalcmd_euler$ga_days_total_qc)
-mean(bootga_globalcmd_euler$ga_days_total_qc)
-median(bootga_globalcmd_euler$ga_days_total_qc)
-shapiro.test(bootga_globalcmd_euler$ga_days_total_qc)
+hist(bootga_globalcmd_euler$gestational_age)
+mean(bootga_globalcmd_euler$gestational_age)
+median(bootga_globalcmd_euler$gestational_age)
+shapiro.test(bootga_globalcmd_euler$gestational_age)
 ```
 
 ### Birth Weight
@@ -2463,26 +1485,26 @@ bootbwp_subcort_euler$model <- "subcort_euler"
 bootbwp_vent_euler <- bootstrap_model(lm_swyc_bwp_vent_euler, iterations = 100)
 bootbwp_vent_euler$model <- "vent_euler"
 
-t.test(bootbwp$bweight_percentile,bootbwp_thcmd_euler$bweight_percentile,paired=FALSE)
-t.test(bootbwp$bweight_percentile,bootbwp_globalcmd_euler$bweight_percentile,paired=FALSE)
-t.test(bootbwp$bweight_percentile,bootbwp_subcort_euler$bweight_percentile,paired=FALSE)
-t.test(bootbwp$bweight_percentile,bootbwp_vent_euler$bweight_percentile,paired=FALSE)
+t.test(bootbwp$bwp_fen,bootbwp_thcmd_euler$bwp_fen,paired=FALSE)
+t.test(bootbwp$bwp_fen,bootbwp_globalcmd_euler$bwp_fen,paired=FALSE)
+t.test(bootbwp$bwp_fen,bootbwp_subcort_euler$bwp_fen,paired=FALSE)
+t.test(bootbwp$bwp_fen,bootbwp_vent_euler$bwp_fen,paired=FALSE)
 
-models_tested_bwp <- list(global.cmd_euler = bootbwp_globalcmd_euler %>% select(bweight_percentile, model),
-                        th.cmd_euler = bootbwp_thcmd_euler %>% select(bweight_percentile, model),
-                        subcort_euler = bootbwp_subcort_euler %>% select(bweight_percentile, model),
-                        vent_euler = bootbwp_vent_euler %>% select(bweight_percentile, model))
+models_tested_bwp <- list(global.cmd_euler = bootbwp_globalcmd_euler %>% select(bwp_fen, model),
+                        th.cmd_euler = bootbwp_thcmd_euler %>% select(bwp_fen, model),
+                        subcort_euler = bootbwp_subcort_euler %>% select(bwp_fen, model),
+                        vent_euler = bootbwp_vent_euler %>% select(bwp_fen, model))
 
 bootbwp_plot_df <- do.call(rbind,
   lapply(names(models_tested_bwp), function(facet_name) {
     df <- models_tested_bwp[[facet_name]]
-    df <- rbind(df, bootbwp %>% select(bweight_percentile, model))
+    df <- rbind(df, bootbwp %>% select(bwp_fen, model))
     df$facet <- facet_name
     df
     }))
 
 ggplot(bootbwp_plot_df) +
-  geom_density(aes(x = bweight_percentile, fill = model), alpha = 0.5) +
+  geom_density(aes(x = bwp_fen, fill = model), alpha = 0.5) +
   facet_wrap(~facet) +
   labs(
     x = "Beta Estimates",
@@ -2520,7 +1542,7 @@ X_reduced$const <- 1
 model_reduced <- lm(y ~ . + 0, data = X_reduced)
 
 # compute partial r^2
-model_red <- lm(median_dq ~ global.cmd + median_euler_mean, data = df.zscore.swyc.avg.cent)
+model_red <- lm(median_dq ~ global.cmd + median_euler_mean, data = swyc_avg_centiles)
 r2_full <- summary(lm_swyc_ga_globalcmd_euler)$r.squared
 r2_red  <- summary(model_red)$r.squared
 partial_r2 <- (r2_full - r2_red) / (1 - r2_red)
@@ -2551,8 +1573,8 @@ grid <- expand.grid(
   stringsAsFactors = FALSE
 )
 
-df <- df.zscore.swyc.all.cent %>% 
-  select(pat_id, ga_days_total_qc, birth_weight_kg_qc, vars_totest, 
+df <- swyc_avg_centiles.swyc.all.cent %>% 
+  select(pat_id, gestational_age, birth_weight_kg_qc, vars_totest, 
          form_friendly_name, norm_devo_quotient, ga_adj_norm_devo_quotient_round, 
          median_euler_mean, euler_mean_mpr,complete_centile_vars) %>%
   rename(swyc_form = form_friendly_name) %>%
@@ -2667,8 +1689,8 @@ cmd.grid <- expand.grid(
   stringsAsFactors = FALSE
 )
 
-df <- df.zscore.swyc.all.cent %>% 
-  select(pat_id, ga_days_total_qc, birth_weight_kg_qc, vars_totest, 
+df <- swyc_avg_centiles.swyc.all.cent %>% 
+  select(pat_id, gestational_age, birth_weight_kg_qc, vars_totest, 
          form_friendly_name, norm_devo_quotient, ga_adj_norm_devo_quotient_round, 
          median_euler_mean, euler_mean_mpr,complete_centile_vars,
          global.cmd, vol.cmd, sa.cmd, th.cmd) %>%
@@ -2818,13 +1840,13 @@ sum(swyc_subset_all$age_diff <= 0)
 ```{r}
 # adjust effective age and age at scan for prematurity
 swyc_subset_all$effective_age_months <- swyc_subset_all$effective_age/30.437
-swyc_subset_all$adj_effective_age_months <- ifelse(!is.na(swyc_subset_all$ga_days_total_qc),
-                                                 swyc_subset_all$effective_age_months + swyc_subset_all$ga_days_total_qc/4.35,
+swyc_subset_all$adj_effective_age_months <- ifelse(!is.na(swyc_subset_all$gestational_age),
+                                                 swyc_subset_all$effective_age_months + swyc_subset_all$gestational_age/4.35,
                                                  swyc_subset_all$effective_age_months + 40/4.35)
 
 swyc_subset_all$age_at_scan_months <- swyc_subset_all$age_at_scan/30.437
-swyc_subset_all$adj_age_at_scan_months <- ifelse(!is.na(swyc_subset_all$ga_days_total_qc),
-                                                 swyc_subset_all$age_at_scan_months + swyc_subset_all$ga_days_total_qc/4.35,
+swyc_subset_all$adj_age_at_scan_months <- ifelse(!is.na(swyc_subset_all$gestational_age),
+                                                 swyc_subset_all$age_at_scan_months + swyc_subset_all$gestational_age/4.35,
                                                  swyc_subset_all$age_at_scan_months + 40/4.35)
 
 swyc_subset_all$age_diff_months <- swyc_subset_all$age_at_scan_months - swyc_subset_all$adj_effective_age_months
@@ -2909,7 +1931,7 @@ hist(swyc_subset_all_matched3$age_diff_months)
 ```{r}
 swyc_subset_matched_merged <- merge(swyc_subset_all_matched3, centiles_all %>% select(all_of(c("participant_id_modified",
                                                                                                    "age_at_scan", "preterm",
-                                                                        "birth_weight_kg", "bweight_percentile",
+                                                                        "birth_weight_kg", "bwp_fen",
                                                                         "sex", "adjusted_age_in_days","median_euler_mean",
                                                                         full_vars))), 
                      by.x = c("pat_id", "age_at_scan"), by.y = c("participant_id_modified", "age_at_scan"), all.x = TRUE, all.y = FALSE)
@@ -2925,7 +1947,7 @@ swyc_subset_matched_merged <- swyc_subset_matched_merged %>%
 ```{r, echo = FALSE}
 # zscore centiles and other variables of interest
 df_matched.zscore <- swyc_subset_matched_merged %>%
-  mutate(across(all_of(c(full_vars, "bweight_percentile")), qnorm)) %>%
+  mutate(across(all_of(c(full_vars, "bwp_fen")), qnorm)) %>%
   mutate(across(all_of(c("gestational_age", "birth_weight_kg", "adjusted_age_in_days", 
                          "median_euler_mean", "norm_devo_quotient")), scale))
 # set sex and preterm as factor
@@ -2935,7 +1957,7 @@ df_matched.zscore$preterm <- as.factor(df_matched.zscore$preterm)
 
 ### find Inf cells, make a table of N per phenotype, then convert to NaN
 ```{r, echo = FALSE}
-inf_nan_table <- as.data.frame(t(sapply(df_matched.zscore[c(full_vars, "bweight_percentile")], function(x){
+inf_nan_table <- as.data.frame(t(sapply(df_matched.zscore[c(full_vars, "bwp_fen")], function(x){
   c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
 })))
 max(inf_nan_table$inf)
@@ -2947,7 +1969,7 @@ inf_nan_table %>% filter(inf > 0)
 ### set Inf cells to NaN
 ```{r, echo = FALSE}
 df_matched.zscore <- df_matched.zscore %>% 
-  mutate(across(all_of(c(full_vars, "bweight_percentile")), ~ replace(., is.infinite(.), NaN)))
+  mutate(across(all_of(c(full_vars, "bwp_fen")), ~ replace(., is.infinite(.), NaN)))
 ```
 
 ## Global variables
@@ -3241,22 +2263,22 @@ df_matched.zscore$global.cmd <- global.md
 ### Cor.test CMDs
 ```{r, echo = FALSE}
 # Exploratory
-cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$ga_days_total_qc)
+cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$gestational_age)
 cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$birth_weight_kg)
 cor.test(df_matched.zscore$vol.cmd, df_matched.zscore$norm_devo_quotient)
 
-cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$ga_days_total_qc)
+cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$gestational_age)
 cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$birth_weight_kg)
 cor.test(df_matched.zscore$sa.cmd, df_matched.zscore$norm_devo_quotient)
 
-cor.test(df_matched.zscore$th.cmd, df_matched.zscore$ga_days_total_qc)
+cor.test(df_matched.zscore$th.cmd, df_matched.zscore$gestational_age)
 cor.test(df_matched.zscore$th.cmd, df_matched.zscore$birth_weight_kg)
-cor.test(df_matched.zscore$th.cmd, df_matched.zscore$bweight_percentile)
+cor.test(df_matched.zscore$th.cmd, df_matched.zscore$bwp_fen)
 cor.test(df_matched.zscore$th.cmd, df_matched.zscore$norm_devo_quotient)
 
-cor.test(df_matched.zscore$global.cmd, df_matched.zscore$ga_days_total_qc)
+cor.test(df_matched.zscore$global.cmd, df_matched.zscore$gestational_age)
 cor.test(df_matched.zscore$global.cmd, df_matched.zscore$birth_weight_kg)
-cor.test(df_matched.zscore$global.cmd, df_matched.zscore$bweight_percentile)
+cor.test(df_matched.zscore$global.cmd, df_matched.zscore$bwp_fen)
 cor.test(df_matched.zscore$global.cmd, df_matched.zscore$norm_devo_quotient)
 ```
 
@@ -3765,8 +2787,6 @@ for(k in 1:(length(breaks)-1)){
 }
 ```
 
-
-
 ### SWYC X age interaction
 
 #### Regression and results
@@ -3788,25 +2808,6 @@ print(paste0("Number of significant SWYC x Age IDPs - NO correction: ", dim(swyc
 print(paste0("Number of significant SWYC x Age IDPs - AFTER FDR correction: ", dim(swycbyage.qc_reg_table_th %>% filter(swycbyage_p_adj < 0.05))[1]))
 
 range(swycbyage.qc_reg_table_th %>% filter(swycbyage_p_adj < 0.05) %>% select(swycbyage_beta))
-
-if(dim(swycbyage.qc_reg_table_th %>% filter(age_p_adj < 0.05))[1] > 0){
-  age_reg_table_th <- as.data.frame(t(sapply(df_matched.zscore[, which(names(df_matched.zscore) %in% th_vars)], function(x) {
-  lm <- lm(x ~ df_matched.zscore$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  age_reg_table_th$age_p_adj <- p.adjust(age_reg_table_th$age_p, method = "BH")
-  print(paste0("Age Main significant results (no other covariates): ", dim(age_reg_table_th %>% filter(age_p_adj < 0.05))[1]))
-  
-  
-  full_age_reg_table_th <- as.data.frame(t(sapply(df_matched.zscore_fullcentall[, which(names(df_matched.zscore_fullcentall) %in% th_vars)], function(x) {
-  lm <- lm(x ~ df_matched.zscore_fullcentall$adjusted_age_in_days)
-  summary <- summary(lm)
-  c(age_beta = summary$coefficients[2,1], age_p = summary$coefficients[2,4], age_se = summary$coefficients[2,2])
-})))
-  full_age_reg_table_th$age_p_adj <- p.adjust(full_age_reg_table_th$age_p, method = "BH")
-  print(paste0("Age Main significant results full all sample (no other covariates): ", dim(full_age_reg_table_th %>% filter(age_p_adj < 0.05))[1]))
-}
 ```
 
 ## Test Mediation
@@ -3850,7 +2851,7 @@ ggplot(df_plot_bw, aes(x = model, y = estimate)) +
 
 ### Brain covars with bw
 ```{r}
-sum(!is.na(df_matched.zscore$ga_days_total_qc))
+sum(!is.na(df_matched.zscore$gestational_age))
 
 lm_swyc_matched_ga_matched <- lm(norm_devo_quotient ~ gestational_age, data = df_matched.zscore)
 lm_swyc_matched_ga_matched_stats <- summary(lm_swyc_matched_ga_matched)
@@ -3895,29 +2896,29 @@ ggplot(df_plot_ga, aes(x = model, y = estimate)) +
 lmsz_centiles$participant_id_modified <- sub("sub-", "", lmsz_centiles$participant_id)
 
 swyc_lmsz <- merge(swyc_subset_avg %>% select(all_of(c("pat_id", "mean_dq", "median_dq", "preterm",
-                                                   "birth_weight_kg","gestational_age", "bweight_percentile",
+                                                   "birth_weight_kg","gestational_age", "bwp_fen",
                                                    "sex", "adjusted_age_in_days", "median_euler_mean"))),
                    lmsz_centiles, by.x = c("pat_id", "sex"), by.y = c("participant_id_modified", "sex"), all.x = FALSE, all.y = FALSE)
-#swyc_lmsz <- merge(swyc_lmsz, df.zscore %>% select(pat_id, grep("cmd", names(.))), 
+#swyc_lmsz <- merge(swyc_lmsz, swyc_avg_centiles %>% select(pat_id, grep("cmd", names(.))), 
                    #by = "pat_id", all.x = TRUE, all.y = FALSE)
 
 table(swyc_lmsz$preterm)
 # zscore centiles and other variables of interest
 lmsz_vars <- names(swyc_lmsz)[grep(".lmsz", names(swyc_lmsz))]
-df.zscore_lmsz <- swyc_lmsz %>%
-  mutate(across(all_of(c(full_vars, lmsz_vars, "bweight_percentile")), qnorm)) %>%
+swyc_avg_centiles_lmsz <- swyc_lmsz %>%
+  mutate(across(all_of(c(full_vars, lmsz_vars, "bwp_fen")), qnorm)) %>%
   mutate(across(all_of(c("gestational_age", "birth_weight_kg", 
                          #"adjusted_age_in_days", 
                          "age_at_scan",
                          "median_euler_mean", "mean_dq", "median_dq")), scale))
 # set sex and preterm as factor
-df.zscore_lmsz$sex <- as.factor(df.zscore_lmsz$sex)
-df.zscore_lmsz$preterm <- as.factor(df.zscore_lmsz$preterm)
+swyc_avg_centiles_lmsz$sex <- as.factor(swyc_avg_centiles_lmsz$sex)
+swyc_avg_centiles_lmsz$preterm <- as.factor(swyc_avg_centiles_lmsz$preterm)
 ```
 
 ### find Inf cells, make a table of N per phenotype, then convert to NaN
 ```{r, echo = FALSE}
-inf_nan_table <- as.data.frame(t(sapply(df.zscore_lmsz[c(full_vars, "bweight_percentile")], function(x){
+inf_nan_table <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[c(full_vars, "bwp_fen")], function(x){
   c(inf = sum(is.infinite(x)), nan = sum(is.nan(x)))
 })))
 max(inf_nan_table$inf)
@@ -3930,8 +2931,8 @@ inf_nan_table %>% filter(inf > 0)
 
 ### Run regressions with original and lmsz centiles
 ```{r}
-swyc_orig_reg_table_global <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_orig_reg_table_global <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% global_vars_totest)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -3940,8 +2941,8 @@ swyc_orig_reg_table_global$swyc_p_adj <- p.adjust(swyc_orig_reg_table_global$swy
 
 global_vars_totest_lmsz <- paste0(global_vars_totest, ".lmsz")
 
-swyc_lmsz_reg_table_global <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% global_vars_totest_lmsz)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_lmsz_reg_table_global <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% global_vars_totest_lmsz)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -3991,8 +2992,8 @@ ggplot(comb_swyc_lmsz_reg_table_global, aes(y = label, x = swyc_beta, color = ty
 
 ### Run regressions with original and lmsz centiles
 ```{r}
-swyc_orig_reg_table_vol <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% vol_vars)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_orig_reg_table_vol <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% vol_vars)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -4001,8 +3002,8 @@ swyc_orig_reg_table_vol$swyc_p_adj <- p.adjust(swyc_orig_reg_table_vol$swyc_p, m
 
 vol_vars_lmsz <- paste0(vol_vars, ".lmsz")
 
-swyc_lmsz_reg_table_vol <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% vol_vars_lmsz)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_lmsz_reg_table_vol <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% vol_vars_lmsz)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -4088,8 +3089,8 @@ ggplot(comb_swyc_lmsz_reg_table_vol %>% filter(grepl("aseg", label)), aes(y = su
 
 ### Run regressions with original and lmsz centiles
 ```{r}
-swyc_orig_reg_table_sa <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% sa_vars)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_orig_reg_table_sa <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% sa_vars)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -4098,8 +3099,8 @@ swyc_orig_reg_table_sa$swyc_p_adj <- p.adjust(swyc_orig_reg_table_sa$swyc_p, met
 
 sa_vars_lmsz <- paste0(sa_vars, ".lmsz")
 
-swyc_lmsz_reg_table_sa <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% sa_vars_lmsz)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_lmsz_reg_table_sa <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% sa_vars_lmsz)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -4167,8 +3168,8 @@ ggplot(comb_swyc_lmsz_reg_table_sa %>% filter(grepl("lh", label)), aes(y = sub("
 
 ### Run regressions with original and lmsz centiles
 ```{r}
-swyc_orig_reg_table_th <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% th_vars)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_orig_reg_table_th <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% th_vars)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -4177,8 +3178,8 @@ swyc_orig_reg_table_th$swyc_p_adj <- p.adjust(swyc_orig_reg_table_th$swyc_p, met
 
 th_vars_lmsz <- paste0(th_vars, ".lmsz")
 
-swyc_lmsz_reg_table_th <- as.data.frame(t(sapply(df.zscore_lmsz[, which(names(df.zscore_lmsz) %in% th_vars_lmsz)], function(x) {
-  lm <- lm(x ~ df.zscore_lmsz$median_dq)
+swyc_lmsz_reg_table_th <- as.data.frame(t(sapply(swyc_avg_centiles_lmsz[, which(names(swyc_avg_centiles_lmsz) %in% th_vars_lmsz)], function(x) {
+  lm <- lm(x ~ swyc_avg_centiles_lmsz$median_dq)
   summary <- summary(lm)
   c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
 })))
@@ -4240,418 +3241,3 @@ ggplot(comb_swyc_lmsz_reg_table_th %>% filter(grepl("lh", label)), aes(y = sub("
   labs(x = "Beta Estimate", y = "Left Cortical Thick", color = "Centile Model") + 
   geom_vline(xintercept = 0, linetype = "dashed", color = "black")
 ```
-
-# Look at SWYC trajectories
-
-## Check proportions of preterm for each SWYC assessment
-```{r}
-swyc$preterm <- as.factor(cut(as.numeric(swyc$ga_days_total_qc_num), breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-
-swyc %>%
-  count(form_friendly_name, preterm) %>%
-  group_by(form_friendly_name) %>%
-  mutate(prop = n / sum(n)) %>%
-  ggplot(aes(x = form_friendly_name, y = prop, fill = preterm)) +
-  geom_col(position = "fill") +
-  ylab("Proportion") +
-  xlab("Form") +
-  theme_minimal()
-```
-
-## Plot trajectories
-```{r}
-(swyc_trajectory_plot <- ggplot(swyc, aes(y = norm_devo_quotient, group = pat_id)) +
-  geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
-  geom_line(aes(x = effective_age, color = form_friendly_name),size = 0.1) + 
-  theme(panel.grid = element_blank(),
-        panel.background = element_blank()))
-```
-
-## Simple trajectory classification
-```{r}
-# subset for SWYC 2+
-swyc_rm <- swyc %>%
-   group_by(pat_id) %>%
-  filter(n() > 1) %>%
-  ungroup()
-
-# classify based on lm(dq ~ age)
-swyc_lms <- swyc_rm %>%
-  group_by(pat_id) %>%
-  arrange(effective_age, .by_group = TRUE) %>%
-  summarise(
-    n_obs = n(),
-    lm_fit = list(lm(norm_devo_quotient ~ effective_age, data = cur_data())),
-    .groups = "drop"
-  )
-
-swyc_lms_2plus <- swyc_lms %>%
-  rowwise() %>%
-  mutate(
-    beta = coef(lm_fit)[["effective_age"]],
-    classification = case_when(
-      beta > 0 ~ "positive",
-      beta < 0 ~ "negative",
-      beta == 0 ~ "zero")
-  ) %>%
-  select(pat_id, beta, n_obs, classification)
-
-swyc_trajplot_df <- merge(swyc, swyc_lms_2plus, by = "pat_id", all.x = FALSE)
-
-(swyc_trajectory_plot1 <- ggplot(swyc_trajplot_df, aes(y = norm_devo_quotient, 
-                                                      group = pat_id, color = classification)) +
-  geom_point(aes(x = effective_age), size = 0.2) +
-  geom_line(aes(x = effective_age),size = 0.1) + 
-  theme(panel.grid = element_blank(),
-        panel.background = element_blank()))
-
-swyc_lms_3plus <- swyc_lms %>%
-  filter(n_obs > 2) %>%
-  rowwise() %>%
-  mutate(
-    beta = coef(lm_fit)[["effective_age"]],
-    pval = summary(lm_fit)$coefficients["effective_age", "Pr(>|t|)"],
-    classification = case_when(
-      pval < 0.05 & beta > 0 ~ "positive_significant",
-      pval < 0.05 & beta < 0 ~ "negative_significant",
-      TRUE ~ "not_significant"
-  )) %>%
-  select(pat_id, beta, pval, n_obs, classification)
-
-swyc_trajplot_df2 <- merge(swyc, swyc_lms_3plus, by = "pat_id", all.x = FALSE)
-
-(swyc_trajectory_plot2 <- ggplot(swyc_trajplot_df2, aes(y = norm_devo_quotient, 
-                                                      group = pat_id, color = classification)) +
-  geom_point(aes(x = effective_age), size = 0.2) +
-  geom_line(aes(x = effective_age),size = 0.1) + 
-  theme(panel.grid = element_blank(),
-        panel.background = element_blank()))
-
-(swyc_trajectory_plot3 <- ggplot(swyc_trajplot_df2 %>% filter(classification != "not_significant"), aes(y = norm_devo_quotient, 
-                                                      group = pat_id, color = classification)) +
-  geom_point(aes(x = effective_age), size = 0.2) +
-  geom_line(aes(x = effective_age),size = 0.1) + 
-  theme(panel.grid = element_blank(),
-        panel.background = element_blank()))
-```
-
-
-### Compare betas based on GA/Preterm
-```{r}
-swyc_lms_2plus_test <- merge(swyc_lms_2plus, swyc %>% select(pat_id, gestational_age_num), all.x = TRUE, all.y = FALSE)
-swyc_lms_2plus_test$ga_days_total_qc_num <- as.numeric(swyc_lms_2plus_test$ga_days_total_qc_num)
-
-cor.test(~ beta + gestational_age_num, data = swyc_lms_2plus_test)
-
-plot(swyc_lms_2plus_test$ga_days_total_qc_num, swyc_lms_2plus_test$beta)
-
-swyc_lms_2plus_test$preterm <- as.factor(cut(swyc_lms_2plus_test$ga_days_total_qc_num, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-
-
-# PLOTS
-swyc_lms_2plus_summary <- swyc_lms_2plus_test %>% 
-  filter(!is.na(preterm))%>%
-  group_by(preterm) %>%
-  summarise(
-    mean_beta = mean(beta, na.rm = TRUE),
-    median_beta = median(beta, na.rm = TRUE)
-  )
-
-ggplot(swyc_lms_2plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
-                                                            y = beta, fill = preterm)) +
-  geom_boxplot() +
-    scale_fill_manual(values = c(
-    "VPM" = "#C86A5D",   # muted red
-    "LPM" = "#E1A159",   # muted orange
-    "Term" = "#A59F8F"   # muted reddish-gray
-  )) +
-  geom_text(data = swyc_lms_2plus_summary, aes(x = preterm,
-                                   y = -0.01,
-                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
-            inherit.aes = FALSE, vjust = 1) +
-  theme(
-    panel.grid = element_blank(),
-    panel.background = element_blank(),
-    axis.title.x = element_blank(),
-    axis.title.y = element_text(),
-    legend.position = "none"
-  ) +
-  ylab("Beta of SWYC over time (2+ timepoints)")
-
-ggplot(swyc_lms_2plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
-                                                            y = beta, fill = preterm)) +
-  geom_boxplot(outliers = FALSE) +
-    scale_fill_manual(values = c(
-    "VPM" = "#C86A5D",   # muted red
-    "LPM" = "#E1A159",   # muted orange
-    "Term" = "#A59F8F"   # muted reddish-gray
-  ))  +
-  coord_cartesian(ylim = c(-0.0024, 0.0015)) + 
-  geom_text(data = swyc_lms_2plus_summary, aes(x = preterm,
-                                   y = -0.002,
-                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
-            inherit.aes = FALSE, vjust = 1) +
-  theme(
-    panel.grid = element_blank(),
-    panel.background = element_blank(),
-    axis.title.x = element_blank(),
-    axis.title.y = element_text(),
-    legend.position = "none"
-  ) +
-  ylab("Beta of SWYC over time (2+ timepoints)")
-
-
-# Stats Testing
-anova_fit <- aov(beta ~ preterm, data = swyc_lms_2plus_test)
-summary(anova_fit)
-
-pairwise.t.test(swyc_lms_2plus_test$beta, swyc_lms_2plus_test$preterm, p.adjust.method = "bonferroni")
-```
-
-### Compare betas for significant traj based on GA/Preterm
-```{r}
-swyc_lms_3plus_test <- merge(swyc_lms_3plus %>% filter(classification != "not_significant"), swyc %>% select(pat_id, gestational_age_num), all.x = TRUE, all.y = FALSE)
-swyc_lms_3plus_test$ga_days_total_qc_num <- as.numeric(swyc_lms_3plus_test$ga_days_total_qc_num)
-
-cor.test(~ beta + gestational_age_num, data = swyc_lms_3plus_test)
-
-plot(swyc_lms_3plus_test$ga_days_total_qc_num, swyc_lms_3plus_test$beta)
-
-swyc_lms_3plus_test$preterm <- as.factor(cut(swyc_lms_3plus_test$ga_days_total_qc_num, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-
-table(swyc_lms_3plus_test$preterm)
-
-# PLOTS
-swyc_lms_3plus_summary <- swyc_lms_3plus_test %>% 
-  filter(!is.na(preterm))%>%
-  group_by(preterm) %>%
-  summarise(
-    mean_beta = mean(beta, na.rm = TRUE),
-    median_beta = median(beta, na.rm = TRUE)
-  )
-
-ggplot(swyc_lms_3plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
-                                                            y = beta, fill = preterm)) +
-  geom_boxplot() +
-    scale_fill_manual(values = c(
-    "VPM" = "#C86A5D",   # muted red
-    "LPM" = "#E1A159",   # muted orange
-    "Term" = "#A59F8F"   # muted reddish-gray
-  )) +
-  geom_text(data = swyc_lms_3plus_summary, aes(x = preterm,
-                                   y = -0.005,
-                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
-            inherit.aes = FALSE, vjust = 1) +
-  theme(
-    panel.grid = element_blank(),
-    panel.background = element_blank(),
-    axis.title.x = element_blank(),
-    axis.title.y = element_text(),
-    legend.position = "none"
-  ) +
-  ylab("Sig. Beta of SWYC over time (3+ timepoints)")
-
-ggplot(swyc_lms_3plus_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
-                                                            y = beta, fill = preterm)) +
-  geom_boxplot(outliers = FALSE) +
-    scale_fill_manual(values = c(
-    "VPM" = "#C86A5D",   # muted red
-    "LPM" = "#E1A159",   # muted orange
-    "Term" = "#A59F8F"   # muted reddish-gray
-  ))  +
-  coord_cartesian(ylim = c(-0.0045, 0.002)) + 
-  geom_text(data = swyc_lms_3plus_summary, aes(x = preterm,
-                                   y = -0.0035,
-                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
-            inherit.aes = FALSE, vjust = 1) +
-  theme(
-    panel.grid = element_blank(),
-    panel.background = element_blank(),
-    axis.title.x = element_blank(),
-    axis.title.y = element_text(),
-    legend.position = "none"
-  ) +
-  ylab("Sig. Beta of SWYC over time (3+ timepoints)")
-
-
-# Stats Testing
-anova_fit <- aov(beta ~ preterm, data = swyc_lms_3plus_test)
-summary(anova_fit)
-
-pairwise.t.test(swyc_lms_3plus_test$beta, swyc_lms_3plus_test$preterm, p.adjust.method = "bonferroni")
-```
-
-## Simple trajectory classification - only 24mos and 30mos
-```{r}
-# subset for SWYC 2+
-swyc_rm2430 <- swyc %>%
-   filter(form_friendly_name %in% c("SWYC : 24 Month", "SWYC : 30 Month")) %>%
-   group_by(pat_id) %>%
-  filter(n() > 1) %>%
-  ungroup()
-
-# classify based on lm(dq ~ age)
-swyc_lms2430 <- swyc_rm2430 %>%
-  group_by(pat_id) %>%
-  arrange(effective_age, .by_group = TRUE) %>%
-  summarise(
-    n_obs = n(),
-    lm_fit = list(lm(norm_devo_quotient ~ effective_age, data = cur_data())),
-    .groups = "drop"
-  )
-
-swyc_lms2430 <- swyc_lms2430 %>%
-  rowwise() %>%
-  mutate(
-    beta = coef(lm_fit)[["effective_age"]],
-    classification = case_when(
-      beta > 0 ~ "positive",
-      beta < 0 ~ "negative",
-      beta == 0 ~ "zero")
-  ) %>%
-  select(pat_id, beta, n_obs, classification)
-
-swyc_trajplot2430_df <- merge(swyc_rm2430, swyc_lms2430, by = "pat_id", all.x = FALSE)
-
-(swyc_trajectory2430_plot1 <- ggplot(swyc_trajplot2430_df, aes(y = norm_devo_quotient, 
-                                                      group = pat_id)) +
-  geom_point(aes(x = effective_age, color = form_friendly_name), size = 0.2) +
-  geom_line(aes(x = effective_age, color = classification),size = 0.1) + 
-  theme(panel.grid = element_blank(),
-        panel.background = element_blank()))
-```
-
-
-### Compare betas based on GA/Preterm
-```{r}
-swyc_lms2430_test <- merge(swyc_lms2430, swyc %>% select(pat_id, gestational_age_num), all.x = TRUE, all.y = FALSE)
-swyc_lms2430_test$ga_days_total_qc_num <- as.numeric(swyc_lms2430_test$ga_days_total_qc_num)
-
-cor.test(~ beta + gestational_age_num, data = swyc_lms2430_test)
-
-plot(swyc_lms2430_test$ga_days_total_qc_num, swyc_lms2430_test$beta)
-
-swyc_lms2430_test$preterm <- as.factor(cut(swyc_lms2430_test$ga_days_total_qc_num, breaks = c(-Inf, 31.9, 36.9, Inf), labels = c("VPM", "LPM", "Term"), include.lowest = TRUE))
-
-
-# PLOTS
-swyc_lms2430_summary <- swyc_lms2430_test %>% 
-  filter(!is.na(preterm))%>%
-  group_by(preterm) %>%
-  summarise(
-    mean_beta = mean(beta, na.rm = TRUE),
-    median_beta = median(beta, na.rm = TRUE)
-  )
-
-ggplot(swyc_lms2430_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
-                                                            y = beta, fill = preterm)) +
-  geom_boxplot() +
-    scale_fill_manual(values = c(
-    "VPM" = "#C86A5D",   # muted red
-    "LPM" = "#E1A159",   # muted orange
-    "Term" = "#A59F8F"   # muted reddish-gray
-  )) +
-  geom_text(data = swyc_lms2430_summary, aes(x = preterm,
-                                   y = -0.01,
-                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
-            inherit.aes = FALSE, vjust = 1) +
-  theme(
-    panel.grid = element_blank(),
-    panel.background = element_blank(),
-    axis.title.x = element_blank(),
-    axis.title.y = element_text(),
-    legend.position = "none"
-  ) +
-  ylab("Beta of SWYC over time (2+ timepoints)")
-
-ggplot(swyc_lms2430_test %>% filter(!is.na(preterm)), aes(x = factor(preterm, levels = c("VPM", "LPM", "Term")), 
-                                                            y = beta, fill = preterm)) +
-  geom_boxplot(outliers = FALSE) +
-    scale_fill_manual(values = c(
-    "VPM" = "#C86A5D",   # muted red
-    "LPM" = "#E1A159",   # muted orange
-    "Term" = "#A59F8F"   # muted reddish-gray
-  ))  +
-  coord_cartesian(ylim = c(-0.0024, 0.0015)) + 
-  geom_text(data = swyc_lms2430_summary, aes(x = preterm,
-                                   y = -0.002,
-                                   label = paste0("Mean: ", signif(mean_beta,3), "\nMedian: ", signif(median_beta,3))),
-            inherit.aes = FALSE, vjust = 1) +
-  theme(
-    panel.grid = element_blank(),
-    panel.background = element_blank(),
-    axis.title.x = element_blank(),
-    axis.title.y = element_text(),
-    legend.position = "none"
-  ) +
-  ylab("Beta of SWYC over time (2+ timepoints)")
-
-
-# Stats Testing
-anova_fit <- aov(beta ~ preterm, data = swyc_lms2430_test)
-summary(anova_fit)
-
-pairwise.t.test(swyc_lms2430_test$beta, swyc_lms2430_test$preterm, p.adjust.method = "bonferroni")
-```
-
-## which of the folks with trajectories have brain centile scores
-```{r}
-swyc_lms_2plus_brain <- merge(swyc_lms_2plus, centiles_all, by.x = "pat_id", by.y = "participant_id_modified", all.x = FALSE, all.y = FALSE)
-swyc_lms_3plus_brain <- merge(swyc_lms_3plus, centiles_all, by.x = "pat_id", by.y = "participant_id_modified", all.x = FALSE, all.y = FALSE)
-```
-
-## check associations with global vars
-
-### Define global vars of interest
-```{r, echo = TRUE}
-global_vars_totest <- c("global_eTIV", "global_SubCortGrayVol","global_CortexVol", "global_CerebralWhiteMatterVol", "global_VentricleChoroidVol","global_SurfaceArea", "global_MeanThickness")
-```
-
-### SWYC ~ global without QC
-```{r, echo = FALSE}
-swyc_reg_table_global <- as.data.frame(t(sapply(swyc_lms_3plus_brain[, which(names(swyc_lms_3plus_brain) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ swyc_lms_3plus_brain$beta)
-  summary <- summary(lm)
-  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
-})))
-
-swyc_reg_table_global$swyc_p_adj <- p.adjust(swyc_reg_table_global$swyc_p, method = "BH")
-
-swyc_reg_table_global %>% filter(swyc_p_adj < 0.05)
-range(swyc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
-```
-
-### SWYC ~ global with QC
-```{r, echo = FALSE}
-swyc.qc_reg_table_global <- as.data.frame(t(sapply(swyc_lms_3plus_brain[, which(names(swyc_lms_3plus_brain) %in% global_vars_totest)], function(x) {
-  lm <- lm(x ~ swyc_lms_3plus_brain$beta + swyc_lms_3plus_brain$median_euler_mean)
-  summary <- summary(lm)
-  c(swyc_beta = summary$coefficients[2,1], swyc_p = summary$coefficients[2,4], swyc_se = summary$coefficients[2,2])
-})))
-
-swyc.qc_reg_table_global$swyc_p_adj <- p.adjust(swyc.qc_reg_table_global$swyc_p, method = "BH")
-
-swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05)
-range(swyc.qc_reg_table_global %>% filter(swyc_p_adj < 0.05) %>% select(swyc_beta))
-```
-
-### plot against centile scores
-```{r}
-cor.test(~ qnorm(global_eTIV) + scale(beta), data = swyc_lms_3plus_brain)
-ggplot(swyc_lms_3plus_brain, aes(x = global_eTIV, y = beta)) +
-  geom_point(color = "#8F8F8F") +
-  theme_minimal()
-```
-
-
-Ideas/what to do:
-For SWYC-based analyses
-- Take median up to date/age of SWYC
-- Use median SWYC at first pass
-- Look at association between env ~ swyc
-- See if including env in regression between perinatal ~ swyc changes anything
-
-For  Brain Centile-based analyses
-- Take median up to date/age of scan
-- Look at association between env ~ centile
-- See if including env in regression between perinatal ~ centile changes anything

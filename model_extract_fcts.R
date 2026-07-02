@@ -1,3 +1,5 @@
+library(gratia)
+
 # Functions to extract info from models 
 extract_bam_table <- function(models, predictor){
   tab <- as.data.frame(t(sapply(models, function(m){
@@ -29,68 +31,6 @@ extract_bam_table <- function(models, predictor){
   invisible(tab)
 }
 
-# extract_bam_features_main <- function(models, data, predictor, outcome_col_map = NULL){
-#   tab <- extract_bam_table(models)
-#   
-#   feats <- lapply(names(models), function(ph){
-#     m_full <- models[[ph]]$full
-#     m_nolin <- models[[ph]]$nolin
-#     
-#     # partial R2 (full vs reduced)
-#     r2 <- 1 - deviance(m_full)/deviance(m_nolin)
-#     
-#     # average first derivative (finite difference on smooth)
-#     nd <- 50
-#     rng <- range(data[[predictor]], na.rm = TRUE)
-#     grid <- seq(rng[1], rng[2], length.out = nd)
-#     
-#     pd <- predict(m_full, newdata = setNames(data.frame(grid), predictor), type = "lpmatrix")
-#     co <- coef(m_full)
-#     
-#     fit <- as.numeric(pd %*% co)
-#     d1 <- diff(fit)/diff(grid)
-#     avg_deriv <- mean(d1, na.rm = TRUE)
-#     
-#     # CI-based region of effect (approx via SE of smooth)
-#     pr <- predict(m_full, newdata = setNames(data.frame(grid), predictor), se.fit = TRUE)
-#     lower <- pr$fit - 1.96 * pr$se.fit
-#     upper <- pr$fit + 1.96 * pr$se.fit
-#     
-#     sig <- !(lower < 0 & upper > 0)
-#     
-#     if(any(sig)){
-#       region <- c(min(grid[sig]), max(grid[sig]))
-#     } else region <- c(NA, NA)
-#     
-#     c(partial_r2 = r2,
-#       avg_first_deriv = avg_deriv,
-#       region_start = region[1],
-#       region_end = region[2])
-#   })
-#   
-#   invisible(cbind(tab, do.call(rbind, feats)))
-# }
-
-extract_bam_interaction_table <- function(models){
-  tab <- as.data.frame(t(sapply(models, function(m){
-    s <- summary(m)$s.table
-    if(attr(m, "interaction") == "nonlinear"){
-      c(pred_edf = s[1,1], pred_p = s[1,4],
-        mod_edf = s[2,1], mod_p = s[2,4],
-        int_edf = s[3,1], int_p = s[3,4])
-    } else {
-      co <- summary(m)$p.table
-      c(pred_beta = co[2,1], pred_p = co[2,4],
-        mod_beta = co[3,1], mod_p = co[3,4],
-        int_beta = co[4,1], int_p = co[4,4])
-    }
-  })))
-  
-  num_cols <- names(tab)[grepl("_p$", names(tab))]
-  for(nm in num_cols) tab[[paste0(nm, "_adj")]] <- p.adjust(tab[[nm]], "BH")
-  invisible(tab)
-}
-
 extract_bam_features_main <- function(models, data, predictor, covariates = NULL, random_effect = NULL){
   
   tab <- extract_bam_table(models, predictor)
@@ -101,56 +41,37 @@ extract_bam_features_main <- function(models, data, predictor, covariates = NULL
     m_nolin <- models[[ph]]$nolin
     
     # rebuild reduced model WITHOUT predictor entirely
-    rhs_cov <- c(covariates,
-                 if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else NULL)
-    rhs_cov <- paste(rhs_cov[!is.na(rhs_cov)], collapse = " + ")
+    covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
+    re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
     
-    f_red <- as.formula(paste(ph, "~", rhs_cov))
+    rhs <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
+    
+    f_red <- as.formula(paste(ph, "~", rhs))
+    
+    f_onlylin <- as.formula(paste(ph, "~", predictor,
+                                  if(rhs != "") paste("+", rhs)))
     
     # subset data to only include predictor is not NA to fit reduced model
     data_fit <- data %>% filter(!is.na(get(predictor)))
     m_red <- mgcv::bam(f_red, data = data_fit, method = "fREML", discrete = TRUE)
+    m_onlylin <- mgcv::bam(f_onlylin, data = data_fit, method = "fREML", discrete = TRUE)
     
     # partial R2: full predictor contribution vs no predictor model
     r2_full_vs_none <- 1 - deviance(m_full)/deviance(m_red)
-
+    #r2_full_vs_none <- (summary(m_full)$r.sq - summary(m_red)$r.sq) /  (1 - summary(m_red)$r.sq)
+    
     # partial R2: spline contribution over linear model
-    r2_spline_vs_linear <- 1 - deviance(m_full)/deviance(m_nolin)
+    r2_spline_vs_linear <- 1 - deviance(m_full)/deviance(m_onlylin)
+    #r2_spline_vs_linear <- (summary(m_full)$r.sq - summary(m_onlylin)$r.sq) /  (1 - summary(m_onlylin)$r.sq)
     
     # average first derivative
-    rng <- range(data[[predictor]], na.rm = TRUE)
-    grid <- seq(rng[1], rng[2], length.out = 50)
-    newd <- data.frame(tmp = grid)
-    names(newd)[1] <- predictor
-    
-    # covariates fixed at typical values
-    if(!is.null(covariates)){
-      for(v in covariates){
-        if(is.numeric(data[[v]])){
-          newd[[v]] <- mean(data[[v]], na.rm = TRUE)
-        } else {
-          newd[[v]] <- as.character(stats::na.omit(data[[v]])[1])
-        }
-      }
-    }
-    
-    # random effect fixed at a real observed level
-    if(!is.null(random_effect)){
-      newd[[random_effect]] <- sample(unique(data[[random_effect]]), 1)
-    }
-    
-    
-    fit <- predict(m_full, newdata = newd, type = "response")
-    deriv <- diff(fit)/diff(grid)
-    avg_deriv <- mean(deriv, na.rm = TRUE)
+    d <- derivatives(m_full)
+    avg_deriv <- mean(d$.derivative)
     
     # region of effect (CI crossing rule)
-    pr <- predict(m_full, newdata = newd, se.fit = TRUE)
-    lower <- pr$fit - 1.96 * pr$se.fit
-    upper <- pr$fit + 1.96 * pr$se.fit
-    
-    sig <- !(lower < 0 & upper > 0)
-    region <- if(any(sig)) c(min(grid[sig]), max(grid[sig])) else c(NA, NA)
+    d <- d %>%
+      mutate (sig = !(0 >.lower_ci & 0 < .upper_ci))
+    region <- if(sum(d$sig) > 0) c(min(d[d$sig == T, predictor]), max(d[d$sig == T, predictor])) else c(NA, NA)
     
     c(
       r2_full_vs_none = r2_full_vs_none,
@@ -164,149 +85,46 @@ extract_bam_features_main <- function(models, data, predictor, covariates = NULL
   cbind(tab, do.call(rbind, feats))
 }
 
+extract_bam_interaction_table <- function(models){
+  tab <- as.data.frame(t(sapply(models, function(m){
+    s <- summary(m)$s.table
+      c(pred_edf = s[1,1], pred_p = s[1,4],
+        mod_edf = s[2,1], mod_p = s[2,4],
+        int_edf = s[3,1], int_p = s[3,4])
+  })))
+  
+  num_cols <- names(tab)[grepl("_p$", names(tab))]
+  for(nm in num_cols) tab[[paste0(nm, "_adj")]] <- p.adjust(tab[[nm]], "BH")
+  invisible(tab)
+}
 
-extract_bam_features_interaction <- function(models, data, predictor, moderator){
+extract_bam_features_interaction <- function(models, data, predictor, moderator, 
+                                             covariates = NULL, random_effect = NULL){
+  
   tab <- extract_bam_interaction_table(models)
   
   feats <- lapply(names(models), function(ph){
-    m <- models[[ph]]
-    is_nl <- attr(m, "interaction") == "nonlinear"
+      m <- models[[ph]]
     
-    if(is_nl){
-      m_full <- m
+      m_full <- m$full
       
-      # reduced = drop interaction term (re-fit via update)
-      m_red <- update(m_full, . ~ . - ti(get(predictor), get(moderator)))
+      # reduced = drop interaction term
+      covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
+      re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
+      rhs_base <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
       
-      r2 <- 1 - deviance(m_full)/deviance(m_red)
+      f_red <- as.formula(paste(ph, "~ s(", predictor, ") + s(", moderator, ")",
+                            if(rhs_base != "") paste("+", rhs_base)))
       
-      # interaction surface evaluated on grid
-      gx <- seq(-2, 2, length.out = 20)
-      gy <- seq(-2, 2, length.out = 20)
-      
-      grid <- expand.grid(x = gx, y = gy)
-      names(grid) <- c(predictor, moderator)
-      
-      pr <- predict(m_full, newdata = grid, se.fit = TRUE)
-      
-      lower <- pr$fit - 1.96 * pr$se.fit
-      upper <- pr$fit + 1.96 * pr$se.fit
-      
-      sig <- !(lower < 0 & upper > 0)
-      
-      region <- if(any(sig)){
-        c(min(grid[[predictor]][sig]), max(grid[[predictor]][sig]),
-          min(grid[[moderator]][sig]), max(grid[[moderator]][sig]))
-      } else rep(NA, 4)
-      
-      c(partial_r2 = r2,
-        region_x_start = region[1],
-        region_x_end = region[2],
-        region_y_start = region[3],
-        region_y_end = region[4])
-      
-    } else {
-      
-      m_full <- m
-      m_red <- update(m_full, . ~ . - get(predictor):get(moderator))
+      data_fit <- data %>% filter(!is.na(get(predictor)) & !is.na(get(moderator)))
+      m_red <- mgcv::bam(f_red, data = data_fit, method = "fREML", discrete = TRUE)
       
       r2 <- 1 - deviance(m_full)/deviance(m_red)
-      
-      # slopes at -1SD / mean / +1SD of moderator
-      mod_vals <- scale(model.frame(m_full)[[moderator]], scale = TRUE)
-      ref <- c(-1, 0, 1)
-      
-      slopes <- sapply(ref, function(z){
-        coef(m_full)[predictor] + coef(m_full)[paste0(predictor, ":", moderator)] * z
-      })
-      
-      c(partial_r2 = r2,
-        slope_m1sd = slopes[1],
-        slope_mean = slopes[2],
-        slope_p1sd = slopes[3])
-    }
+    
+      c(partial_r2 = r2)
   })
   
   cbind(tab, do.call(rbind, feats))
-}
-
-extract_bam_features_interaction_ifsig <- function(models, table, alpha = 0.05, predictor, moderator){
-  
-  feats <- lapply(names(models), function(ph){
-    
-    # interaction p (robust lookup)
-    row <- table[ph, , drop = FALSE]
-    p_int <- row[[grep("_p_adj$", names(row))]]
-    if(length(p_int) == 0) p_int <- NA
-    
-    # gate: only proceed if significant
-    if(is.na(p_int) || p_int >= alpha){
-      return(c(partial_r2 = NA,
-               slope_m1sd = NA,
-               slope_mean = NA,
-               slope_p1sd = NA,
-               region_x_start = NA,
-               region_x_end = NA,
-               region_y_start = NA,
-               region_y_end = NA))
-    }
-    
-    m <- models[[ph]]
-    
-    is_nl <- attr(m, "interaction") == "nonlinear"
-    
-    if(is_nl){
-      
-      m_full <- m
-      m_red <- update(m_full, . ~ . - ti(get(predictor), get(moderator)))
-      
-      r2 <- 1 - deviance(m_full)/deviance(m_red)
-      
-      gx <- seq(-2, 2, length.out = 20)
-      gy <- seq(-2, 2, length.out = 20)
-      
-      grid <- expand.grid(x = gx, y = gy)
-      names(grid) <- c(predictor, moderator)
-      
-      pr <- predict(m_full, newdata = grid, se.fit = TRUE)
-      
-      lower <- pr$fit - 1.96 * pr$se.fit
-      upper <- pr$fit + 1.96 * pr$se.fit
-      
-      sig <- !(lower < 0 & upper > 0)
-      
-      region <- if(any(sig)){
-        c(min(grid[[predictor]][sig]), max(grid[[predictor]][sig]),
-          min(grid[[moderator]][sig]), max(grid[[moderator]][sig]))
-      } else rep(NA, 4)
-      
-      return(c(partial_r2 = r2,
-               region_x_start = region[1],
-               region_x_end = region[2],
-               region_y_start = region[3],
-               region_y_end = region[4]))
-    }
-    
-    # linear interaction case
-    m_full <- m
-    m_red <- update(m_full, . ~ . - get(predictor):get(moderator))
-    
-    r2 <- 1 - deviance(m_full)/deviance(m_red)
-    
-    mod_frame <- model.frame(m_full)
-    z <- scale(mod_frame[[moderator]], scale = TRUE)
-    
-    slopes <- sapply(c(-1,0,1), function(v){
-      coef(m_full)[predictor] + coef(m_full)[paste0(predictor, ":", moderator)] * v
-    })
-    
-    c(partial_r2 = r2,
-      slope_m1sd = slopes[1],
-      slope_mean = slopes[2],
-      slope_p1sd = slopes[3])
-  })
-  
-  do.call(rbind, feats) |> as.data.frame()
 }
 
 append_bam_summary <- function(table, model_name, predictor, covariates, test_term, output_file){

@@ -9,7 +9,6 @@ params:
   output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/"
   centiles_distinct_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_distinct_median_th_mpr_2026-04-24.csv"
   centiles_all_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_all_median_th_mpr_2026-04-24.csv"
-  gamlss_models_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/gamlss_models_rds/"
 editor_options: 
   chunk_output_type: console
 ---
@@ -19,8 +18,7 @@ if (!exists("params")) {
   params <- list(
   output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/",
   centiles_distinct_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_distinct_median_th_mpr_2026-04-24.csv",
-  centiles_all_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_all_median_th_mpr_2026-04-24.csv",
-  gamlss_models_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/gamlss_models_rds/"
+  centiles_all_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/data_clean/csv/centiles_all_median_th_mpr_2026-04-24.csv"
   )
 }
 print(params)
@@ -79,7 +77,6 @@ set.seed(42)
 output_folder <- params$output_folder
 centiles_distinct_path <- params$centiles_distinct_path
 centiles_all_path <- params$centiles_all_path
-gamlss_models_path <- params$gamlss_models_path
 ```
 
 # Define Paths

@@ -68,6 +68,8 @@ plot_save_path <- paste0(save_path, "plots/")
 if (!dir.exists(plot_save_path)) dir.create(plot_save_path)
 models_save_path <- paste0(save_path,"lmsz_models/")
 if (!dir.exists(models_save_path)) dir.create(models_save_path)
+
+out_fans_folder <- glue("{csv_save_path}out_fans_slip/")
 ```
 
 ## Load functions
@@ -90,12 +92,14 @@ vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
 sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
 th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
 
+global_pheno_to_plot <- c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
+                          "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
+                          "global_MeanThickness")
 ```
 
 
 # Load dfs for visualization
 ```{r}
-#out_fans_slip <- read.csv(glue("{csv_save_path}lmsz_centfans_ga_uncorrected.csv"))
 df_ga <-  read.csv(glue("{csv_save_path}lmsz_adjusted_centiles_ga_2026-04-22.csv"))
 models_ga <- read.csv(glue("{csv_save_path}lmsz_models_ga_2026-04-22.csv"))
 #worm_plots <- lapply(list.files(glue("{plot_save_path}worm_plots/"), full.names = TRUE), readRDS)
@@ -578,16 +582,6 @@ And then plot lmsz centiles vs OG centiles for different weeks
 And then plot lmsz centiles vs OG centiles against birthweight or birthweight percentile (when it is re-calculated)
 ## Prep
 
-### Fix scale
-```{r}
-## Fix scale of out_fans, scale everything back by 1000
-#Scale all phenotypes by 1000
-out_fans_slip <- out_fans_slip %>% 
-  mutate(SLIP_input_fans = SLIP_input_fans*1000,
-         LMSz_fans = LMSz_fans*1000) %>%
-  mutate(sex_ga = paste0(sex, gestational_age))
-```
-
 ### Define x axis
 ```{r}
 ## Define x axis marks
@@ -599,10 +593,18 @@ x_labs <- c("0y","1y","2y","6y","21y")
 ### Define plotting functions
 ```{r}
 ## plotting loop function
-separate_plot_loop <- function(pheno_list, df_plot, out_fans_df, x_breaks, x_labs){
+separate_plot_loop <- function(pheno_list, df_plot, out_fans_folder, x_breaks, x_labs){
   slip_plots <- list()
   lmsz_plots <- list()
   for (pheno_of_int in pheno_list) {
+    #read in the csv for phenotype of interest
+    out_fans_df <- read.csv(glue("{out_fans_folder}lmsz_centfans_ga_uncorrected_{pheno_of_int}.csv"))
+    #Scale all phenotypes by 1000 and create sex_ga column
+    out_fans_df <- out_fans_df %>% 
+      mutate(SLIP_input_fans = SLIP_input_fans*1000,
+         LMSz_fans = LMSz_fans*1000) %>%
+      mutate(sex_ga = paste0(sex, gestational_age))
+    
     df_plot$pheno <- df_plot[[glue("{pheno_of_int}.raw")]]
     df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
     if(grepl("global", pheno_of_int)){
@@ -702,7 +704,7 @@ separate_plot_loop <- function(pheno_list, df_plot, out_fans_df, x_breaks, x_lab
   return(all_plots_list)
 }
 
-overlaid_plot_loop <- function(pheno_list, df_plot, out_fans_df, x_breaks, x_labs){
+overlaid_plot_loop <- function(pheno_list, df_plot, out_fans_folder, x_breaks, x_labs){
   overlap_plots_male <- list()
   overlap_plots_female <- list()
   overlap_plots_avg <- list()
@@ -710,6 +712,14 @@ overlaid_plot_loop <- function(pheno_list, df_plot, out_fans_df, x_breaks, x_lab
   pheno_of_int <- "global_SurfaceArea"
   
   for (pheno_of_int in pheno_list) {
+    #read in the csv for phenotype of interest
+    out_fans_df <- read.csv(glue("{out_fans_folder}lmsz_centfans_ga_uncorrected_{pheno_of_int}.csv"))
+    #Scale all phenotypes by 1000 and create sex_ga column
+    out_fans_df<- out_fans_df %>% 
+      mutate(SLIP_input_fans = SLIP_input_fans*1000,
+         LMSz_fans = LMSz_fans*1000) %>%
+      mutate(sex_ga = paste0(sex, gestational_age))
+    
     df_plot$pheno <- df_plot[[glue("{pheno_of_int}.raw")]]
     df_plot$pheno[is.na(df_plot[[glue("{pheno_of_int}.lmsz")]])] <- NA
     if(grepl("global", pheno_of_int)){
@@ -860,15 +870,16 @@ overlaid_plot_loop <- function(pheno_list, df_plot, out_fans_df, x_breaks, x_lab
 
 ```{r}
 ## Plot global trajectories
-global_pheno_to_plot <- c("global_eTIV","global_VentricleChoroidVol","global_CortexVol",
-                          "global_SubCortGrayVol","global_SurfaceArea","global_CerebralWhiteMatterVol",
-                          "global_MeanThickness")
 
-#Overlaid
+```
+
+### Overlaid
+
+```{r}
 global_plots_overlaid <- list()
 global_plots_overlaid <- overlaid_plot_loop(global_pheno_to_plot, 
                                             df_ga, 
-                                            out_fans_slip, 
+                                            out_fans_folder, 
                                             x_breaks, 
                                             x_labs)
 
@@ -903,9 +914,11 @@ p_fits_global_overlaid_avg <- (p_traj_collapsed_title  + p_traj_sexavg) +
               nrow = 1, 
               widths = c(0.07, 1)) +
   plot_annotation(title = "Global")
+```
 
+### Separate plots
 
-#Separate
+```{r}
 global_plots <- list()
 global_plots <- separate_plot_loop(global_pheno_to_plot, 
                                    df_ga, 

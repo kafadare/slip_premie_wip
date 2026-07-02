@@ -30,6 +30,7 @@ set.seed(42)
 # Command Line Args in Order
 # --array_id=1 
 # --output_folder=... 
+# --vars_to_fit=...
 # --centiles_data_path=... 
 # --raw_data_path=... 
 # --models_path=... 
@@ -56,7 +57,7 @@ print(params)
 
 # set folder paths
 code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
-vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
+#vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars/"
 output_folder <- params$output_folder
 centiles_data_path <- params$centiles_data_path
 raw_data_path <- params$raw_data_path
@@ -95,11 +96,12 @@ if (!dir.exists(fans_save_path)) dir.create(fans_save_path)
 source(glue("{code_path}R_util_lmsz.R"))
 source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/wp_taki_EK.R")
 
-full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
-global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
-vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
-sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
-th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
+full_vars <- read.csv(vars_to_fit) %>% pull(x)
+
+#global_vars <- read.csv(paste0(vars_path,"global_vars.csv")) %>% pull(x)
+#vol_vars <- read.csv(paste0(vars_path,"vol_vars.csv")) %>% pull(x)
+#sa_vars <- read.csv(paste0(vars_path,"sa_vars.csv")) %>% pull(x)
+#th_vars <- read.csv(paste0(vars_path,"th_vars.csv")) %>% pull(x)
 
 if (is.na(array_id) || array_id < 1 || array_id > length(full_vars)) {
   stop("array_id / SLURM_ARRAY_TASK_ID is missing or out of bounds.")
@@ -320,8 +322,8 @@ for (m in formulas_df$formula) {
 models_ga$intercept_mu[mod] <- fin_model$mu.coefficients["(Intercept)"]
 models_ga$ga_term_mu[mod]   <- any(grepl("gestational_age", models_ga$m_model[mod]))
 models_ga$ga_linear_mu[mod] <- any(grepl("gestational_age", models_ga$m_model[mod]))  & !any(grepl("ns\\(ge", models_ga$m_model[mod]))
-models_ga$ga_spline_2_mu[mod] <- any(grepl("gestational_age", models_ga$m_model[mod]))  & any(grepl("ns\\(gestational_age,2)", models_ga$m_model[mod]))
-models_ga$ga_spline_3_mu[mod] <- any(grepl("gestational_age", models_ga$m_model[mod]))  & any(grepl("ns\\(gestational_age,3)", models_ga$m_model[mod]))
+models_ga$ga_spline_2_mu[mod] <- any(grepl("gestational_age", models_ga$m_model[mod]))  & any(grepl("ns\\(gestational_age, 2)", models_ga$m_model[mod]))
+models_ga$ga_spline_3_mu[mod] <- any(grepl("gestational_age", models_ga$m_model[mod]))  & any(grepl("ns\\(gestational_age, 3)", models_ga$m_model[mod]))
 models_ga$sex_term_mu[mod]  <- any(grepl("sex", models_ga$m_model[mod]))
 ga.sex_pairs <- as.vector(outer(lmsz_vars$ga[!is.na(lmsz_vars$ga)], lmsz_vars$sex[!is.na(lmsz_vars$sex)], paste, sep = ":")) %>%
   gsub(" ", "", .) %>% gsub("\\(", "\\\\(", .)
@@ -329,8 +331,8 @@ models_ga$ga.sex_mu_interaction[mod] <- any(grepl(paste(ga.sex_pairs, collapse =
                                                   models_ga$m_model[mod]))
 models_ga$age_term_mu[mod]   <- any(grepl("adjusted_age_days_log", models_ga$m_model[mod]))
 models_ga$age_linear_mu[mod] <- any(grepl("adjusted_age_days_log", models_ga$m_model[mod]))  & !any(grepl("ns\\(adj", models_ga$m_model[mod]))
-models_ga$age_spline_2_mu[mod] <- any(grepl("adjusted_age_days_log", models_ga$m_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log,2)", models_ga$m_model[mod]))
-models_ga$age_spline_3_mu[mod] <- any(grepl("adjusted_age_days_log", models_ga$m_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log,3)", models_ga$m_model[mod]))
+models_ga$age_spline_2_mu[mod] <- any(grepl("adjusted_age_days_log", models_ga$m_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log, 2)", models_ga$m_model[mod]))
+models_ga$age_spline_3_mu[mod] <- any(grepl("adjusted_age_days_log", models_ga$m_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log, 3)", models_ga$m_model[mod]))
 ga.age_pairs <- as.vector(outer(lmsz_vars$ga[!is.na(lmsz_vars$ga)], lmsz_vars$age[!is.na(lmsz_vars$age)], paste, sep = ":")) %>%
   gsub(" ", "", .) %>% gsub("\\(", "\\\\(", .)
 models_ga$ga.age_mu_interaction[mod] <- any(grepl(paste(ga.age_pairs, collapse = "|"),
@@ -344,8 +346,8 @@ models_ga$age.sex_mu_interaction[mod] <- any(grepl(paste(age.sex_pairs, collapse
 models_ga$intercept_sigma[mod] <- fin_model$sigma.coefficients["(Intercept)"]
 models_ga$ga_term_sigma[mod]   <- any(grepl("gestational_age", models_ga$s_model[mod]))
 models_ga$ga_linear_sigma[mod] <- any(grepl("gestational_age", models_ga$s_model[mod]))  & !any(grepl("ns\\(ge", models_ga$s_model[mod])) < 0
-models_ga$ga_spline_2_sigma[mod] <- any(grepl("gestational_age", models_ga$s_model[mod]))  & any(grepl("ns\\(gestational_age,2)", models_ga$s_model[mod]))
-models_ga$ga_spline_3_sigma[mod] <- any(grepl("gestational_age", models_ga$s_model[mod]))  & any(grepl("ns\\(gestational_age,3)", models_ga$s_model[mod]))
+models_ga$ga_spline_2_sigma[mod] <- any(grepl("gestational_age", models_ga$s_model[mod]))  & any(grepl("ns\\(gestational_age, 2)", models_ga$s_model[mod]))
+models_ga$ga_spline_3_sigma[mod] <- any(grepl("gestational_age", models_ga$s_model[mod]))  & any(grepl("ns\\(gestational_age, 3)", models_ga$s_model[mod]))
 models_ga$sex_term_sigma[mod]  <- any(grepl("sex", models_ga$s_model[mod]))
 ga.sex_pairs <- as.vector(outer(lmsz_vars$ga[!is.na(lmsz_vars$ga)], lmsz_vars$sex[!is.na(lmsz_vars$sex)], paste, sep = ":")) %>%
   gsub(" ", "", .) %>% gsub("\\(", "\\\\(", .)
@@ -353,8 +355,8 @@ models_ga$ga.sex_sigma_interaction[mod] <- any(grepl(paste(ga.sex_pairs, collaps
                                                      models_ga$s_model[mod]))
 models_ga$age_term_sigma[mod]   <- any(grepl("adjusted_age_days_log", models_ga$s_model[mod]))
 models_ga$age_linear_sigma[mod] <- any(grepl("adjusted_age_days_log", models_ga$s_model[mod]))  & any(grepl("ns\\(adj", models_ga$s_model[mod])) < 0
-models_ga$age_spline_2_sigma[mod] <- any(grepl("adjusted_age_days_log", models_ga$s_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log,2)", models_ga$s_model[mod]))
-models_ga$age_spline_3_sigma[mod] <- any(grepl("adjusted_age_days_log", models_ga$s_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log,3)", models_ga$s_model[mod]))
+models_ga$age_spline_2_sigma[mod] <- any(grepl("adjusted_age_days_log", models_ga$s_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log, 2)", models_ga$s_model[mod]))
+models_ga$age_spline_3_sigma[mod] <- any(grepl("adjusted_age_days_log", models_ga$s_model[mod]))  & any(grepl("ns\\(adjusted_age_days_log, 3)", models_ga$s_model[mod]))
 ga.age_pairs <- as.vector(outer(lmsz_vars$ga[!is.na(lmsz_vars$ga)], lmsz_vars$age[!is.na(lmsz_vars$age)], paste, sep = ":")) %>%
   gsub(" ", "", .) %>% gsub("\\(", "\\\\(", .)
 models_ga$ga.age_sigma_interaction[mod] <- any(grepl(paste(ga.age_pairs, collapse = "|"),

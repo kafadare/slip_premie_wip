@@ -99,3 +99,15 @@ slip_bwga_qc <- function(cent_df, bw_mean, bw_sd, bw_sd_limit, ga_low_limit = 22
   
   return(cent_df)
 }
+
+# Sets cells to NA based on given limits
+remove_outliers <- function(data, cols, limit) {
+  if (length(missing_cols <- setdiff(cols, names(data))) > 0) message("Missing columns: ", paste(missing_cols, collapse = ", "))
+  data %>%
+    mutate(
+      across(
+        any_of(cols),
+        \(x) replace(x, abs(x) > limit, NA)
+      )
+    )
+}

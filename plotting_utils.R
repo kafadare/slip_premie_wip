@@ -52,61 +52,211 @@ plot_grouped_bar <- function(table_list, value_col,
     labs(x = NULL, y = value_col)
 }
 
-plot_grouped_lollipop <- function(table_list, value_col,
-                                     group_names = NULL,
-                                     color_vec = NULL,
-                                     p_col = NULL,
-                                     p_thresh = 0.05,
-                                     var_names = NULL,
-                                     name_mapping = NULL,
-                                     position_dodge_width = 0.6,
-                                     line_width = 1,
-                                     point_size = 5){
+plot_grouped_lollipop <- function(table_list,
+                                  value_col,
+                                  group_names = NULL,
+                                  color_vec = NULL,
+                                  p_col = NULL,
+                                  p_thresh = 0.05,
+                                  var_names = NULL,
+                                  name_mapping = NULL,
+                                  group_col = NULL,
+                                  position_dodge_width = 0.6,
+                                  line_width = 1,
+                                  point_size = 5){
   
-  df <- dplyr::bind_rows(table_list, .id = "group")
+  # Convert input to common format
+  if(is.data.frame(table_list)){
+    if(is.null(group_col)){
+      stop("group_col must be supplied when table_list is a data frame.")
+      plot_grouped_lollipop <- function(table_list, value_col,
+                                        label_col = "phenotype",
+                                        group_names = NULL,
+                                        color_vec = NULL,
+                                        p_col = NULL,
+                                        p_thresh = 0.05,
+                                        var_names = NULL,
+                                        name_mapping = NULL,
+                                        group_col = NULL,
+                                        position_dodge_width = 0.6,
+                                        line_width = 1,
+                                        point_size = 5){
+        
+        # Handle list of tables or single dataframe
+        if(is.data.frame(table_list)){
+          
+          if(is.null(group_col)){
+            stop("group_col must be supplied when table_list is a dataframe.")
+          }
+          
+          df <- table_list
+          df$group <- df[[group_col]]
+          
+        } else {
+          
+          df <- dplyr::bind_rows(table_list, .id = "group")
+        }
+        
+        # Optional filtering
+        if(!is.null(var_names)){
+          df <- df[df[[label_col]] %in% var_names, ]
+        }
+        
+        # Optional name mapping
+        if(!is.null(name_mapping)){
+          df <- merge(
+            df,
+            name_mapping,
+            by.x = label_col,
+            by.y = "key",
+            all.x = TRUE
+          )
+          
+          df$plot_label <- ifelse(
+            is.na(df$plot_names),
+            df[[label_col]],
+            df$plot_names
+          )
+          
+        } else {
+          
+          df$plot_label <- df[[label_col]]
+        }
+        
+        # Optional group names
+        if(!is.null(group_names)){
+          df$group <- factor(
+            df$group,
+            levels = unique(df$group),
+            labels = group_names
+          )
+        }
+        
+        # Significance
+        df$signif <- TRUE
+        
+        if(!is.null(p_col)){
+          df$signif <- df[[p_col]] < p_thresh
+        }
+        
+        ggplot(
+          df,
+          aes(
+            y = reorder(plot_label, .data[[value_col]]),
+            x = .data[[value_col]]
+          )
+        ) +
+          
+          geom_linerange(
+            aes(
+              xmin = 0,
+              xmax = .data[[value_col]],
+              color = group,
+              alpha = signif
+            ),
+            position = position_dodge(width = position_dodge_width),
+            linewidth = line_width
+          ) +
+          
+          geom_point(
+            aes(
+              color = group,
+              alpha = signif
+            ),
+            position = position_dodge(width = position_dodge_width),
+            size = point_size
+          ) +
+          
+          scale_color_manual(values = color_vec) +
+          scale_alpha_manual(
+            values = c(`TRUE` = 1, `FALSE` = 0.3)
+          ) +
+          
+          theme_minimal() +
+          labs(
+            x = value_col,
+            y = NULL
+          )
+}
+
+
+plot_lollipop <- function(data, value_col,
+                          label_col = "phenotype",
+                          p_col = NULL,
+                          p_thresh = 0.05,
+                          var_names = NULL,
+                          name_mapping = NULL,
+                          line_width = 1,
+                          point_size = 5,
+                          color = "steelblue"){
+  
+  df <- data
   
   # optional filtering
   if(!is.null(var_names)){
-    df <- df[df$phenotype %in% var_names, ]
+    df <- df[df[[label_col]] %in% var_names, ]
   }
   
   # optional name mapping
   if(!is.null(name_mapping)){
-    df <- merge(df, name_mapping, by.x = "phenotype", by.y = "key", all.x = TRUE)
-    df$plot_label <- ifelse(is.na(df$plot_names), df$phenotype, df$plot_names)
+    df <- merge(
+      df,
+      name_mapping,
+      by.x = label_col,
+      by.y = "key",
+      all.x = TRUE
+    )
+    
+    df$plot_label <- ifelse(
+      is.na(df$plot_names),
+      df[[label_col]],
+      df$plot_names
+    )
+    
   } else {
-    df$plot_label <- df$phenotype
+    df$plot_label <- df[[label_col]]
   }
   
-  if(!is.null(group_names)){
-    df$group <- factor(df$group, labels = group_names)
-  }
-  
+  # significance
   df$signif <- TRUE
+  
   if(!is.null(p_col)){
     df$signif <- df[[p_col]] < p_thresh
   }
   
-  ggplot(df, aes(y = reorder(plot_label, .data[[value_col]]),
-                 x = .data[[value_col]])) +
+  ggplot(
+    df,
+    aes(
+      y = reorder(plot_label, .data[[value_col]]),
+      x = .data[[value_col]]
+    )
+  ) +
     
-    geom_linerange(aes(xmin = 0, xmax = .data[[value_col]],
-                       color = group,
-                       alpha = signif), 
-                   position = position_dodge(width = 0.6),
-                   linewidth = line_width) +
-    
-    geom_point(
-      aes(color = group, alpha = signif),
-      position = position_dodge(width = position_dodge_width),
-      size = point_size
+    geom_linerange(
+      aes(
+        xmin = 0,
+        xmax = .data[[value_col]],
+        alpha = signif
+      ),
+      linewidth = line_width,
+      color = color
     ) +
     
-    scale_color_manual(values = color_vec) +
-    scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.3)) +
+    geom_point(
+      aes(alpha = signif),
+      size = point_size,
+      color = color
+    ) +
+    
+    scale_alpha_manual(
+      values = c(`TRUE` = 1, `FALSE` = 0.3)
+    ) +
     
     theme_minimal() +
-    labs(x = value_col, y = NULL)
+    labs(
+      x = value_col,
+      y = NULL
+    )
 }
 
 plot_dumbbell <- function(table_list, value_col,
@@ -203,10 +353,11 @@ plot_brain_map <- function(table,
                            fill_name = "value",
                            title = "",
                            limits = NULL,
-                           low_color = "#F2F0EC",
-                           mid_color = "#D6CBBE",
-                           high_color = "#A24E2A",
-                           na_color = "grey90"){
+                           low_color  = "#F2F0EC",
+                           mid_color  = "#D99A9A",
+                           high_color = "#D95C72",
+                           na_color = "grey90",
+                           legend_width_cm = 6){
   
   atlas <- match.arg(atlas)
   
@@ -220,7 +371,8 @@ plot_brain_map <- function(table,
     
     scale_fill_gradientn(
       colours = c(low_color, mid_color, high_color),
-      na.value = na_color
+      na.value = na_color,
+      guide = guide_colorbar(barwidth = unit(legend_width_cm, "cm"))
     )
     
   } else {
@@ -232,7 +384,8 @@ plot_brain_map <- function(table,
                                  limits[2])),
       limits = limits,
       oob = scales::squish,
-      na.value = na_color
+      na.value = na_color,
+      guide = guide_colorbar(barwidth = unit(legend_width_cm, "cm"))
     )
   }
   

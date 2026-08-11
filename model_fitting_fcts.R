@@ -2,7 +2,8 @@
 
 fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL, 
                            random_effect = NULL, save = FALSE, save_dir = NULL, 
-                           save_name = NULL){
+                           save_name = NULL,
+                           method = "fREML") {
   
   if(save && (is.null(save_dir) || is.null(save_name))) stop("save_dir and save_name required when save = TRUE")
   
@@ -18,8 +19,8 @@ fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL,
                                if(rhs != "") paste("+", rhs)))
     
     list(
-      full = mgcv::bam(f_full, data = data, method = "fREML", discrete = TRUE),
-      nolin = mgcv::bam(f_lin, data = data, method = "fREML", discrete = TRUE)
+      full = mgcv::bam(f_full, data = data, method = method, discrete = TRUE),
+      nolin = mgcv::bam(f_lin, data = data, method = method, discrete = TRUE)
     )
   })
   
@@ -33,9 +34,17 @@ fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL,
   invisible(models)
 }
 
-fit_bam_interactions <- function(data, phenotypes, predictor, moderator, 
-                                 covariates = NULL, random_effect = NULL, save = FALSE, save_dir = NULL, 
-                                 save_name = NULL){
+fit_bam_interactions <- function(data, 
+                                 phenotypes, 
+                                 predictor, 
+                                 moderator, 
+                                 interaction = "continuous",
+                                 covariates = NULL, 
+                                 random_effect = NULL, 
+                                 save = FALSE, 
+                                 save_dir = NULL, 
+                                 save_name = NULL,
+                                 method = "fREML") {
   if(save && (is.null(save_dir) || is.null(save_name))) stop("save_dir and save_name required when save = TRUE")
   
   models <- lapply(phenotypes, function(ph){
@@ -43,9 +52,17 @@ fit_bam_interactions <- function(data, phenotypes, predictor, moderator,
     re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
     rhs_base <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
     
-    f <- as.formula(paste(ph, "~ s(", predictor, ") + s(", moderator, ") + ti(", predictor, ",", moderator, ")",
+    if (interaction == "continuous"){
+     f <- as.formula(paste(ph, "~ s(", predictor, ") + s(", moderator, ") + ti(", predictor, ",", moderator, ")",
                             if(rhs_base != "") paste("+", rhs_base)))
-      mod <- mgcv::bam(f, data = data, method = "fREML", discrete = TRUE)
+    } else if(interaction == "categorical"){
+      f <- as.formula(paste0(ph, " ~ ", moderator, " + s(", predictor, ", by = ", moderator, ")" ,
+                            if(rhs_base != "") paste("+", rhs_base))) 
+    } else if (interaction == "ordered"){
+      f <- as.formula(paste0(ph," ~ s(", predictor, ") + ", moderator, " + s(", predictor, ", by = ", moderator, ")",
+                     if(rhs_base != "") paste("+", rhs_base)))
+    }
+      mod <- mgcv::bam(f, data = data, method = method, discrete = TRUE)
       mod
   })
   

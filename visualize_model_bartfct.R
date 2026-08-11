@@ -1,6 +1,10 @@
-visualize_model <- function(modobj,smooth_var, int_var ,
+visualize_model <- function(modobj,
+                            smooth_var, 
+                            int_var ,
                             #group_var, 
-                            plabels = NULL,check_diagnostics = F,derivative_plot = F){
+                            plabels = NULL,
+                            check_diagnostics = F,
+                            derivative_plot = F){
   
   this_font_size = font_size*1.25
   if (any(class(modobj)=="gam")) {

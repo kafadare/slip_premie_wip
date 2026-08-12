@@ -696,6 +696,94 @@ plot_grouped_lollipop(
   )
 ```
 
+## Fixed DF spline for RESI
+```{r}
+ogdq_sp_fx_models_cmd <- fit_bam_models(df.zscore_avg, cmd_vars, 
+                                        predictor = "median_dq",
+                                        covariates = c("qc_var"), 
+                                        save = FALSE,
+                                        fx = TRUE,
+                                        k = 10)
+  
+ogdq_sp_fx_table_cmd <- extract_bam_features_main(models = ogdq_sp_fx_models_cmd, 
+                                                  data = df.zscore_avg, 
+                                                  predictor = "median_dq",
+                                                  covariates = c("qc_var"))
+
+ogdq_fx_resi_table_cmd <- extract_bam_resi(models = ogdq_sp_fx_models_cmd,
+                                           term = "s(median_dq)")
+
+
+tables_list <- list(
+  PENALIZED = ogdq_resi_table_cmd %>% mutate(phenotype = rownames(.)),
+  FIXED = ogdq_fx_resi_table_cmd %>% mutate(phenotype = rownames(.))
+)
+
+color_vec <- c(PENALIZED = "pink", FIXED = "red")
+
+## Main effects: Original DQ vs GA-adjusted DQ
+plot_grouped_lollipop(
+  table_list = tables_list,
+  value_col = "RESI",
+  color_vec = color_vec,
+  p_col = "p_adj"
+) +
+  labs(
+    x = "RESI from F-statistic",
+    color = NULL
+  )
+```
+
+## Plot DF for fixed vs penalized
+```{r}
+tables_list <- list(
+  PENALIZED = ogdq_sp_table_cmd %>% mutate(phenotype = rownames(.)),
+  FIXED = ogdq_sp_fx_table_cmd %>% mutate(phenotype = rownames(.))
+)
+
+color_vec <- c(PENALIZED = "pink", FIXED = "red")
+
+## Main effects: Original DQ vs GA-adjusted DQ
+plot_grouped_lollipop(
+  table_list = tables_list,
+  value_col = "full_edf",
+  color_vec = color_vec,
+  p_col = "p_adj"
+) +
+  labs(
+    x = "EDF",
+    color = NULL
+  )
+```
+
+## Visualize models for fixed DF
+```{r}
+ogdq_sp_fx_plots_cmd <- lapply(ogdq_sp_fx_models_cmd, function(x) {
+  
+  modobj = x$full
+  
+  model_plot <- visualize_spline_model(
+  modobj = modobj,
+  plot_og_scale = FALSE,
+  mean_lookup = mean_lookup_distinct,
+  sd_lookup = sd_lookup_distinct,
+  pnorm_smooth_var = FALSE,
+  smooth_var = "median_dq",
+  plabels = "OG DQ",
+  color_point = swyc_color,
+  color_line = swyc_color)
+  
+  model_plot <- model_plot + 
+    labs(x= "OG SWYC (z-scored)",
+         title = glue("{modobj$terms[[2]]}")) +
+    theme(axis.title.y = element_blank())
+})
+
+ogdq_sp_fx_plots_cmd  <- setNames(ogdq_sp_fx_plots_cmd , cmd_vars)
+
+wrap_plots(ogdq_sp_fx_plots_cmd[1:5], ncol = 2)
+```
+
 # Global Variables
 
 ## Correlation Matrix with median SWYC

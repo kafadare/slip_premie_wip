@@ -1,26 +1,50 @@
 # Functions to fit models
-
 fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL, 
                            random_effect = NULL, save = FALSE, save_dir = NULL, 
                            save_name = NULL,
-                           method = "fREML") {
+                           method = "fREML",
+                           fx = FALSE,
+                           k = 10) {
   
-  if(save && (is.null(save_dir) || is.null(save_name))) stop("save_dir and save_name required when save = TRUE")
+  if(save && (is.null(save_dir) || is.null(save_name))) {
+    stop("save_dir and save_name required when save = TRUE")
+  }
   
-  models <- lapply(phenotypes, function(ph){
-    covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
-    re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
+  models <- lapply(phenotypes, function(ph) {
+    
+    covs <- if(!is.null(covariates)) {
+      paste(covariates, collapse = " + ")
+    } else ""
+    
+    re <- if(!is.null(random_effect)) {
+      paste0("s(", random_effect, ", bs='re')")
+    } else ""
     
     rhs <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
     
-    f_full <- as.formula(paste(ph, "~ s(", predictor, ")",
-                               if(rhs != "") paste("+", rhs)))
-    f_lin  <- as.formula(paste(ph, "~ s(", predictor, ", m=c(2,0)) +", predictor,
-                               if(rhs != "") paste("+", rhs)))
+    fx_arg <- if(fx) ", fx = TRUE" else ""
+    
+    f_full <- as.formula(
+      paste0(
+        ph, " ~ s(", predictor, ", k = ", k, fx_arg, ")",
+        if(rhs != "") paste0(" + ", rhs)
+      )
+    )
+    
+    f_lin <- as.formula(
+      paste0(
+        ph, " ~ s(", predictor, ", m = c(2,0)) + ", predictor,
+        if(rhs != "") paste0(" + ", rhs)
+      )
+    )
     
     list(
-      full = mgcv::bam(f_full, data = data, method = method, discrete = TRUE),
-      nolin = mgcv::bam(f_lin, data = data, method = method, discrete = TRUE)
+      full = mgcv::bam(
+        f_full, data = data, method = method, discrete = TRUE
+      ),
+      nolin = mgcv::bam(
+        f_lin, data = data, method = method, discrete = TRUE
+      )
     )
   })
   
@@ -28,11 +52,14 @@ fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL,
   attr(models, "predictor") <- predictor
   attr(models, "covariates") <- covariates
   attr(models, "random_effect") <- random_effect
+  attr(models, "fx") <- fx
+  attr(models, "k") <- k
   attr(models, "type") <- "main_effect"
   
   if(save) saveRDS(models, file.path(save_dir, save_name))
   invisible(models)
 }
+
 
 fit_bam_interactions <- function(data, 
                                  phenotypes, 
@@ -44,31 +71,84 @@ fit_bam_interactions <- function(data,
                                  save = FALSE, 
                                  save_dir = NULL, 
                                  save_name = NULL,
-                                 method = "fREML") {
-  if(save && (is.null(save_dir) || is.null(save_name))) stop("save_dir and save_name required when save = TRUE")
+                                 method = "fREML",
+                                 fx = FALSE,
+                                 k = 10) {
   
-  models <- lapply(phenotypes, function(ph){
-    covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
-    re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
-    rhs_base <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
+  if(save && (is.null(save_dir) || is.null(save_name))) {
+    stop("save_dir and save_name required when save = TRUE")
+  }
+  
+  models <- lapply(phenotypes, function(ph) {
     
-    if (interaction == "continuous"){
-     f <- as.formula(paste(ph, "~ s(", predictor, ") + s(", moderator, ") + ti(", predictor, ",", moderator, ")",
-                            if(rhs_base != "") paste("+", rhs_base)))
-    } else if(interaction == "categorical"){
-      f <- as.formula(paste0(ph, " ~ ", moderator, " + s(", predictor, ", by = ", moderator, ")" ,
-                            if(rhs_base != "") paste("+", rhs_base))) 
-    } else if (interaction == "ordered"){
-      f <- as.formula(paste0(ph," ~ s(", predictor, ") + ", moderator, " + s(", predictor, ", by = ", moderator, ")",
-                     if(rhs_base != "") paste("+", rhs_base)))
+    covs <- if(!is.null(covariates)) {
+      paste(covariates, collapse = " + ")
+    } else ""
+    
+    re <- if(!is.null(random_effect)) {
+      paste0("s(", random_effect, ", bs='re')")
+    } else ""
+    
+    rhs_base <- paste(
+      c(covs, re)[c(covs, re) != ""],
+      collapse = " + "
+    )
+    
+    if (interaction == "continuous") {
+      
+      f <- as.formula(
+        paste0(
+          ph,
+          " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
+          " + s(", moderator, ", k = ", k, ", fx = ", fx, ")",
+          " + ti(", predictor, ", ", moderator,
+          ", k = c(", k, ", ", k, "), fx = ", fx, ")",
+          if(rhs_base != "") paste0(" + ", rhs_base)
+        )
+      )
+      
+    } else if(interaction == "categorical") {
+      
+      f <- as.formula(
+        paste0(
+          ph,
+          " ~ ", moderator,
+          " + s(", predictor, ", k = ", k, 
+          ", by = ", moderator, ", fx = ", fx, ")",
+          if(rhs_base != "") paste0(" + ", rhs_base)
+        )
+      )
+      
+    } else if (interaction == "ordered") {
+      
+      f <- as.formula(
+        paste0(
+          ph,
+          " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
+          " + ", moderator,
+          " + s(", predictor, ", k = ", k,
+          ", by = ", moderator, ", fx = ", fx, ")",
+          if(rhs_base != "") paste0(" + ", rhs_base)
+        )
+      )
+      
+    } else {
+      stop("interaction must be 'continuous', 'categorical', or 'ordered'")
     }
-      mod <- mgcv::bam(f, data = data, method = method, discrete = TRUE)
-      mod
+    
+    mgcv::bam(
+      f,
+      data = data,
+      method = method,
+      discrete = TRUE
+    )
   })
   
   names(models) <- phenotypes
   attr(models, "predictor") <- predictor
   attr(models, "moderator") <- moderator
+  attr(models, "fx") <- fx
+  attr(models, "k") <- k
   attr(models, "type") <- "interaction"
   
   if(save) saveRDS(models, file.path(save_dir, save_name))

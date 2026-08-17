@@ -20,7 +20,7 @@
 ##   5. predictors              -- comma-separated predictor names to run
 ##                                (default "gestational_age,bwp_fen" if omitted)
 ##   6. covariate_group        -- comma-separated variant names to run, or "all"
-##                                (choices: nocovar, eTIV, ADI, eTIV_ADI, wh, eTIV_wh)
+##                                (choices: nocovar, eTIV, ADI, eTIV_ADI, wh, eTIV_wh, neonatal_dx, eTIV_neonatal_dx)
 ##   7. fx                     -- 0/1, passed to fit_bam_models()/fit_bam_interactions() as fx = TRUE/FALSE
 ##   8. age_filter_thickness   -- 0/1, whether to restrict global_meanthick/th phenotype
 ##                                groups to age_over1_unadj (default 1/TRUE if omitted)
@@ -167,6 +167,28 @@ variants <- list(
       th = c(th_qc_var, "global_MeanThickness", "weight_zscore", "height_zscore")
     ),
     moderators = c(age = "age_days_adj")
+  ),
+  eTIV_neonatal_dx = list(
+    group_covariates = list(
+      global_self = c("qc_var"),
+      global_other = c("qc_var", "global_eTIV", "neonatal_dx"),
+      global_meanthick = c(th_qc_var, "global_eTIV", "neonatal_dx"),
+      vol = c("qc_var", "global_eTIV", "neonatal_dx"),
+      sa = c("qc_var", "global_SurfaceArea", "neonatal_dx"),
+      th = c(th_qc_var, "global_MeanThickness", "neonatal_dx")
+    ),
+    moderators = c(age = "age_days_adj", neo_dx = "neonatal_dx")
+  ),
+  neonatal_dx = list(
+    group_covariates = list(
+      global_self = c("qc_var"),
+      global_other = c("qc_var", "neonatal_dx"),
+      global_meanthick = c(th_qc_var, "neonatal_dx"),
+      vol = c("qc_var", "neonatal_dx"),
+      sa = c("qc_var", "neonatal_dx"),
+      th = c(th_qc_var, "neonatal_dx")
+    ),
+    moderators = c(age = "age_days_adj", neo_dx = "neonatal_dx")
   )
 )
 

@@ -111,7 +111,7 @@ variants <- list(
       global_self = c("qc_var"), global_other = c("qc_var"), global_meanthick = c(th_qc_var),
       vol = c("qc_var"), sa = c("qc_var"), th = c(th_qc_var)
     ),
-    moderators = c(age = "age_days_adj")
+    moderators = list(age = list(var = "age_days_adj", type = "continuous"))
   ),
   eTIV = list(
     group_covariates = list(
@@ -122,7 +122,7 @@ variants <- list(
       sa = c("qc_var", "global_SurfaceArea"),
       th = c(th_qc_var, "global_MeanThickness")
     ),
-    moderators = c(age = "age_days_adj")
+    moderators = list(age = list(var = "age_days_adj", type = "continuous"))
   ),
   ADI = list(
     group_covariates = list(
@@ -133,7 +133,10 @@ variants <- list(
       sa = c("qc_var", "ADI.median"),
       th = c(th_qc_var, "ADI.median")
     ),
-    moderators = c(age = "age_days_adj", adi = "ADI.median")
+    moderators = list(
+      age = list(var = "age_days_adj", type = "continuous"),
+      adi = list(var = "ADI.median", type = "continuous")
+    )
   ),
   eTIV_ADI = list(
     group_covariates = list(
@@ -144,7 +147,10 @@ variants <- list(
       sa = c("qc_var", "global_SurfaceArea", "ADI.median"),
       th = c(th_qc_var, "global_MeanThickness", "ADI.median")
     ),
-    moderators = c(age = "age_days_adj", adi = "ADI.median")
+    moderators = list(
+      age = list(var = "age_days_adj", type = "continuous"),
+      adi = list(var = "ADI.median", type = "continuous")
+    )
   ),
   wh = list(
     group_covariates = list(
@@ -155,7 +161,7 @@ variants <- list(
       sa = c("qc_var", "weight_zscore", "height_zscore"),
       th = c(th_qc_var, "weight_zscore", "height_zscore")
     ),
-    moderators = c(age = "age_days_adj")
+    moderators = list(age = list(var = "age_days_adj", type = "continuous"))
   ),
   eTIV_wh = list(
     group_covariates = list(
@@ -166,7 +172,7 @@ variants <- list(
       sa = c("qc_var", "global_SurfaceArea", "weight_zscore", "height_zscore"),
       th = c(th_qc_var, "global_MeanThickness", "weight_zscore", "height_zscore")
     ),
-    moderators = c(age = "age_days_adj")
+    moderators = list(age = list(var = "age_days_adj", type = "continuous"))
   ),
   eTIV_neonatal_dx = list(
     group_covariates = list(
@@ -177,7 +183,10 @@ variants <- list(
       sa = c("qc_var", "global_SurfaceArea", "neonatal_dx"),
       th = c(th_qc_var, "global_MeanThickness", "neonatal_dx")
     ),
-    moderators = c(age = "age_days_adj", neo_dx = "neonatal_dx")
+    moderators = list(
+      age = list(var = "age_days_adj", type = "continuous"),
+      neo_dx = list(var = "neonatal_dx", type = "categorical")
+    )
   ),
   neonatal_dx = list(
     group_covariates = list(
@@ -188,7 +197,10 @@ variants <- list(
       sa = c("qc_var", "neonatal_dx"),
       th = c(th_qc_var, "neonatal_dx")
     ),
-    moderators = c(age = "age_days_adj", neo_dx = "neonatal_dx")
+    moderators = list(
+      age = list(var = "age_days_adj", type = "continuous"),
+      neo_dx = list(var = "neonatal_dx", type = "categorical")
+    )
   )
 )
 
@@ -246,7 +258,7 @@ run_variant <- function(variant_name) {
   int_stats  <- list()
   models     <- list()
 
-  moderators <- unname(variants[[variant_name]]$moderators)
+  moderators <- vapply(variants[[variant_name]]$moderators, function(m) m$var, character(1))
 
   for (predictor in predictors) {
     for (group_id in names(groups)) {
@@ -274,14 +286,19 @@ run_variant <- function(variant_name) {
       # covariate list so it isn't entered twice (once as s(moderator), once
       # as a bare linear term). --
       for (mod_label in names(variants[[variant_name]]$moderators)) {
-        moderator <- variants[[variant_name]]$moderators[[mod_label]]
+        mod_spec <- variants[[variant_name]]$moderators[[mod_label]]
+        moderator <- mod_spec$var
+        interaction_type <- mod_spec$type
         covs_int <- setdiff(g$covariates, moderator)
 
-        m_int <- fit_bam_interactions(data_fit, g$phenotypes, predictor, moderator, covariates = covs_int, fx = fx)
-        stats_int <- extract_bam_features_interaction(m_int, data_fit, predictor, moderator, covariates = covs_int) %>%
+        m_int <- fit_bam_interactions(data_fit, g$phenotypes, predictor, moderator,
+                                       interaction = interaction_type, covariates = covs_int, fx = fx)
+        stats_int <- extract_bam_features_interaction(m_int, data_fit, predictor, moderator, covariates = covs_int,
+                                                        interaction_type = interaction_type) %>%
           rownames_to_column("phenotype") %>% tag_run(variant_name, predictor, group_id)
         stats_int$moderator_label <- mod_label
         stats_int$moderator <- moderator
+        stats_int$interaction_type <- interaction_type
 
         int_key <- paste(run_key, mod_label, sep = "_")
         int_stats[[int_key]] <- stats_int

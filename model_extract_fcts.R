@@ -87,16 +87,16 @@ extract_bam_features_main <- function(models, data, predictor, covariates = NULL
 }
 
 extract_bam_interaction_table <- function(models,
-                                          interaction_type = c("continuous", "ordered")){
+                                          interaction_type = c("continuous", "ordered", "categorical")){
   
   interaction_type <- match.arg(interaction_type)
   
   if(interaction_type == "continuous"){
-    
+
     tab <- as.data.frame(t(sapply(models, function(m){
-      
+
       s <- summary(m)$s.table
-      
+
       c(
         pred_edf = s[1, 1],
         pred_p   = s[1, 4],
@@ -104,23 +104,56 @@ extract_bam_interaction_table <- function(models,
         int_p    = s[3, 4]
       )
     })))
-    
+
+  } else if (interaction_type == "categorical") {
+
+    # formula is "outcome ~ moderator + s(predictor, by = moderator)" -- there
+    # is no bare s(predictor) term (unlike "ordered", which keeps one), so
+    # every row of s.table is a per-level s(predictor):<level> smooth. Label
+    # columns by the moderator level itself instead of a nonexistent baseline
+    # predictor effect, and look levels up by name (not position) so a level
+    # that's missing/dropped for one phenotype's fit doesn't misalign columns.
+    level_labels <- lapply(models, function(m) {
+      sub("^s\\([^,]*\\):", "", rownames(summary(m)$s.table))
+    })
+    all_levels <- unique(unlist(level_labels))
+
+    tab <- t(sapply(names(models), function(ph){
+
+      s <- summary(models[[ph]])$s.table
+      lvls <- level_labels[[ph]]
+
+      out <- c()
+      for (lvl in all_levels) {
+        i <- match(lvl, lvls)
+        out[paste0(lvl, "_edf")] <- if (!is.na(i)) s[i, 1] else NA
+        out[paste0(lvl, "_p")]   <- if (!is.na(i)) s[i, 4] else NA
+      }
+
+      out
+
+    }))
+
+    tab <- as.data.frame(tab, check.names = FALSE)
+
   } else {
-    
+
+    # "ordered": formula keeps a baseline s(predictor) (row 1) plus one
+    # per-level difference smooth for each non-reference level (rows 2+).
     # determine maximum number of interaction smooths
     max_int <- max(sapply(models, function(m) nrow(summary(m)$s.table) - 1))
-    
+
     tab <- t(sapply(models, function(m){
-      
+
       s <- summary(m)$s.table
-      
+
       out <- c(
         pred_edf = s[1, 1],
         pred_p   = s[1, 4]
       )
-      
+
       for(i in seq_len(max_int)){
-        
+
         if(i + 1 <= nrow(s)){
           out[paste0("int", i, "_edf")] <- s[i + 1, 1]
           out[paste0("int", i, "_p")]   <- s[i + 1, 4]
@@ -128,15 +161,15 @@ extract_bam_interaction_table <- function(models,
           out[paste0("int", i, "_edf")] <- NA
           out[paste0("int", i, "_p")]   <- NA
         }
-        
+
       }
-      
+
       out
-      
+
     }))
-    
+
     tab <- as.data.frame(tab, check.names = FALSE)
-    
+
   }
   
   p_cols <- grep("_p$", names(tab), value = TRUE)
@@ -155,7 +188,8 @@ extract_bam_features_interaction <- function(models,
                                              covariates = NULL,
                                              random_effect = NULL,
                                              interaction_type = c("continuous",
-                                                                  "ordered")){
+                                                                  "ordered",
+                                                                  "categorical")){
   
   interaction_type <- match.arg(interaction_type)
   
@@ -195,7 +229,12 @@ extract_bam_features_interaction <- function(models,
                         !is.na(.data[[moderator]]))
       
     } else {
-      
+
+      # shared by "ordered" and "categorical": both full-model formulas add
+      # exactly one term on top of "s(predictor) + moderator" -- an ordered
+      # per-level difference smooth, or a by-factor s(predictor, by=moderator)
+      # smooth, respectively -- so dropping down to this same reduced model
+      # is the correct null for partial R2 in both cases.
       f_red <- as.formula(
         paste(
           ph,
@@ -203,11 +242,11 @@ extract_bam_features_interaction <- function(models,
           if(rhs_base != "") paste("+", rhs_base)
         )
       )
-      
+
       data_fit <- data |>
         dplyr::filter(!is.na(.data[[predictor]]) &
                         !is.na(.data[[moderator]]))
-      
+
     }
     
     m_red <- mgcv::bam(

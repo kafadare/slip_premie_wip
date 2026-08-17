@@ -23,7 +23,7 @@
 ##                                (choices: nocovar, eTIV, ADI, eTIV_ADI, wh, eTIV_wh)
 ##   7. fx                     -- 0/1, passed to fit_bam_models()/fit_bam_interactions() as fx = TRUE/FALSE
 ##   8. age_filter_thickness   -- 0/1, whether to restrict global_meanthick/th phenotype
-##                                groups to age_at_scan > 365 days (default 1/TRUE if omitted)
+##                                groups to age_over1_unadj (default 1/TRUE if omitted)
 ##   9. rm_sd                   -- outlier cutoff (in SD) passed to remove_outliers()
 ##                                (default 5 if omitted)
 ##
@@ -98,8 +98,8 @@ df.zscore <- remove_outliers(
            vol_vars, sa_vars, th_vars, "bwp_fen"),
   limit = rm_sd
 )
-
-df.zscore_agefilt <- df.zscore %>% filter(age_over1_unadj == TRUE)
+rm(df.zscore_full)
+gc()
 
 # ---- Variant definitions: each variant fully and explicitly states its own
 # covariates per phenotype group (no shared "base" that variants add to or
@@ -197,6 +197,21 @@ tag_run <- function(df, variant_name, predictor, group_id) {
   df
 }
 
+# ---- Narrow df.zscore down to only the columns a given (predictor, group)
+# combination's models actually need before any fitting/filtering happens.
+# fit_bam_models()/extract_bam_features_*() filter and copy whatever data
+# frame they're given once per phenotype internally, so handing them the full
+# wide table (every global/vol/sa/th column) for a 100+-phenotype group means
+# 100+ full-width copies for models that each use 4-6 columns. Slicing once
+# here keeps every downstream copy small instead. ----
+slice_group_data <- function(g, predictor, moderators) {
+  needed <- unique(c(g$phenotypes, predictor, g$covariates, moderators))
+  if (g$age_filter) needed <- c(needed, "age_over1_unadj")
+  d <- df.zscore[, intersect(names(df.zscore), needed), drop = FALSE]
+  if (g$age_filter) d <- filter(d, age_over1_unadj == TRUE)
+  d
+}
+
 # ---- Run one variant: fits every predictor x phenotype_group[ x moderator]
 # combination for that variant, and returns the three long-format tables plus
 # the nested models list, all scoped to this variant only. ----
@@ -209,11 +224,13 @@ run_variant <- function(variant_name) {
   int_stats  <- list()
   models     <- list()
 
+  moderators <- unname(variants[[variant_name]]$moderators)
+
   for (predictor in predictors) {
     for (group_id in names(groups)) {
 
       g <- groups[[group_id]]
-      data_fit <- if (g$age_filter) df.zscore_agefilt else df.zscore
+      data_fit <- slice_group_data(g, predictor, moderators)
       run_key <- paste(predictor, group_id, sep = "_")
 
       # -- main effects: BH correction (inside extract_bam_features_main/
@@ -250,6 +267,9 @@ run_variant <- function(variant_name) {
       }
 
       models[[run_key]] <- run_models
+
+      rm(data_fit, m_main)
+      gc()
     }
   }
 

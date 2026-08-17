@@ -99,7 +99,7 @@ df.zscore <- remove_outliers(
   limit = rm_sd
 )
 
-df.zscore_agefilt <- df.zscore %>% filter(age_at_scan > 365)
+df.zscore_agefilt <- df.zscore %>% filter(age_over1_unadj == TRUE)
 
 # ---- Variant definitions: each variant fully and explicitly states its own
 # covariates per phenotype group (no shared "base" that variants add to or

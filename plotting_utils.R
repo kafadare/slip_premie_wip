@@ -54,6 +54,7 @@ plot_grouped_bar <- function(table_list, value_col,
 
 plot_grouped_lollipop <- function(table_list,
                                   value_col,
+                                  label_col = "phenotype",
                                   group_names = NULL,
                                   color_vec = NULL,
                                   p_col = NULL,
@@ -63,122 +64,103 @@ plot_grouped_lollipop <- function(table_list,
                                   group_col = NULL,
                                   position_dodge_width = 0.6,
                                   line_width = 1,
-                                  point_size = 5){
+                                  point_size = 5) {
   
-  # Convert input to common format
-  if(is.data.frame(table_list)){
-    if(is.null(group_col)){
-      stop("group_col must be supplied when table_list is a data frame.")
-      plot_grouped_lollipop <- function(table_list, value_col,
-                                        label_col = "phenotype",
-                                        group_names = NULL,
-                                        color_vec = NULL,
-                                        p_col = NULL,
-                                        p_thresh = 0.05,
-                                        var_names = NULL,
-                                        name_mapping = NULL,
-                                        group_col = NULL,
-                                        position_dodge_width = 0.6,
-                                        line_width = 1,
-                                        point_size = 5){
-        
-        # Handle list of tables or single dataframe
-        if(is.data.frame(table_list)){
-          
-          if(is.null(group_col)){
-            stop("group_col must be supplied when table_list is a dataframe.")
-          }
-          
-          df <- table_list
-          df$group <- df[[group_col]]
-          
-        } else {
-          
-          df <- dplyr::bind_rows(table_list, .id = "group")
-        }
-        
-        # Optional filtering
-        if(!is.null(var_names)){
-          df <- df[df[[label_col]] %in% var_names, ]
-        }
-        
-        # Optional name mapping
-        if(!is.null(name_mapping)){
-          df <- merge(
-            df,
-            name_mapping,
-            by.x = label_col,
-            by.y = "key",
-            all.x = TRUE
-          )
-          
-          df$plot_label <- ifelse(
-            is.na(df$plot_names),
-            df[[label_col]],
-            df$plot_names
-          )
-          
-        } else {
-          
-          df$plot_label <- df[[label_col]]
-        }
-        
-        # Optional group names
-        if(!is.null(group_names)){
-          df$group <- factor(
-            df$group,
-            levels = unique(df$group),
-            labels = group_names
-          )
-        }
-        
-        # Significance
-        df$signif <- TRUE
-        
-        if(!is.null(p_col)){
-          df$signif <- df[[p_col]] < p_thresh
-        }
-        
-        ggplot(
-          df,
-          aes(
-            y = reorder(plot_label, .data[[value_col]]),
-            x = .data[[value_col]]
-          )
-        ) +
-          
-          geom_linerange(
-            aes(
-              xmin = 0,
-              xmax = .data[[value_col]],
-              color = group,
-              alpha = signif
-            ),
-            position = position_dodge(width = position_dodge_width),
-            linewidth = line_width
-          ) +
-          
-          geom_point(
-            aes(
-              color = group,
-              alpha = signif
-            ),
-            position = position_dodge(width = position_dodge_width),
-            size = point_size
-          ) +
-          
-          scale_color_manual(values = color_vec) +
-          scale_alpha_manual(
-            values = c(`TRUE` = 1, `FALSE` = 0.3)
-          ) +
-          
-          theme_minimal() +
-          labs(
-            x = value_col,
-            y = NULL
-          )
+  # Handle single dataframe
+  if (is.data.frame(table_list)) {
+    
+    if (is.null(group_col)) {
+      stop("group_col must be supplied when table_list is a dataframe.")
+    }
+    
+    df <- table_list
+    df$group <- df[[group_col]]
+    
+  } else {
+    
+    # Handle list of tables
+    df <- dplyr::bind_rows(table_list, .id = "group")
+  }
+  
+  # Optional filtering
+  if (!is.null(var_names)) {
+    df <- df[df[[label_col]] %in% var_names, ]
+  }
+  
+  # Optional name mapping
+  if (!is.null(name_mapping)) {
+    
+    df <- merge(
+      df,
+      name_mapping,
+      by.x = label_col,
+      by.y = "key",
+      all.x = TRUE
+    )
+    
+    df$plot_label <- ifelse(
+      is.na(df$plot_names),
+      df[[label_col]],
+      df$plot_names
+    )
+    
+  } else {
+    
+    df$plot_label <- df[[label_col]]
+  }
+  
+  # Optional group names
+  if (!is.null(group_names)) {
+    df$group <- factor(
+      df$group,
+      levels = unique(df$group),
+      labels = group_names
+    )
+  }
+  
+  # Significance
+  df$signif <- TRUE
+  
+  if (!is.null(p_col)) {
+    df$signif <- df[[p_col]] < p_thresh
+  }
+  
+  # Plot
+  ggplot(
+    df,
+    aes(
+      y = reorder(plot_label, .data[[value_col]]),
+      x = .data[[value_col]]
+    )
+  ) +
+    geom_linerange(
+      aes(
+        xmin = 0,
+        xmax = .data[[value_col]],
+        color = group,
+        alpha = signif
+      ),
+      position = position_dodge(width = position_dodge_width),
+      linewidth = line_width
+    ) +
+    geom_point(
+      aes(
+        color = group,
+        alpha = signif
+      ),
+      position = position_dodge(width = position_dodge_width),
+      size = point_size
+    ) +
+    scale_color_manual(values = color_vec) +
+    scale_alpha_manual(
+      values = c(`TRUE` = 1, `FALSE` = 0.3)
+    ) +
+    theme_minimal() +
+    labs(
+      x = value_col,
+      y = NULL
+    )
 }
-
 
 plot_lollipop <- function(data, value_col,
                           label_col = "phenotype",

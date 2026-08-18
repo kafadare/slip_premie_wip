@@ -1,5 +1,45 @@
 # Functions to fit models
-fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL, 
+
+# Remove exact duplicate top-level terms from a model formula built as a
+# pasted string (e.g. when a moderator is also passed in `covariates`, so it
+# ends up both as its own term and inside the covariate string). Splits the
+# RHS on '+' at paren-depth 0, drops repeats (keeping the first occurrence),
+# and prints the original and de-duplicated formulas whenever it changes
+# anything, so silent formula edits are never silent.
+dedupe_formula_terms <- function(formula_str) {
+  parts <- strsplit(formula_str, "~", fixed = TRUE)[[1]]
+  lhs <- trimws(parts[1])
+  rhs <- trimws(paste(parts[-1], collapse = "~"))
+
+  chars <- strsplit(rhs, "")[[1]]
+  depth <- 0
+  start <- 1
+  terms_raw <- character(0)
+  for (i in seq_along(chars)) {
+    ch <- chars[i]
+    if (ch == "(") depth <- depth + 1
+    if (ch == ")") depth <- depth - 1
+    if (ch == "+" && depth == 0) {
+      terms_raw <- c(terms_raw, substr(rhs, start, i - 1))
+      start <- i + 1
+    }
+  }
+  terms_raw <- c(terms_raw, substr(rhs, start, nchar(rhs)))
+  terms_trimmed <- trimws(terms_raw)
+
+  is_dup <- duplicated(terms_trimmed)
+  final_str <- paste0(lhs, " ~ ", paste(terms_trimmed[!is_dup], collapse = " + "))
+
+  if (any(is_dup)) {
+    message("Repeated term(s) removed from formula: ", paste(terms_trimmed[is_dup], collapse = ", "))
+    message("  built formula:  ", formula_str)
+    message("  formula used:   ", final_str)
+  }
+
+  final_str
+}
+
+fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL,
                            random_effect = NULL, save = FALSE, save_dir = NULL, 
                            save_name = NULL,
                            method = "fREML",
@@ -95,47 +135,43 @@ fit_bam_interactions <- function(data,
     )
     
     if (interaction == "continuous") {
-      
-      f <- as.formula(
-        paste0(
-          ph,
-          " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
-          " + s(", moderator, ", k = ", k, ", fx = ", fx, ")",
-          " + ti(", predictor, ", ", moderator,
-          ", k = c(", k, ", ", k, "), fx = ", fx, ")",
-          if(rhs_base != "") paste0(" + ", rhs_base)
-        )
+
+      f_str <- paste0(
+        ph,
+        " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
+        " + s(", moderator, ", k = ", k, ", fx = ", fx, ")",
+        " + ti(", predictor, ", ", moderator,
+        ", k = c(", k, ", ", k, "), fx = ", fx, ")",
+        if(rhs_base != "") paste0(" + ", rhs_base)
       )
-      
+
     } else if(interaction == "categorical") {
-      
-      f <- as.formula(
-        paste0(
-          ph,
-          " ~ ", moderator,
-          " + s(", predictor, ", k = ", k, 
-          ", by = ", moderator, ", fx = ", fx, ")",
-          if(rhs_base != "") paste0(" + ", rhs_base)
-        )
+
+      f_str <- paste0(
+        ph,
+        " ~ ", moderator,
+        " + s(", predictor, ", k = ", k,
+        ", by = ", moderator, ", fx = ", fx, ")",
+        if(rhs_base != "") paste0(" + ", rhs_base)
       )
-      
+
     } else if (interaction == "ordered") {
-      
-      f <- as.formula(
-        paste0(
-          ph,
-          " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
-          " + ", moderator,
-          " + s(", predictor, ", k = ", k,
-          ", by = ", moderator, ", fx = ", fx, ")",
-          if(rhs_base != "") paste0(" + ", rhs_base)
-        )
+
+      f_str <- paste0(
+        ph,
+        " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
+        " + ", moderator,
+        " + s(", predictor, ", k = ", k,
+        ", by = ", moderator, ", fx = ", fx, ")",
+        if(rhs_base != "") paste0(" + ", rhs_base)
       )
-      
+
     } else {
       stop("interaction must be 'continuous', 'categorical', or 'ordered'")
     }
-    
+
+    f <- as.formula(dedupe_formula_terms(f_str))
+
     mgcv::bam(
       f,
       data = data,

@@ -3,6 +3,7 @@
 library(bigrquery)
 library(tidyverse)
 library(glue)
+library(PheWAS)
 
 out_folder <- "/mnt/arcus/lab/users/kafadare/indication_files/"
 
@@ -111,6 +112,6 @@ indication_icd9 <- merge(indication, snomed_icd9 %>%
                            select(-c("snomed_name")),
                     by = "snomed_code", all.x = TRUE, all.y = FALSE)
 
+# Save indication annotations with matching ICD codes
 write.csv(indication_icd10, file = glue("{out_folder}indication_icd10.csv"))
 write.csv(indication_icd9, file = glue("{out_folder}indication_icd9.csv"))
-

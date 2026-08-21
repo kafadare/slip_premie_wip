@@ -6,9 +6,9 @@ output:
   html_document:
     df_print: paged
 params:
-  output_folder : "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/"
-  qnorm_centiles_path: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/df_zscore_distinct.csv"
-  lookup_stats: "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/lookup_stats_distinct.RData"
+  output_folder : "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/"
+  qnorm_centiles_path: "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_distinct.csv"
+  lookup_stats: "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData"
   rm : FALSE
 editor_options: 
   chunk_output_type: console
@@ -17,9 +17,9 @@ editor_options:
 ```{r params, echo = FALSE}
 if (!exists("params")) {
   params <- list(
-  output_folder = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/",
-  qnorm_centiles_path = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/df_zscore_distinct.csv",
-  lookup_stats = "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/SLIP_25_11_new_models/analysis_results/median-th-mpr/analysis_dfs/lookup_stats_distinct.RData",
+  output_folder = "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/",
+  qnorm_centiles_path = "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_distinct.csv",
+  lookup_stats = "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData",
   rm = FALSE
   )
 }
@@ -87,8 +87,8 @@ rm <- params$rm
 # Define Paths
 ```{r, echo = TRUE}
 # set folder paths
-code_path <- "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/"
-vars_path <-  "/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/output/vars_2511_new/"
+code_path <- "/mnt/arcus/lab/users/kafadare/slip_premie_wip/"
+vars_path <-  "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
 
 # output folder
 output_folder <- params$output_folder
@@ -116,7 +116,7 @@ plot_output_folder <- paste0(output_folder, "plots/")
 if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder)
 
   ggseg_plot_folder <- paste0(plot_output_folder, "ggseg_plots/")
-  if (!dir.exists(ggseg_plot_folder)) dir.create(ggseg_output_folder)
+  if (!dir.exists(ggseg_plot_folder)) dir.create(ggseg_plot_folder)
   cmd_plot_folder <- paste0(plot_output_folder, "cmd_plots/")
   if (!dir.exists(cmd_plot_folder)) dir.create(cmd_plot_folder)
   modelvis_plot_folder <- paste0(plot_output_folder, "modelvis_plots/")
@@ -177,7 +177,7 @@ global_vars_totest_nothick <- c("global_eTIV", "global_SubCortGrayVol","global_C
 ```
 # Code to map raw onto z-score
 ```{r}
-#df.zscore %>%  mutate(ga_raw = map2_dbl(gestational_age, "gestational_age", ~ .x*sd_lookup_all[[.y]] + mean_lookup_all[[.y]]))
+#df.zscore %>%  mutate(ga_raw = map2_dbl(birth_weight_kg, "birth_weight_kg", ~ .x*sd_lookup_all[[.y]] + mean_lookup_all[[.y]]))
 ```
 
 # Set df.zscore with outlier centiles removed
@@ -191,8 +191,8 @@ df.zscore <- remove_outliers(df.zscore_full,
 
 # Get N avail for different predictors
 ```{r}
-ga_N <- sum(!is.na(df.zscore$gestational_age))
-ga_N_thick <- sum(!is.na(df.zscore$gestational_age) & !is.na(df.zscore$global_MeanThickness))
+ga_N <- sum(!is.na(df.zscore$birth_weight_kg))
+ga_N_thick <- sum(!is.na(df.zscore$birth_weight_kg) & !is.na(df.zscore$global_MeanThickness))
 
 bw_N <- sum(!is.na(df.zscore$birth_weight_kg))
 bw_N_thick <- sum(!is.na(df.zscore$birth_weight_kg) & !is.na(df.zscore$global_MeanThickness))
@@ -273,48 +273,87 @@ if(median_th_mpr_flag){
 }
 ```
 
-### fit interactions
+### fit spline interactions
 ```{r}
 if(median_th_mpr_flag){
-  ga_sp_int_models_global <- fit_bam_interactions(df.zscore, global_vars_totest_nothick, 
+  ga_sp_int_models_eTIV <- fit_bam_interactions(df.zscore, "global_eTIV", 
                                         predictor = "gestational_age",
                                         moderator = "age_days_adj",
                                         covariates = c("qc_var"), save = FALSE)
   
-  ga_sp_int_table_global <- extract_bam_features_interaction(models = ga_sp_int_models_global, 
+  ga_sp_int_table_eTIV <- extract_bam_features_interaction(models = ga_sp_int_models_eTIV, 
                                                   data = df.zscore, 
                                                   predictor = "gestational_age",
                                                   moderator = "age_days_adj",
                                                   covariates = c("qc_var"))
   
+  ga_sp_int_models_global <- fit_bam_interactions(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol",
+                                          "global_SurfaceArea"), 
+                                        predictor = "gestational_age",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
+  
+  ga_sp_int_table_global <- extract_bam_features_interaction(models = ga_sp_int_models_global, 
+                                                  data = df.zscore, 
+                                                  predictor = "gestational_age",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var",
+                                                                 "global_eTIV"))
+  
   
   ga_sp_int_models_meanthick <- fit_bam_interactions(df.zscore, "global_MeanThickness", 
                                         predictor = "gestational_age",
                                         moderator = "age_days_adj",
-                                        covariates = c("euler_mean_mpr"), save = FALSE)
+                                        covariates = c("euler_mean_mpr", "global_eTIV"), save = FALSE)
   
-  ga_sp_int_table_meanthick <- extract_bam_features_interaction(models = ga_sp_int_models_meanthick, 
+  ga_sp_int_table_meanthick <- extract_bam_features_interaction(models =
+                                                              ga_sp_int_models_meanthick, 
                                                   data = df.zscore, 
                                                   predictor = "gestational_age",
                                                   moderator = "age_days_adj",
-                                                  covariates = c("euler_mean_mpr"))
+                                                  covariates = c("euler_mean_mpr", "global_eTIV"))
   
-  ga_sp_int_models_global <- c(ga_sp_int_models_global, ga_sp_int_models_meanthick)
-  ga_sp_int_table_global <- rbind(ga_sp_int_table_global, ga_sp_int_table_meanthick)
+  ga_sp_int_models_global <- c(ga_sp_int_models_eTIV, ga_sp_int_models_global, ga_sp_int_models_meanthick)
+  ga_sp_int_table_global <- rbind(ga_sp_int_table_eTIV, ga_sp_int_table_global, ga_sp_int_table_meanthick)
   
-  rm(ga_sp_int_models_meanthick, ga_sp_int_table_meanthick)
+  rm(ga_sp_int_models_eTIV, ga_sp_int_table_eTIV, ga_sp_int_models_meanthick, ga_sp_int_table_meanthick)
 } else {
 
-  ga_sp_int_models_global <- fit_bam_interactions(df.zscore, global_vars_totest, 
-                                      predictor = "gestational_age",
-                                      moderator = "age_days_adj",
-                                      covariates = c("qc_var"), save = FALSE)
+  ga_sp_int_models_eTIV <- fit_bam_interactions(df.zscore, "global_eTIV", 
+                                        predictor = "gestational_age",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var"), save = FALSE)
   
-  ga_sp_int_table_global <- extract_bam_features_interaction(models = ga_sp_int_models_global, 
-                                                data = df.zscore, 
-                                                predictor = "gestational_age",
-                                                moderator = "age_days_adj",
-                                                covariates = c("qc_var"))
+  ga_sp_int_table_eTIV <- extract_bam_features_interaction(models = ga_sp_int_models_eTIV, 
+                                                  data = df.zscore, 
+                                                  predictor = "gestational_age",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var"))
+  
+  ga_sp_int_models_global <- fit_bam_interactions(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol",
+                                          "global_SurfaceArea",
+                                          "global_MeanThickness"), 
+                                        predictor = "gestational_age",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
+  
+  ga_sp_int_table_global <- extract_bam_features_interaction(models =
+                                                               ga_sp_int_models, 
+                                                  data = df.zscore, 
+                                                  predictor = "gestational_age",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var", "global_eTIV"))
+  
+  ga_sp_int_models_global <- c(ga_sp_int_models_eTIV, ga_sp_int_models_global)
+  ga_sp_int_table_global <- rbind(ga_sp_int_table_eTIV, ga_sp_int_table_global)
+  
+  rm(ga_sp_int_models_eTIV, ga_sp_int_table_eTIV)
 }
 ```
 
@@ -323,86 +362,156 @@ if(median_th_mpr_flag){
 ### fit spline models
 ```{r}
 if(median_th_mpr_flag){
-  bw_sp_models_global <- fit_bam_models(df.zscore, global_vars_totest_nothick, 
+  bw_sp_models_eTIV <- fit_bam_models(df.zscore, "global_eTIV", 
                                         predictor = "birth_weight_kg",
                                         covariates = c("qc_var"), save = FALSE)
   
-  bw_sp_table_global <- extract_bam_features_main(models = bw_sp_models_global, 
+  bw_sp_table_eTIV <- extract_bam_features_main(models = bw_sp_models_eTIV, 
                                                   data = df.zscore, 
                                                   predictor = "birth_weight_kg",
                                                   covariates = c("qc_var"))
   
+  bw_sp_models_global <- fit_bam_models(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol","global_SurfaceArea"), 
+                                        predictor = "birth_weight_kg",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
+  
+  bw_sp_table_global <- extract_bam_features_main(models = bw_sp_models_global, 
+                                                  data = df.zscore, 
+                                                  predictor = "birth_weight_kg",
+                                                  covariates = c("qc_var", "global_eTIV"))
+  
   
   bw_sp_models_meanthick <- fit_bam_models(df.zscore, "global_MeanThickness", 
                                         predictor = "birth_weight_kg",
-                                        covariates = c("euler_mean_mpr"), save = FALSE)
+                                        covariates = c("euler_mean_mpr", "global_eTIV"), save = FALSE)
   
   bw_sp_table_meanthick <- extract_bam_features_main(models = bw_sp_models_meanthick, 
                                                   data = df.zscore, 
                                                   predictor = "birth_weight_kg",
-                                                  covariates = c("euler_mean_mpr"))
+                                                  covariates = c("euler_mean_mpr", "global_eTIV"))
   
-  bw_sp_models_global <- c(bw_sp_models_global, bw_sp_models_meanthick)
-  bw_sp_table_global <- rbind(bw_sp_table_global, bw_sp_table_meanthick)
+  bw_sp_models_global <- c(bw_sp_models_eTIV, bw_sp_models_global, bw_sp_models_meanthick)
+  bw_sp_table_global <- rbind(bw_sp_table_eTIV, bw_sp_table_global, bw_sp_table_meanthick)
   
-  rm(bw_sp_models_meanthick, bw_sp_table_meanthick)
+  rm(bw_sp_models_eTIV, bw_sp_table_eTIV, bw_sp_models_meanthick, bw_sp_table_meanthick)
 } else {
 
-  bw_sp_models_global <- fit_bam_models(df.zscore, global_vars_totest, 
-                                      predictor = "birth_weight_kg",
-                                      covariates = c("qc_var"), save = FALSE)
+  bw_sp_models_eTIV <- fit_bam_models(df.zscore, "global_eTIV", 
+                                        predictor = "birth_weight_kg",
+                                        covariates = c("qc_var"), save = FALSE)
   
-  bw_sp_table_global <- extract_bam_features_main(models = bw_sp_models_global, 
-                                                data = df.zscore, 
-                                                predictor = "birth_weight_kg",
-                                                covariates = c("qc_var"))
+  bw_sp_table_eTIV <- extract_bam_features_main(models = bw_sp_models_eTIV, 
+                                                  data = df.zscore, 
+                                                  predictor = "birth_weight_kg",
+                                                  covariates = c("qc_var"))
+  
+  bw_sp_models_global <- fit_bam_models(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol","global_SurfaceArea",
+                                          "global_MeanThickness"), 
+                                        predictor = "birth_weight_kg",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
+  
+  bw_sp_table_global <- extract_bam_features_main(models = bw_sp_models, 
+                                                  data = df.zscore, 
+                                                  predictor = "birth_weight_kg",
+                                                  covariates = c("qc_var", "global_eTIV"))
+  
+  bw_sp_models_global <- c(bw_sp_models_eTIV, bw_sp_models_global)
+  bw_sp_table_global <- rbind(bw_sp_table_eTIV, bw_sp_table_global)
+  
+  rm(bw_sp_models_eTIV, bw_sp_table_eTIV)
 }
 ```
 
-### fit interactions
+### fit spline interactions
 ```{r}
 if(median_th_mpr_flag){
-  bw_sp_int_models_global <- fit_bam_interactions(df.zscore, global_vars_totest_nothick, 
+  bw_sp_int_models_eTIV <- fit_bam_interactions(df.zscore, "global_eTIV", 
                                         predictor = "birth_weight_kg",
                                         moderator = "age_days_adj",
                                         covariates = c("qc_var"), save = FALSE)
+  
+  bw_sp_int_table_eTIV <- extract_bam_features_interaction(models = bw_sp_int_models_eTIV, 
+                                                  data = df.zscore, 
+                                                  predictor = "birth_weight_kg",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var"))
+  
+  bw_sp_int_models_global <- fit_bam_interactions(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol",
+                                          "global_SurfaceArea"), 
+                                        predictor = "birth_weight_kg",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
   
   bw_sp_int_table_global <- extract_bam_features_interaction(models = bw_sp_int_models_global, 
                                                   data = df.zscore, 
                                                   predictor = "birth_weight_kg",
                                                   moderator = "age_days_adj",
-                                                  covariates = c("qc_var"))
+                                                  covariates = c("qc_var",
+                                                                 "global_eTIV"))
   
   
   bw_sp_int_models_meanthick <- fit_bam_interactions(df.zscore, "global_MeanThickness", 
                                         predictor = "birth_weight_kg",
                                         moderator = "age_days_adj",
-                                        covariates = c("euler_mean_mpr"), save = FALSE)
+                                        covariates = c("euler_mean_mpr", "global_eTIV"), save = FALSE)
   
-  bw_sp_int_table_meanthick <- extract_bam_features_interaction(models = bw_sp_int_models_meanthick, 
+  bw_sp_int_table_meanthick <- extract_bam_features_interaction(models =
+                                                              bw_sp_int_models_meanthick, 
                                                   data = df.zscore, 
                                                   predictor = "birth_weight_kg",
                                                   moderator = "age_days_adj",
-                                                  covariates = c("euler_mean_mpr"))
+                                                  covariates = c("euler_mean_mpr", "global_eTIV"))
   
-  bw_sp_int_models_global <- c(bw_sp_int_models_global, bw_sp_int_models_meanthick)
-  bw_sp_int_table_global <- rbind(bw_sp_int_table_global, bw_sp_int_table_meanthick)
+  bw_sp_int_models_global <- c(bw_sp_int_models_eTIV, bw_sp_int_models_global, bw_sp_int_models_meanthick)
+  bw_sp_int_table_global <- rbind(bw_sp_int_table_eTIV, bw_sp_int_table_global, bw_sp_int_table_meanthick)
   
-  rm(bw_sp_int_models_meanthick, bw_sp_int_table_meanthick)
+  rm(bw_sp_int_models_eTIV, bw_sp_int_table_eTIV, bw_sp_int_models_meanthick, bw_sp_int_table_meanthick)
 } else {
 
-  bw_sp_int_models_global <- fit_bam_interactions(df.zscore, global_vars_totest, 
-                                      predictor = "birth_weight_kg",
-                                      moderator = "age_days_adj",
-                                      covariates = c("qc_var"), save = FALSE)
+  bw_sp_int_models_eTIV <- fit_bam_interactions(df.zscore, "global_eTIV", 
+                                        predictor = "birth_weight_kg",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var"), save = FALSE)
   
-  bw_sp_int_table_global <- extract_bam_features_interaction(models = bw_sp_int_models_global, 
-                                                data = df.zscore, 
-                                                predictor = "birth_weight_kg",
-                                                moderator = "age_days_adj",
-                                                covariates = c("qc_var"))
+  bw_sp_int_table_eTIV <- extract_bam_features_interaction(models = bw_sp_int_models_eTIV, 
+                                                  data = df.zscore, 
+                                                  predictor = "birth_weight_kg",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var"))
+  
+  bw_sp_int_models_global <- fit_bam_interactions(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol",
+                                          "global_SurfaceArea",
+                                          "global_MeanThickness"), 
+                                        predictor = "birth_weight_kg",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
+  
+  bw_sp_int_table_global <- extract_bam_features_interaction(models =
+                                                               bw_sp_int_models, 
+                                                  data = df.zscore, 
+                                                  predictor = "birth_weight_kg",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var", "global_eTIV"))
+  
+  bw_sp_int_models_global <- c(bw_sp_int_models_eTIV, bw_sp_int_models_global)
+  bw_sp_int_table_global <- rbind(bw_sp_int_table_eTIV, bw_sp_int_table_global)
+  
+  rm(bw_sp_int_models_eTIV, bw_sp_int_table_eTIV)
 }
 ```
+
 
 ## BWP
 
@@ -475,48 +584,87 @@ if(median_th_mpr_flag){
 }
 ```
 
-### fit interactions
+### fit spline interactions
 ```{r}
 if(median_th_mpr_flag){
-  bwp_sp_int_models_global <- fit_bam_interactions(df.zscore, global_vars_totest_nothick, 
+  bwp_sp_int_models_eTIV <- fit_bam_interactions(df.zscore, "global_eTIV", 
                                         predictor = "bwp_fen",
                                         moderator = "age_days_adj",
                                         covariates = c("qc_var"), save = FALSE)
   
-  bwp_sp_int_table_global <- extract_bam_features_interaction(models = bwp_sp_int_models_global, 
+  bwp_sp_int_table_eTIV <- extract_bam_features_interaction(models = bwp_sp_int_models_eTIV, 
                                                   data = df.zscore, 
                                                   predictor = "bwp_fen",
                                                   moderator = "age_days_adj",
                                                   covariates = c("qc_var"))
   
+  bwp_sp_int_models_global <- fit_bam_interactions(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol",
+                                          "global_SurfaceArea"), 
+                                        predictor = "bwp_fen",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
+  
+  bwp_sp_int_table_global <- extract_bam_features_interaction(models = bwp_sp_int_models_global, 
+                                                  data = df.zscore, 
+                                                  predictor = "bwp_fen",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var",
+                                                                 "global_eTIV"))
+  
   
   bwp_sp_int_models_meanthick <- fit_bam_interactions(df.zscore, "global_MeanThickness", 
                                         predictor = "bwp_fen",
                                         moderator = "age_days_adj",
-                                        covariates = c("euler_mean_mpr"), save = FALSE)
+                                        covariates = c("euler_mean_mpr", "global_eTIV"), save = FALSE)
   
-  bwp_sp_int_table_meanthick <- extract_bam_features_interaction(models = bwp_sp_int_models_meanthick, 
+  bwp_sp_int_table_meanthick <- extract_bam_features_interaction(models =
+                                                              bwp_sp_int_models_meanthick, 
                                                   data = df.zscore, 
                                                   predictor = "bwp_fen",
                                                   moderator = "age_days_adj",
-                                                  covariates = c("euler_mean_mpr"))
+                                                  covariates = c("euler_mean_mpr", "global_eTIV"))
   
-  bwp_sp_int_models_global <- c(bwp_sp_int_models_global, bwp_sp_int_models_meanthick)
-  bwp_sp_int_table_global <- rbind(bwp_sp_int_table_global, bwp_sp_int_table_meanthick)
+  bwp_sp_int_models_global <- c(bwp_sp_int_models_eTIV, bwp_sp_int_models_global, bwp_sp_int_models_meanthick)
+  bwp_sp_int_table_global <- rbind(bwp_sp_int_table_eTIV, bwp_sp_int_table_global, bwp_sp_int_table_meanthick)
   
-  rm(bwp_sp_int_models_meanthick, bwp_sp_int_table_meanthick)
+  rm(bwp_sp_int_models_eTIV, bwp_sp_int_table_eTIV, bwp_sp_int_models_meanthick, bwp_sp_int_table_meanthick)
 } else {
 
-  bwp_sp_int_models_global <- fit_bam_interactions(df.zscore, global_vars_totest, 
-                                      predictor = "bwp_fen",
-                                      moderator = "age_days_adj",
-                                      covariates = c("qc_var"), save = FALSE)
+  bwp_sp_int_models_eTIV <- fit_bam_interactions(df.zscore, "global_eTIV", 
+                                        predictor = "bwp_fen",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var"), save = FALSE)
   
-  bwp_sp_int_table_global <- extract_bam_features_interaction(models = bwp_sp_int_models_global, 
-                                                data = df.zscore, 
-                                                predictor = "bwp_fen",
-                                                moderator = "age_days_adj",
-                                                covariates = c("qc_var"))
+  bwp_sp_int_table_eTIV <- extract_bam_features_interaction(models = bwp_sp_int_models_eTIV, 
+                                                  data = df.zscore, 
+                                                  predictor = "bwp_fen",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var"))
+  
+  bwp_sp_int_models_global <- fit_bam_interactions(df.zscore,
+                                        c("global_SubCortGrayVol","global_CortexVol",
+                                          "global_CerebralWhiteMatterVol",
+                                          "global_VentricleChoroidVol",
+                                          "global_SurfaceArea",
+                                          "global_MeanThickness"), 
+                                        predictor = "bwp_fen",
+                                        moderator = "age_days_adj",
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
+  
+  bwp_sp_int_table_global <- extract_bam_features_interaction(models =
+                                                               bwp_sp_int_models, 
+                                                  data = df.zscore, 
+                                                  predictor = "bwp_fen",
+                                                  moderator = "age_days_adj",
+                                                  covariates = c("qc_var", "global_eTIV"))
+  
+  bwp_sp_int_models_global <- c(bwp_sp_int_models_eTIV, bwp_sp_int_models_global)
+  bwp_sp_int_table_global <- rbind(bwp_sp_int_table_eTIV, bwp_sp_int_table_global)
+  
+  rm(bwp_sp_int_models_eTIV, bwp_sp_int_table_eTIV)
 }
 ```
 
@@ -883,9 +1031,52 @@ bwp_sp_int_table_th$label <- rownames(bwp_sp_int_table_th) %>%
   sub("aparc_ThickAvg_", "", .)
 ```
 
+# Save all tables and models
+```{r}
+ga_stats <- mget(ls(pattern = "^ga_sp(_int)?_table"))
+bw_stats <- mget(ls(pattern = "^bw_sp(_int)?_table"))
+bwp_stats <- mget(ls(pattern = "^bwp_sp(_int)?_table"))
+
+save(ga_stats,
+     file = file.path(sp_stat_folder,
+                      "ga_eTIV_all_stats.RData"))
+save(bw_stats,
+     file = file.path(sp_stat_folder,
+                      "bw_eTIV_all_stats.RData"))
+save(bwp_stats,
+     file = file.path(sp_stat_folder,
+                      "bwp_eTIV_all_stats.RData"))
+
+ga_models <- mget(ls(pattern = "^ga_sp(_int)?_models"))
+bw_models <- mget(ls(pattern = "^bw_sp(_int)?_models"))
+bwp_models <- mget(ls(pattern = "^bwp_sp(_int)?_models"))
+
+save(ga_models,
+     file = file.path(models_folder,
+                      "ga_eTIV_all_models.RData"))
+save(bw_models,
+     file = file.path(models_folder,
+                      "bw_eTIV_all_models.RData"))
+save(bwp_models,
+     file = file.path(models_folder,
+                      "bwp_eTIV_all_models.RData"))
+```
+
+
+# Load all tables and models (pre-saved)
+```{r}
+load(file.path(sp_stat_folder, "ga_eTIV_all_stats.RData"))
+load(file.path(sp_stat_folder, "bw_eTIV_all_stats.RData"))
+load(file.path(sp_stat_folder, "bwp_eTIV_all_stats.RData"))
+
+load(file.path(models_folder, "ga_eTIV_all_models.RData"))
+load(file.path(models_folder, "bw_eTIV_all_models.RData"))
+load(file.path(models_folder, "bwp_eTIV_all_models.RData"))
+```
+
 # Plots
 
-## Global Grouped Plots
+## Main Effects Global Grouped Lollipop Plot
 ```{r}
 tables_list <- list(
   GA = ga_sp_table_global %>% mutate(phenotype = rownames(.)),
@@ -922,7 +1113,6 @@ if(save_figs){
              plot_width = 16, plot_height = 10)
 }
 ```
-
 
 ## Brain Maps for main effects partial r2
 ```{r}
@@ -1020,11 +1210,12 @@ plots <- lapply(plots, function(p) {
 ga_bwp_partialr2_grid <- wrap_plots(plots, ncol = 4) +
   plot_layout(guides = "collect") &
   theme(
-    legend.position = "bottom"
-  )
+    legend.position = "bottom")
+
+ga_bwp_partialr2_grid
 
 if(save_figs){
-  panel_save(ga_bwp_partialr2_grid, "ga_bwp_partialr2_grid", "svg", plot_output_folder,
+  panel_save(ga_bwp_partialr2_grid, "ga_bwp_partialr2_eTIVcovar_grid", "svg", plot_output_folder,
              plot_width = 16, plot_height = 10)
 }
 ```
@@ -1054,7 +1245,7 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "GA avg der vol",
+  title = "GA avgder vol",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1067,8 +1258,7 @@ plot_heatmap(tables_list,
   value_col = "avg_first_deriv",
   atlas = "aseg",
   p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "GA avg der vol",
+  title = "GA avgder vol",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1082,7 +1272,7 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "GA avg der sa",
+  title = "GA avgder sa",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1096,7 +1286,7 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "GA avg der th",
+    title = "GA avgder th",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1110,7 +1300,7 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp avg der vol",
+  title = "BWP avgder vol",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1124,7 +1314,7 @@ plot_heatmap(tables_list,
   atlas = "aseg",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp avg der vol",
+  title = "BWP avgder vol",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1138,7 +1328,7 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp avg der sa",
+  title = "BWP avgder sa",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1152,7 +1342,7 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp avg der th",
+  title = "BWP avgder th",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1160,7 +1350,7 @@ plot_heatmap(tables_list,
   na_color = "grey90"
 ))
 
-plots<- list(ga_avgder_dkt_vol, ga_avgder_sa, ga_avgder_th, ga_avgder_aseg_vol,
+plots <- list(ga_avgder_dkt_vol, ga_avgder_sa, ga_avgder_th, ga_avgder_aseg_vol,
                                       bwp_avgder_dkt_vol, bwp_avgder_sa, bwp_avgder_th, bwp_avgder_aseg_vol)
 
 plots <- lapply(plots, function(p) {
@@ -1180,7 +1370,7 @@ ga_bwp_avgder_grid <- wrap_plots(plots, ncol = 4) +
 ga_bwp_avgder_grid
 
 if(save_figs){
-  panel_save(ga_bwp_avgder_grid, "ga_bwp_avgder_grid", "svg", plot_output_folder,
+  panel_save(ga_bwp_avgder_grid, "ga_bwp_avgder_eTIVcovar_grid", "svg", plot_output_folder,
              plot_width = 16, plot_height = 10)
 }
 ```
@@ -1218,7 +1408,47 @@ color_vec <- c(GA = ga_color, BWP = bw_color)
 )
 
 if(save_figs){
-  panel_save(ga_bwp_th_partialr2_plot, "ga_bwp_th_partialr2_plot", "svg", plot_output_folder,
+  panel_save(ga_bwp_th_partialr2_plot, "ga_bwp_th_partialr2_eTIVcovar_plot", "svg", plot_output_folder,
+             plot_width = 16, plot_height = 10)
+}
+```
+
+## Age Interaction Global Grouped Lollipop Plot
+```{r}
+tables_list <- list(
+  GA = ga_sp_int_table_global %>% mutate(phenotype = rownames(.)),
+  BWP = bwp_sp_int_table_global %>% mutate(phenotype = rownames(.))
+)
+
+color_vec <- c(GA = ga_color, BWP = bw_color)
+
+## Grouped lolli
+ga_bwp_int_global_partialr2_plot <- plot_grouped_lollipop(
+  table_list = tables_list,
+  value_col = "partial_r2",
+  p_col = "int_p_adj",
+  color_vec = color_vec,
+  var_names = global_vars_totest,
+  name_mapping = namemap,
+  line_width = 2,
+  point_size = 10
+) +
+  labs(x = "Partial R2") +
+  theme_minimal(base_family = "Helvetica", 
+                base_size = 20) +
+  theme(legend.position = "bottom",
+        panel.grid.major.x = element_line(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()
+        )
+
+ga_bwp_int_global_partialr2_plot
+
+ga_bwp_int_global_partialr2_plot + scale_x_continuous(limits = c(0, 0.6))
+
+if(save_figs){
+  panel_save(ga_bwp_int_global_partialr2_plot, "ga_bwp_age_int_global_partialr2_eTIVcovar_plot", "svg", plot_output_folder,
              plot_width = 16, plot_height = 10)
 }
 ```
@@ -1232,7 +1462,7 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "GA partial R2 vol",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
 (ga_partialr2_aseg_vol <- plot_brain_map(
@@ -1242,7 +1472,7 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "GA partial R2 vol",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
 (ga_partialr2_sa <- plot_brain_map(
@@ -1252,7 +1482,7 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "GA partial R2 sa",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
 (ga_partialr2_th <- plot_brain_map(
@@ -1262,7 +1492,7 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "GA partial R2 th",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
 (bwp_partialr2_dkt_vol <- plot_brain_map(
@@ -1272,7 +1502,7 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "bwp partial R2 vol",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
 (bwp_partialr2_aseg_vol <- plot_brain_map(
@@ -1282,7 +1512,7 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "bwp partial R2 vol",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
 (bwp_partialr2_sa <- plot_brain_map(
@@ -1292,7 +1522,7 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "bwp partial R2 sa",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
 (bwp_partialr2_th <- plot_brain_map(
@@ -1302,10 +1532,10 @@ if(save_figs){
   p_col = "int_p_adj",
   p_filter = TRUE,
   title = "bwp partial R2 th",
-  limits = c(0, 0.005)
+  limits = c(0, 0.0065)
 ))
 
-plots<- list(ga_partialr2_dkt_vol, ga_partialr2_sa, ga_partialr2_th, ga_partialr2_aseg_vol,
+plots <- list(ga_partialr2_dkt_vol, ga_partialr2_sa, ga_partialr2_th, ga_partialr2_aseg_vol,
                                       bwp_partialr2_dkt_vol, bwp_partialr2_sa, bwp_partialr2_th, bwp_partialr2_aseg_vol)
 
 plots <- lapply(plots, function(p) {
@@ -1321,6 +1551,8 @@ ga_bwp_int_partialr2_grid <- wrap_plots(plots, ncol = 4) +
   theme(
     legend.position = "bottom"
   )
+
+ga_bwp_int_partialr2_grid
 
 if(save_figs){
   panel_save(ga_bwp_int_partialr2_grid, "ga_bwp_int_partialr2_grid", "svg", plot_output_folder,
@@ -1392,12 +1624,11 @@ visualize_spline_model(
   color_line = ga_color)
 ```
 
-## Model Visualizations
+## Visualize models for main effects (models without interaction term)
 
 ### GA
-#### Visualize on z-score scale
 
-##### Global
+#### Generate global plots
 ```{r}
 ga_sp_plots_global <- lapply(ga_sp_models_global, function(x) {
   
@@ -1421,55 +1652,14 @@ ga_sp_plots_global <- lapply(ga_sp_models_global, function(x) {
     scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
                        labels = c("<=1st",  "50th", ">=99th")) +
     labs(x= "Gestational Age (weeks)",
-         title = glue("{modobj$gam$terms[[2]]}")) +
+         title = glue("{modobj$terms[[2]]}")) +
     theme(axis.title.y = element_blank())
 })
 
 ga_sp_plots_global <- setNames(ga_sp_plots_global, global_vars_totest)
 
 if(save_figs){
-saveRDS(ga_sp_plots_global, glue("{modelvis_plot_folder}ga_sp_plots_global.rds"))
-}  
-```
-
-##### Choose regions to plot
-
-###### choose regions
-```{r}
-```
-
-```{r}
-pheno_sig_th_ga <- rownames(ga_sp_table_th %>% filter(full_p_adj < 0.05))
-ga_sp_plots_th <- lapply(ga_sp_models_th[pheno_sig_th_ga], function(x) {
-  
-  modobj = x$full
-  
-  model_plot <- visualize_spline_model(
-  modobj = modobj,
-  plot_og_scale = FALSE,
-  mean_lookup = mean_lookup_distinct,
-  sd_lookup = sd_lookup_distinct,
-  pnorm_smooth_var = FALSE,
-  smooth_var = "gestational_age",
-  plabels = "Gestational Age",
-  color_point = ga_color,
-  color_line = ga_color)
-  
-  model_plot <- model_plot + 
-    scale_x_continuous(
-      breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean_lookup_distinct[[.y]])/(sd_lookup_distinct[[.y]])),
-      labels = \(x) map2_dbl(x, "gestational_age", ~ (.x*sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]])/7) +
-    scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
-                       labels = c("<=1st",  "50th", ">=99th")) +
-    labs(x= "Gestational Age (weeks)",
-         title = glue("{modobj$gam$terms[[2]]}")) +
-    theme(axis.title.y = element_blank())
-})
-
-ga_sp_plots_th <- setNames(ga_sp_plots_th, pheno_sig_th_ga)
-
-if(save_figs){
-saveRDS(ga_sp_plots_th, glue("{modelvis_plot_folder}ga_sp_plots_th.rds"))
+saveRDS(ga_sp_plots_global, glue("{modelvis_plot_folder}ga_sp_eTIVcovar_plots_global.rds"))
 }  
 ```
 
@@ -1479,56 +1669,9 @@ wrap_plots(ga_sp_plots_global[1:4], ncol = 2)
 wrap_plots(ga_sp_plots_global[5:7], ncol = 2)
 ```
 
-### BW
-#### Visualize on z-score scale
-```{r}
-bw_sp_plots_global <- lapply(bw_sp_models_global, function(x) {
-  
-  modobj = x$full
-  
-model_plot <- visualize_spline_model(
-modobj = modobj,
-smooth_var = "birth_weight_kg",
-plot_og_scale = FALSE,
-mean_lookup = mean_lookup_distinct,
-sd_lookup = sd_lookup_distinct,
-pnorm_smooth_var = FALSE,
-plabels = "Birth Weight",
-color_point = bw_color,
-color_line = bw_color)
-  
-  model_plot <- model_plot + 
-    scale_x_continuous(
-      breaks = map2_dbl(c(1.5, 3, 4.5, 6), "birth_weight_kg", ~ (.x - mean_lookup_distinct[[.y]])/(sd_lookup_distinct[[.y]])),
-      labels = \(x) map2_dbl(x, "birth_weight_kg", ~ (.x*sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]])) +
-    scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
-                       labels = c("<=1st",  "50th", ">=99th")) +
-    labs(x="Birth Weight (kg))",
-         title = glue("{modobj$gam$terms[[2]]}")) +
-    theme(axis.title.y = element_blank())
-})
-
-bw_sp_plots_global <- setNames(bw_sp_plots_global, global_vars_totest)
-
-if(save_figs){
-saveRDS(bw_sp_plots_global, glue("{modelvis_plot_folder}bw_sp_plots_global.rds"))
-}
-```
-
-#### Show plots
-```{r, echo = TRUE}
-wrap_plots(bw_sp_plots_global[1:4], ncol = 2)
-wrap_plots(bw_sp_plots_global[5:7], ncol = 2)
-```
-
-
-
-
 ### BWP
 
-#### Visualize on z-score scale
-
-##### Global
+#### Generate global plots
 ```{r}
 bwp_sp_plots_global <- lapply(bwp_sp_models_global, function(x) {
   
@@ -1551,52 +1694,16 @@ color_line = bw_color)
         scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
                        labels = c("<=1st",  "50th", ">=99th")) +
     labs(x = glue("Birth Weight Percentile \n (GA-corrected)"),
-         title = glue("{modobj$gam$terms[[2]]}")) +
+         title = glue("{modobj$terms[[2]]}")) +
     theme(axis.title.y = element_blank())
 })
 
 bwp_sp_plots_global <- setNames(bwp_sp_plots_global, global_vars_totest)
 
 if(save_figs){
-saveRDS(bwp_sp_plots_global, glue("{modelvis_plot_folder}bwp_sp_plots_global.rds"))
+saveRDS(bwp_sp_plots_global, glue("{modelvis_plot_folder}bwp_sp_eTIVcovar_plots_global.rds"))
 }
 ```
-
-##### Thickness
-```{r}
-pheno_sig_th_bwp <- rownames(ga_sp_table_th %>% filter(full_p_adj < 0.05))
-
-bwp_sp_plots_th <- lapply(bwp_sp_models_th[pheno_sig_th_bwp], function(x) {
-  
-  modobj = x$full
-  
-model_plot <- visualize_spline_model(
-modobj = modobj,
-smooth_var = "bwp_fen",
-plot_og_scale = FALSE,
-mean_lookup = mean_lookup_distinct,
-sd_lookup = sd_lookup_distinct,
-pnorm_smooth_var = FALSE,
-plabels = glue("Birth Weight Percentile \n (GA-corrected)"),
-color_point = bw_color,
-color_line = bw_color)
-  
-  model_plot <- model_plot + 
-    scale_x_continuous(
-      labels = \(x) glue("{round(pnorm(x),2)*100}th") ) +
-    scale_y_continuous(labels = \(x) glue("{round(pnorm(x),2)*100}th")) +
-    labs(x = glue("Birth Weight Percentile \n (GA-corrected)"),
-         title = glue("{modobj$gam$terms[[2]]}")) +
-    theme(axis.title.y = element_blank())
-})
-
-bwp_sp_plots_th <- setNames(bwp_sp_plots_th, pheno_sig_th_bwp)
-
-if(save_figs){
-saveRDS(bwp_sp_plots_th, glue("{modelvis_plot_folder}bwp_sp_plots_th.rds"))
-}
-```
-
 
 #### Show plots
 ```{r, echo = TRUE}
@@ -1604,65 +1711,7 @@ wrap_plots(bwp_sp_plots_global[1:4], ncol = 2)
 wrap_plots(bwp_sp_plots_global[5:7], ncol = 2)
 ```
 
-
-
-
-## Visualize Mean Thickness for GA as interaction
-```{r}
-font_size <- 16
-theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-
-mu_age <- mean_lookup_distinct["age_days_adj"]
-sd_age <- sd_lookup_distinct["age_days_adj"]
-
-mu_ga <- mean_lookup_distinct["gestational_age"]
-sd_ga <- sd_lookup_distinct["gestational_age"]
-  
-  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = ga_sp_int_models_global$global_MeanThickness,
-  smooth_var = "gestational_age",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Gestational Age (wks)",
-         title = glue("Mean Thickness"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round((x * sd_ga + mu_ga)/7, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) glue("{signif(pnorm(y)*100, 2)}th"))
-
-
-```
-
-## Grid for GA and BWP global models
+### Grid for GA and BWP global models
 ```{r}
 plots <- list(ga_sp_plots_global$global_eTIV, bwp_sp_plots_global$global_eTIV,
               ga_sp_plots_global$global_VentricleChoroidVol, bwp_sp_plots_global$global_VentricleChoroidVol,
@@ -1715,7 +1764,7 @@ ga_bwp_global_models_grid <- wrap_plots(plots, ncol = ncol) &
 ga_bwp_global_models_grid
 
 # if(save_figs){
-#   panel_save(ga_bwp_global_models_grid, "ga_bwp_global_models_grid", "svg", plot_output_folder,
+#   panel_save(ga_bwp_global_models_grid, "ga_bwp_global_models_eTIVcovar_grid", "svg", plot_output_folder,
 #              plot_width = 10, plot_height = 24)
 # }
 ```
@@ -1871,137 +1920,105 @@ ga_bwp_global_models_fig <- wrap_plots(
 ga_bwp_global_models_fig
 
 if(save_figs){
-  panel_save(ga_bwp_global_models_fig, "ga_bwp_global_models_fig", "svg", plot_output_folder,
+  panel_save(ga_bwp_global_models_fig, "ga_bwp_global_models_eTIVcovar_fig", "svg", plot_output_folder,
              plot_width = 20, plot_height = 22)
 }
 
 ```
-## Grid for GA and BWP thickness models
+
+## Visualize Interaction Models
+*** nothing sig for BWP
+
+### Set variables for plotting
 ```{r}
-shared_th_sig <- intersect(names(ga_sp_plots_th), names(bwp_sp_plots_th))
-ga_sp_table_th %>% filter(rownames(.) %in% shared_th_sig) %>% select(r2_full_vs_none) %>% arrange(desc(r2_full_vs_none))
-bwp_sp_table_th %>% filter(rownames(.) %in% shared_th_sig) %>% select(r2_full_vs_none) %>% arrange(desc(r2_full_vs_none))
+font_size <- 16
+theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
 
-plots <- list(ga_sp_plots_global$global_CortexVol, bwp_sp_plots_global$global_CortexVol,
-             ga_sp_plots_global$global_CerebralWhiteMatterVol, bwp_sp_plots_global$global_CerebralWhiteMatterVol,
-             ga_sp_plots_global$global_SubCortGrayVol, bwp_sp_plots_global$global_SubCortGrayVol,
-             ga_sp_plots_global$global_VentricleChoroidVol, bwp_sp_plots_global$global_VentricleChoroidVol,
-             ga_sp_plots_global$global_SurfaceArea, bwp_sp_plots_global$global_SurfaceArea)
+mu_age <- mean_lookup_distinct["age_days_adj"]
+sd_age <- sd_lookup_distinct["age_days_adj"]
 
-ncol <- 2
-n <- length(plots)
-nrow <- ceiling(n / ncol)
+mu_ga <- mean_lookup_distinct["gestational_age"]
+sd_ga <- sd_lookup_distinct["gestational_age"]
+  
+low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
 
-row_i <- ceiling(seq_len(n) / ncol)
-col_i <- ((seq_len(n) - 1) %% ncol) + 1
+high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+```
 
-plots <- lapply(plots, function(p){
-  p + theme(
-    axis.title = element_blank(),
-    axis.text  = element_blank(),
-    axis.line = element_blank(),
-    axis.ticks = element_blank(),
-    aspect.ratio = 1
-  )
+### GA
+
+#### Generate global plots
+```{r}
+pheno_sig_global_int_ga <- rownames(ga_sp_int_table_global %>% filter(int_p_adj < 0.05))
+
+ga_sp_int_plots_global <- lapply(ga_sp_int_models_global, function(x) {
+  
+modobj = x
+
+model_plot <- visualize_model(
+  modobj = x,
+  smooth_var = "gestational_age",
+  int_var = "age_days_adj",
+  plabels = "continuous interaction",
+  derivative_plot = F)
+
+  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
+  
+  model_plot <- model_plot + 
+    labs(x="Gestational Age (wks)",
+         title = glue("{modobj$terms[[2]]}"),
+                  fill = "Age") +
+    theme(axis.title.y = element_blank()) +
+      scale_x_continuous(
+      breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean_lookup_distinct[[.y]])/(sd_lookup_distinct[[.y]])),
+      labels = \(x) map2_dbl(x, "gestational_age", ~ (.x*sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]])/7)  +
+        scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
+                       labels = c("<=1st",  "50th", ">=99th")) +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "")
 })
 
-bottom_idx <- which(row_i == nrow)
-
-plots[bottom_idx] <- lapply(plots[bottom_idx], function(p){
-  p + theme(
-    axis.text.x = element_text(),
-    axis.ticks.x = element_line(),
-    axis.title.x = element_text(),
-    axis.line.x = element_line()
-  )
-})
-
-left_idx <- which(col_i == 1)
-
-plots[left_idx] <- lapply(plots[left_idx], function(p){
-  p + theme(
-    axis.text.y = element_text(),
-    axis.ticks.y = element_line(),
-    axis.line.x = element_line()
-  )
-})
-
-ga_bwp_global_models_grid <- wrap_plots(plots, ncol = ncol) &
-  plot_layout(guides = "collect")
-
-ga_bwp_global_models_grid
+ga_sp_int_plots_global <- setNames(ga_sp_int_plots_global, global_vars_totest)
 
 if(save_figs){
-  panel_save(ga_bwp_global_models_grid, "ga_bwp_global_models_grid", "svg", plot_output_folder,
-             plot_width = 10, plot_height = 24)
+saveRDS(ga_sp_int_plots_global, glue("{modelvis_plot_folder}ga_sp_int_eTIVcovar_plots_global.rds"))
 }
 ```
 
-# Regional phenotypes (non-linear models, with interaction term test)
-
-## Volume
-
-### GA
-
-#### fit models
-```{r, echo = FALSE}
-gabyage_sp_models_vol <- lapply(vol_vars, function(x) {
-  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + qc_var"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore)
-  return(gam_model)
-  })
-
-gabyage_sp_models_vol <- setNames(gabyage_sp_models_vol, vol_vars)
-
-gabyage_sp_gam_table_vol <- as.data.frame(t(sapply(gabyage_sp_models_vol,function(x) {
-  summary <- summary(x$gam)
-  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
-  })))
-
-rownames(gabyage_sp_gam_table_vol) <- vol_vars
-
-gabyage_sp_gam_table_vol$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_vol$gabyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_vol %>% filter(gabyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_vol %>% filter(gabyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_vol %>% filter(gabyage_p_adj < 0.05)) ))
-
-gabyage_sp_vol_sig_pheno <- rownames(gabyage_sp_gam_table_vol %>% filter(gabyage_p_adj < 0.05))
+#### Show global plots
+```{r, echo = TRUE}
+wrap_plots(ga_sp_int_plots_global[1:4], ncol = 2)
+wrap_plots(ga_sp_int_plots_global[5:7], ncol = 2)
 ```
 
-#### Visualize models
+
+#### Generate vol plots
 ```{r}
-gabyage_sp_vol_plot_pheno <- rownames(gabyage_sp_gam_table_vol %>% filter(ga_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
+pheno_sig_vol_int_ga <- rownames(ga_sp_int_table_vol %>% filter(int_p_adj < 0.05))
 
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
+ga_sp_int_plots_vol <- lapply(ga_sp_int_models_vol[pheno_sig_vol_int_ga], function(x) {
+  
+modobj = x
 
-mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
-sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
-
-gabyage_sp_plots_vol <- lapply(gabyage_sp_models_vol[gabyage_sp_vol_plot_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
+model_plot <- visualize_model(
   modobj = x,
   smooth_var = "gestational_age",
   int_var = "age_days_adj",
@@ -2012,10 +2029,14 @@ gabyage_sp_plots_vol <- lapply(gabyage_sp_models_vol[gabyage_sp_vol_plot_pheno],
   
   model_plot <- model_plot + 
     labs(x="Gestational Age (wks)",
-         title = glue("{x$gam$terms[[2]]}"),
+         title = glue("{modobj$terms[[2]]}"),
                   fill = "Age") +
     theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
+      scale_x_continuous(
+      breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean_lookup_distinct[[.y]])/(sd_lookup_distinct[[.y]])),
+      labels = \(x) map2_dbl(x, "gestational_age", ~ (.x*sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]])/7)  +
+        scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
+                       labels = c("<=1st",  "50th", ">=99th")) +
   scale_fill_manual(labels = c(paste0("Low: ",
                                       round(low_age_label,1),"yrs"),
                                paste0("Mid: ",
@@ -2025,868 +2046,19 @@ gabyage_sp_plots_vol <- lapply(gabyage_sp_models_vol[gabyage_sp_vol_plot_pheno],
                     values = plot_colors) +
    scale_color_gradientn(colors = plot_colors,
     labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
+    name = "")
 })
 
-gabyage_sp_plots_vol <- setNames(gabyage_sp_plots_vol, gabyage_sp_vol_plot_pheno)
+ga_sp_int_plots_vol <- setNames(ga_sp_int_plots_vol, pheno_sig_vol_int_ga)
 
-gabyage_sp_plots_vol_nopt <- lapply(gabyage_sp_plots_vol, function(x){
-x$layers[1] <- NULL
-x})
-
-# wrap_plots(gabyage_sp_plots_vol_nopt, ncol = 2, guides = "collect") &
-#   theme(legend.position = "right")
-# 
-# wrap_plots(gabyage_sp_plots_vol, ncol = 2, guides = "collect") &
-#   theme(legend.position = "right")
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(gabyage_sp_plots_vol, ceiling(seq_along(gabyage_sp_plots_vol) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(gabyage_sp_plots_vol_nopt, ceiling(seq_along(gabyage_sp_plots_vol_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
-```
-
-### BW
-
-#### fit models
-```{r, echo = FALSE}
-bwbyage_sp_models_vol <- lapply(vol_vars, function(x) {
-  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + qc_var"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore)
-  return(gam_model)
-  })
-
-bwbyage_sp_models_vol <- setNames(bwbyage_sp_models_vol, vol_vars)
-
-bwbyage_sp_gam_table_vol <- as.data.frame(t(sapply(bwbyage_sp_models_vol,function(x) {
-  summary <- summary(x$gam)
-  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
-  })))
-
-rownames(bwbyage_sp_gam_table_vol) <- vol_vars
-
-bwbyage_sp_gam_table_vol$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_vol$bwbyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p_adj < 0.05)) ))
-
-bwbyage_sp_vol_sig_pheno <- rownames(bwbyage_sp_gam_table_vol %>% filter(bwbyage_p_adj < 0.05))
-```
-
-#### Visualize models
-```{r}
-bwbyage_sp_vol_plot_pheno <- rownames(bwbyage_sp_gam_table_vol %>% filter(bw_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
-
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
-
-mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
-sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
-
-bwbyage_sp_plots_vol <- lapply(bwbyage_sp_models_vol[bwbyage_sp_vol_plot_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = x,
-  smooth_var = "birth_weight_kg",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Birth Weight (kg)",
-         title = glue("{x$gam$terms[[2]]}"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
-})
-
-bwbyage_sp_plots_vol <- setNames(bwbyage_sp_plots_vol, bwbyage_sp_vol_plot_pheno)
-
-bwbyage_sp_plots_vol_nopt <- lapply(bwbyage_sp_plots_vol, function(x){
-x$layers[1] <- NULL
-x})
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(bwbyage_sp_plots_vol, ceiling(seq_along(bwbyage_sp_plots_vol) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(bwbyage_sp_plots_vol_nopt, ceiling(seq_along(bwbyage_sp_plots_vol_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
-```
-
-
-## Surface Area
-### GA
-
-#### fit models
-```{r, echo = FALSE}
-gabyage_sp_models_sa <- lapply(sa_vars, function(x) {
-  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + qc_var"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore)
-  return(gam_model)
-  })
-
-gabyage_sp_models_sa <- setNames(gabyage_sp_models_sa, sa_vars)
-
-gabyage_sp_gam_table_sa <- as.data.frame(t(sapply(gabyage_sp_models_sa,function(x) {
-  summary <- summary(x$gam)
-  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
-  })))
-
-rownames(gabyage_sp_gam_table_sa) <- sa_vars
-
-gabyage_sp_gam_table_sa$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_sa$gabyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_sa %>% filter(gabyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_sa %>% filter(gabyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_sa %>% filter(gabyage_p_adj < 0.05)) ))
-
-gabyage_sp_sa_sig_pheno <- rownames(gabyage_sp_gam_table_sa %>% filter(gabyage_p_adj < 0.05))
-```
-
-#### Visualize models
-```{r}
-gabyage_sp_sa_plot_pheno <- rownames(gabyage_sp_gam_table_sa %>% filter(ga_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
-
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
-
-mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
-sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
-
-gabyage_sp_plots_sa <- lapply(gabyage_sp_models_sa[gabyage_sp_sa_plot_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = x,
-  smooth_var = "gestational_age",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Gestational Age (wks)",
-         title = glue("{x$gam$terms[[2]]}"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
-})
-
-gabyage_sp_plots_sa <- setNames(gabyage_sp_plots_sa, gabyage_sp_sa_plot_pheno)
-
-gabyage_sp_plots_sa_nopt <- lapply(gabyage_sp_plots_sa, function(x){
-x$layers[1] <- NULL
-x})
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(gabyage_sp_plots_sa, ceiling(seq_along(gabyage_sp_plots_sa) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(gabyage_sp_plots_sa_nopt, ceiling(seq_along(gabyage_sp_plots_sa_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
-
-#wrapped_list
-```
-
-### BW
-
-#### fit models
-```{r, echo = FALSE}
-bwbyage_sp_models_sa <- lapply(sa_vars, function(x) {
-  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + qc_var"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore)
-  return(gam_model)
-  })
-
-bwbyage_sp_models_sa <- setNames(bwbyage_sp_models_sa, sa_vars)
-
-bwbyage_sp_gam_table_sa <- as.data.frame(t(sapply(bwbyage_sp_models_sa,function(x) {
-  summary <- summary(x$gam)
-  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
-  })))
-
-rownames(bwbyage_sp_gam_table_sa) <- sa_vars
-
-bwbyage_sp_gam_table_sa$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_sa$bwbyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p_adj < 0.05)) ))
-
-bwbyage_sp_sa_sig_pheno <- rownames(bwbyage_sp_gam_table_sa %>% filter(bwbyage_p_adj < 0.05))
-```
-
-#### Visualize models
-```{r}
-bwbyage_sp_sa_plot_pheno <- rownames(bwbyage_sp_gam_table_sa %>% filter(bw_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
-
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
-
-mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
-sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
-
-bwbyage_sp_plots_sa <- lapply(bwbyage_sp_models_sa[bwbyage_sp_sa_plot_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = x,
-  smooth_var = "birth_weight_kg",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Birth Weight (kg)",
-         title = glue("{x$gam$terms[[2]]}"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
-})
-
-bwbyage_sp_plots_sa <- setNames(bwbyage_sp_plots_sa, bwbyage_sp_sa_plot_pheno)
-
-bwbyage_sp_plots_sa_nopt <- lapply(bwbyage_sp_plots_sa, function(x){
-x$layers[1] <- NULL
-x})
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(bwbyage_sp_plots_sa, ceiling(seq_along(bwbyage_sp_plots_sa) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(bwbyage_sp_plots_sa_nopt, ceiling(seq_along(bwbyage_sp_plots_sa_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
-```
-
-
-## Thickness median full sample
-### GA
-
-#### fit models
-```{r, echo = FALSE}
-if (median_th_mpr_flag == TRUE){
-gabyage_sp_models_th_median <- lapply(th_vars_median, function(x) {
-  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + qc_var"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore)
-  return(gam_model)
-  })
-
-gabyage_sp_models_th_median <- setNames(gabyage_sp_models_th_median, th_vars)
-
-gabyage_sp_gam_table_th_median <- as.data.frame(t(sapply(gabyage_sp_models_th_median,function(x) {
-  summary <- summary(x$gam)
-  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
-  })))
-
-rownames(gabyage_sp_gam_table_th_median) <- th_vars
-
-gabyage_sp_gam_table_th_median$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_th_median$gabyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_th_median %>% filter(gabyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_th_median %>% filter(gabyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_th_median %>% filter(gabyage_p_adj < 0.05)) ))
-
-gabyage_sp_th_median_sig_pheno <- rownames(gabyage_sp_gam_table_th_median %>% filter(gabyage_p_adj < 0.05))
+if(save_figs){
+saveRDS(ga_sp_int_plots_vol, glue("{modelvis_plot_folder}ga_sp_int_eTIVcovar_plots_vol.rds"))
 }
 ```
 
-#### Visualize models
-```{r}
-if (median_th_mpr_flag == TRUE){
-gabyage_sp_th_median_plot_pheno <- rownames(gabyage_sp_gam_table_th_median %>% filter(ga_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
-
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
-
-mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
-sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
-
-gabyage_sp_plots_th_median <- lapply(gabyage_sp_models_th_median[gabyage_sp_th_median_sig_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = x,
-  smooth_var = "gestational_age",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Gestational Age (wks)",
-         title = glue("{x$gam$terms[[2]]}"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
-})
-
-gabyage_sp_plots_th_median <- setNames(gabyage_sp_plots_th_median, gabyage_sp_th_median_sig_pheno)
-
-gabyage_sp_plots_th_median_nopt <- lapply(gabyage_sp_plots_th_median, function(x){
-x$layers[1] <- NULL
-x})
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(gabyage_sp_plots_th_median, ceiling(seq_along(gabyage_sp_plots_th_median) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(gabyage_sp_plots_th_median_nopt, ceiling(seq_along(gabyage_sp_plots_th_median_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
-}
-```
-
-### BW
-
-#### fit models
-```{r, echo = FALSE}
-if (median_th_mpr_flag == TRUE){
-bwbyage_sp_models_th_median <- lapply(th_vars_median, function(x) {
-  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + qc_var"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore)
-  return(gam_model)
-  })
-
-bwbyage_sp_models_th_median <- setNames(bwbyage_sp_models_th_median, th_vars)
-
-bwbyage_sp_gam_table_th_median <- as.data.frame(t(sapply(bwbyage_sp_models_th_median,function(x) {
-  summary <- summary(x$gam)
-  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
-  })))
-
-rownames(bwbyage_sp_gam_table_th_median) <- th_vars
-
-bwbyage_sp_gam_table_th_median$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_th_median$bwbyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p_adj < 0.05)) ))
-
-bwbyage_sp_th_median_sig_pheno <- rownames(bwbyage_sp_gam_table_th_median %>% filter(bwbyage_p_adj < 0.05))
-}
-```
-
-#### Visualize models
-```{r}
-if (median_th_mpr_flag == TRUE){
-bwbyage_sp_th_median_plot_pheno <- rownames(bwbyage_sp_gam_table_th_median %>% filter(bw_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
-
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
-
-mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
-sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
-
-bwbyage_sp_plots_th_median <- lapply(bwbyage_sp_models_th_median[bwbyage_sp_th_median_sig_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore[!is.na(df.zscore$birth_weight_kg),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = x,
-  smooth_var = "birth_weight_kg",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Birth Weight (kg)",
-         title = glue("{x$gam$terms[[2]]}"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
-})
-
-bwbyage_sp_plots_th_median <- setNames(bwbyage_sp_plots_th_median, bwbyage_sp_th_median_sig_pheno)
-
-bwbyage_sp_plots_th_median_nopt <- lapply(bwbyage_sp_plots_th_median, function(x){
-x$layers[1] <- NULL
-x})
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(bwbyage_sp_plots_th_median, ceiling(seq_along(bwbyage_sp_plots_th_median) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(bwbyage_sp_plots_th_median_nopt, ceiling(seq_along(bwbyage_sp_plots_th_median_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
-}
-```
-
-
-## Thickness (mpr, df.zscore_overOne overOne sample)
-### GA
-
-#### fit models
-```{r, echo = FALSE}
-gabyage_sp_models_th <- lapply(th_vars, function(x) {
-  form <- as.formula(glue("{x} ~ s(gestational_age) + s(age_days_adj) + ti(gestational_age, age_days_adj) + euler_mean_mpr"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore_overOne)
-  return(gam_model)
-  })
-
-gabyage_sp_models_th <- setNames(gabyage_sp_models_th, th_vars)
-
-gabyage_sp_gam_table_th <- as.data.frame(t(sapply(gabyage_sp_models_th,function(x) {
-  summary <- summary(x$gam)
-  c(ga_edf = summary$s.table[1,1], ga_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    gabyage_edf = summary$s.table[3,1], gabyage_p = summary$s.table[3,4])
-  })))
-
-rownames(gabyage_sp_gam_table_th) <- th_vars
-
-gabyage_sp_gam_table_th$gabyage_p_adj <- p.adjust(gabyage_sp_gam_table_th$gabyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for GA x Age- NO correction: ", dim(gabyage_sp_gam_table_th %>% filter(gabyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for GA x Age- AFTER FDR correction: ", dim(gabyage_sp_gam_table_th %>% filter(gabyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for GA x Age- AFTER FDR correction: ", rownames(gabyage_sp_gam_table_th %>% filter(gabyage_p_adj < 0.05)) ))
-
-gabyage_sp_th_sig_pheno <- rownames(gabyage_sp_gam_table_th %>% filter(gabyage_p_adj < 0.05))
-```
-
-#### Visualize models
-```{r}
-gabyage_sp_th_plot_pheno <- rownames(gabyage_sp_gam_table_th %>% filter(ga_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
-
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
-
-mu_ga <- mean(cent_all$gestational_age, na.rm = TRUE)
-sd_ga <- sd(cent_all$gestational_age, na.rm = TRUE)
-
-gabyage_sp_plots_th <- lapply(gabyage_sp_models_th[gabyage_sp_th_sig_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$gestational_age),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$gestational_age),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = x,
-  smooth_var = "gestational_age",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Gestational Age (wks)",
-         title = glue("{x$gam$terms[[2]]}"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_ga + mu_ga, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
-})
-
-gabyage_sp_plots_th <- setNames(gabyage_sp_plots_th, gabyage_sp_th_sig_pheno)
-
-gabyage_sp_plots_th_nopt <- lapply(gabyage_sp_plots_th, function(x){
-x$layers[1] <- NULL
-x})
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(gabyage_sp_plots_th, ceiling(seq_along(gabyage_sp_plots_th) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(gabyage_sp_plots_th_nopt, ceiling(seq_along(gabyage_sp_plots_th_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
-```
-
-### BW
-
-#### fit models
-```{r, echo = FALSE}
-bwbyage_sp_models_th <- lapply(th_vars, function(x) {
-  form <- as.formula(glue("{x} ~ s(birth_weight_kg) + s(age_days_adj) + ti(birth_weight_kg, age_days_adj) + euler_mean_mpr"))
-  gam_model <- gamm(as.formula(form),
-              data = df.zscore_overOne)
-  return(gam_model)
-  })
-
-bwbyage_sp_models_th <- setNames(bwbyage_sp_models_th, th_vars)
-
-bwbyage_sp_gam_table_th <- as.data.frame(t(sapply(bwbyage_sp_models_th,function(x) {
-  summary <- summary(x$gam)
-  c(bw_edf = summary$s.table[1,1], bw_p = summary$s.table[1,4],
-    age_edf = summary$s.table[2,1], age_p = summary$s.table[2,4],
-    bwbyage_edf = summary$s.table[3,1], bwbyage_p = summary$s.table[3,4])
-  })))
-
-rownames(bwbyage_sp_gam_table_th) <- th_vars
-
-bwbyage_sp_gam_table_th$bwbyage_p_adj <- p.adjust(bwbyage_sp_gam_table_th$bwbyage_p, method = "BH")
-
-print(paste0("Number of significant IDPs for bw x Age- NO correction: ", dim(bwbyage_sp_gam_table_th %>% filter(bwbyage_p < 0.05))[1]))
-print(paste0("Number of significant IDPs for bw x Age- AFTER FDR correction: ", dim(bwbyage_sp_gam_table_th %>% filter(bwbyage_p_adj < 0.05))[1]))
-print(paste0("Significant IDPs for bw x Age- AFTER FDR correction: ", rownames(bwbyage_sp_gam_table_th %>% filter(bwbyage_p_adj < 0.05)) ))
-
-bwbyage_sp_th_sig_pheno <- rownames(bwbyage_sp_gam_table_th %>% filter(bwbyage_p_adj < 0.05))
-```
-
-#### Visualize models
-```{r}
-bwbyage_sp_th_plot_pheno <- rownames(bwbyage_sp_gam_table_th %>% filter(bw_edf > 2))
-font_size <- 16
-theme_set(theme_classic(base_family = "sans",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-source("/mnt/isilon/bgdlab_processing/Eren/slip_premie_wip/visualize_model_bartfct.R")
-
-mu_age <- mean(cent_all$age_days_adj, na.rm = TRUE)
-sd_age <- sd(cent_all$age_days_adj, na.rm = TRUE)
-
-mu_bw <- mean(cent_all$birth_weight_kg, na.rm = TRUE)
-sd_bw <- sd(cent_all$birth_weight_kg, na.rm = TRUE)
-
-bwbyage_sp_plots_th <- lapply(bwbyage_sp_models_th[bwbyage_sp_th_sig_pheno], function(x) {
-  
-  
-  low_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.10)) * sd_age + mu_age)/365.25
-  
-  mid_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$birth_weight_kg),
-                                       "age_days_adj"],
-                             probs = c(.50)) * sd_age + mu_age)/365.25
-
-  high_age_label <- (quantile(df.zscore_overOne[!is.na(df.zscore_overOne$birth_weight_kg),
-                                      "age_days_adj"],
-                            probs = c(.90)) * sd_age + mu_age)/365.25
-  
-  model_plot <- visualize_model(
-  modobj = x,
-  smooth_var = "birth_weight_kg",
-  int_var = "age_days_adj",
-  plabels = "continuous interaction",
-  derivative_plot = F)
-
-  plot_colors <- ggplot_build(model_plot)$plot$scales$get_scales("fill")$palette(1)
-  
-  model_plot <- model_plot + 
-    labs(x="Birth Weight (kg)",
-         title = glue("{x$gam$terms[[2]]}"),
-                  fill = "Age") +
-    theme(axis.title.y = element_blank()) +
-  scale_x_continuous(labels = function(x) round(x * sd_bw + mu_bw, 1)) +
-  scale_fill_manual(labels = c(paste0("Low: ",
-                                      round(low_age_label,1),"yrs"),
-                               paste0("Mid: ",
-                                      round(mid_age_label,1),"yrs"),
-                               paste0("High: ",
-                                      round(high_age_label,1),"yrs")), 
-                    values = plot_colors) +
-   scale_color_gradientn(colors = plot_colors,
-    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
-    name = "") +
-  scale_y_continuous(labels = function(y) signif(pnorm(y)*100, 3))
-  
-  return(model_plot)
-})
-
-bwbyage_sp_plots_th <- setNames(bwbyage_sp_plots_th, bwbyage_sp_th_sig_pheno)
-
-bwbyage_sp_plots_th_nopt <- lapply(bwbyage_sp_plots_th, function(x){
-x$layers[1] <- NULL
-x})
-
-wrapped_plot_n <- 4 
-
-plot_batches <- split(bwbyage_sp_plots_th, ceiling(seq_along(bwbyage_sp_plots_th) / wrapped_plot_n))
-
- wrapped_list <- lapply(plot_batches, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list
-
-plot_batches_nopt <- split(bwbyage_sp_plots_th_nopt, ceiling(seq_along(bwbyage_sp_plots_th_nopt) / wrapped_plot_n))
-
- wrapped_list_nopt <- lapply(plot_batches_nopt, function(batch) {
-   wrap_plots(batch, ncol = 2)
- })
-
-wrapped_list_nopt
+#### Show volume plots
+```{r, echo = TRUE}
+wrap_plots(ga_sp_int_plots_vol[1:4], ncol = 2)
+wrap_plots(ga_sp_int_plots_vol[5:7], ncol = 2)
 ```
 

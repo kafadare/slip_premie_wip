@@ -1,0 +1,436 @@
+---
+title: "Spline Analysis: Covariate-Structure Comparison"
+author: "Eren Kafadar"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+params:
+  output_folder: "/mnt/arcus/lab/users/kafadare/slip_premie_results/"
+  lookup_stats: "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData"
+  vars_path: "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
+  code_path: "/mnt/arcus/lab/users/kafadare/slip_premie_wip/"
+  model_vis: FALSE
+  variant_to_visualize: "eTIV"
+editor_options:
+  chunk_output_type: console
+---
+
+Reads the merged long-format outputs of `run_spline_analysis_variant.R` +
+`merge_spline_analysis_variants.R` and compares partial R2 / RESI across
+covariate-structure variants. Does not fit any models itself.
+
+# Define params if they do not exist
+```{r params, echo = FALSE}
+if (!exists("params")) {
+  params <- list(
+    output_folder = "/mnt/arcus/lab/users/kafadare/slip_premie_results/",
+    lookup_stats = "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData",
+    vars_path = "/mnt/arcus/lab/users/kafadare/slip_brain_vars/",
+    code_path = "/mnt/arcus/lab/users/kafadare/slip_premie_wip/",
+    model_vis = FALSE,
+    variant_to_visualize = "eTIV"
+  )
+}
+print(params)
+```
+
+# Load packages
+```{r packages, echo = FALSE}
+require(dplyr)
+require(glue)
+require(purrr)
+require(tibble)
+require(tidyr)
+require(ggplot2)
+require(patchwork)
+require(ggseg)
+require(ggsegDKT)
+require(scales)
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+# Load functions
+```{r fcts, echo = FALSE}
+source(glue("{params$code_path}model_vis_fcts.R"))
+source(glue("{params$code_path}plotting_utils.R"))
+```
+
+# Paths
+```{r paths, echo = TRUE}
+stats_folder  <- paste0(params$output_folder, "results_csv/")
+models_folder <- paste0(params$output_folder, "models/")
+
+plot_output_folder <- paste0(params$output_folder, "plots/")
+if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder, recursive = TRUE)
+```
+
+# Load data
+```{r load-data, echo = TRUE}
+main_stats <- read.csv(paste0(stats_folder, "main_effects_stats_all_variants.csv"))
+resi_stats <- read.csv(paste0(stats_folder, "resi_stats_all_variants.csv"))
+int_stats  <- read.csv(paste0(stats_folder, "interaction_stats_all_variants.csv"))
+
+if (params$model_vis == TRUE){
+  variant_to_visualize <- params$variant_to_visualize
+  models_to_load <- paste0(models_folder, paste0(variant_to_visualize, "_models.rds"))
+  models <- readRDS(models_to_load)
+}
+
+load(params$lookup_stats)  # mean_lookup_distinct / sd_lookup_distinct, for the GA axis conversion
+namemap <- read.csv(glue("{params$vars_path}name_mapping.csv"))
+```
+
+# Color Specifications
+```{r colors, echo = TRUE}
+# ga_color / bwp_color match the base hues used in the original spline Rmds,
+# with the mislabeling corrected there -- bw_color ("#709085") was being reused
+# for BWP plots even though a distinct bwp_color existed. Only GA and BWP are
+# plotted going forward (birth_weight_kg was dropped as a predictor), so
+# bw_color isn't used here at all.
+ga_color  <- "blue" # muted blue-grey  -- Gestational Age
+bwp_color <- "red"  # muted tan/gold   -- Birth Weight Percentile
+bw_color = "green" # muted green -- Birth Weight
+
+# limits = c(-0.3, 0.3)
+# low_color = "#4878CF" # blue
+# mid_color = "white"
+# high_color = "#D65F5F" # red
+
+# One color family per predictor, with a distinct, consistent sub-color per
+# covariate_group variant (same variant = same shade everywhere in this
+# document, regardless of which pair it's being compared against).
+variant_order <- c("nocovar", "eTIV", "ADI", "eTIV_ADI", "wh", "eTIV_wh",
+                    "neonatal_dx", "eTIV_neonatal_dx")
+
+make_variant_family <- function(base_color, variants) {
+  setNames(colorRampPalette(c("#CCCCCC", base_color))(length(variants)), variants)
+}
+
+predictor_colors <- list(
+  gestational_age = make_variant_family(ga_color, variant_order),
+  bwp_fen         = make_variant_family(bwp_color, variant_order)
+)
+```
+
+# Covariate-structure comparison pairs
+```{r pairs, echo = TRUE}
+# Each pair is (reference, +extra-covariate). Extend this list if new variants
+# are added to run_spline_analysis_variant.R.
+covariate_pairs <- list(
+  c("nocovar", "eTIV"),
+  c("nocovar", "ADI"),
+  c("nocovar", "wh"),
+  #c("nocovar", "neonatal_dx"),
+  c("eTIV", "eTIV_ADI"),
+  c("eTIV", "eTIV_wh")
+  #c("eTIV", "eTIV_neonatal_dx")
+)
+
+predictors <- c("gestational_age", "bwp_fen")
+
+global_groups <- c("global_self", "global_other", "global_meanthick")
+cmd_groups    <- c("global_cmd", "vol_cmd", "sa_cmd", "th_cmd", "subcort_cmd")
+```
+
+# Axis convention helpers
+```{r axis-helpers, echo = TRUE}
+ga_x_scale <- function() {
+  scale_x_continuous(
+    breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age",
+                       ~ (.x - mean_lookup_distinct[[.y]]) / sd_lookup_distinct[[.y]]),
+    labels = \(x) round(map2_dbl(x, "gestational_age",
+                       ~ (.x * sd_lookup_distinct[[.y]]) + mean_lookup_distinct[[.y]]) / 7, 1)
+  )
+}
+
+bwp_x_scale <- function() {
+  scale_x_continuous(breaks = qnorm(c(.01, .50, .99)), labels = c("<=1st", "50th", ">=99th"))
+}
+
+outcome_y_scale <- function() {
+  scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), labels = c("<=1st", "50th", ">=99th"))
+}
+
+predictor_x_scale <- function(predictor) {
+  if (predictor == "gestational_age") ga_x_scale() else bwp_x_scale()
+}
+
+predictor_label <- function(predictor) {
+  if (predictor == "gestational_age") "Gestational Age (weeks)" else "Birth Weight Percentile\n(GA-corrected)"
+}
+```
+
+# ggseg label helper
+```{r ggseg-label-fct, echo = TRUE}
+# plot_brain_map() joins on a `label` column matching ggseg::dk/ggseg::aseg,
+# but main_stats/resi_stats only carry the raw FreeSurfer `phenotype` name
+# (run_spline_analysis_variant.R doesn't add a label column). Reproduces the
+# per-region-type cleanup the original Rmds applied right after stat
+# extraction (e.g. `ga_sp_table_vol$label <- rownames(ga_sp_table_vol) %>% ...`).
+add_ggseg_label <- function(df, region_type = c("vol", "sa", "th")) {
+  region_type <- match.arg(region_type)
+
+  if (region_type == "vol") {
+    cols_edit <- grepl("aseg(?!_CC)", df$phenotype, perl = TRUE)
+    df$label <- df$phenotype %>%
+      sub("aparc_GrayVol_", "", .) %>%
+      sub("aseg_", "", .) %>%
+      sub("X", "x", .) %>%
+      sub("rd_Ventricle", "rd_ventricle", .) %>%
+      sub("th_Ventricle", "th_ventricle", .) %>%
+      sub("Thalamus", "Thalamus-Proper", .)
+    df$label[cols_edit] <- gsub("_", "-", df$label[cols_edit])
+  } else if (region_type == "sa") {
+    df$label <- sub("aparc_SurfArea_", "", df$phenotype)
+  } else {
+    df$label <- sub("aparc_ThickAvg_", "", df$phenotype)
+  }
+
+  df
+}
+```
+
+# Grouped Lollipop Plots (Global & CMD, Partial R2 & RESI)
+```{r lollipop-fcts, echo = TRUE}
+make_pair_table_list <- function(df, this_predictor, groups, pair) {
+  sub <- df %>% filter(predictor == this_predictor, group %in% groups, variant %in% pair)
+  split(sub, sub$variant)[pair]
+}
+
+plot_pair_lollipop <- function(df, this_predictor, groups, pair, value_col, p_col, set_label) {
+  table_list <- make_pair_table_list(df, this_predictor, groups, pair)
+
+  plot_grouped_lollipop(
+    table_list = table_list,
+    value_col = value_col,
+    p_col = p_col,
+    color_vec = predictor_colors[[this_predictor]][pair],
+    name_mapping = namemap
+  ) +
+    labs(
+      title = glue("{set_label} -- {predictor_label(this_predictor)}: {pair[1]} vs {pair[2]}"),
+      x = value_col
+    ) +
+    theme_minimal()
+}
+```
+
+```{r lollipop-plots, results = 'asis', fig.width = 9, fig.height = 6}
+for (this_predictor in predictors) {
+  for (pair in covariate_pairs) {
+
+    print(plot_pair_lollipop(main_stats, this_predictor, global_groups, pair,
+                              "r2_full_vs_none", "full_p_adj", "Global vars (Partial R2)"))
+    print(plot_pair_lollipop(resi_stats, this_predictor, global_groups, pair,
+                              "RESI", "p_adj", "Global vars (RESI)"))
+    print(plot_pair_lollipop(main_stats, this_predictor, cmd_groups, pair,
+                              "r2_full_vs_none", "full_p_adj", "CMD (Partial R2)"))
+    print(plot_pair_lollipop(resi_stats, this_predictor, cmd_groups, pair,
+                              "RESI", "p_adj", "CMD (RESI)"))
+  }
+}
+```
+
+# Brain Maps (Vol/SA/TH, Partial R2 & RESI, GA top / BWP bottom)
+```{r brainmap-fcts, echo = TRUE}
+# Difference map: pair[2]'s value minus pair[1]'s value, restricted to regions
+# significant (p < .05) in at least one of the two variants being compared.
+build_diff_table <- function(df, this_predictor, group, pair, value_col, p_col, region_type) {
+  d1 <- df %>% filter(predictor == this_predictor, group == !!group, variant == pair[1])
+  d2 <- df %>% filter(predictor == this_predictor, group == !!group, variant == pair[2])
+
+  merged <- inner_join(
+    d1 %>% select(phenotype, val1 = all_of(value_col), p1 = all_of(p_col)),
+    d2 %>% select(phenotype, val2 = all_of(value_col), p2 = all_of(p_col)),
+    by = "phenotype"
+  )
+
+  merged$diff  <- merged$val2 - merged$val1
+  merged$min_p <- pmin(merged$p1, merged$p2)
+
+  add_ggseg_label(merged, region_type)
+}
+
+plot_pair_brainmap <- function(df, this_predictor, group, pair, value_col, p_col, region_type,
+                               limits, low_color = "#2160B8", mid_color = "white", high_color = "#B82133") {
+  diff_table <- build_diff_table(df, this_predictor, group, pair, value_col, p_col, region_type)
+
+  plot_brain_map(
+    table = diff_table,
+    value_col = "diff",
+    atlas = "dk",
+    p_col = "min_p",
+    p_filter = TRUE,
+    p_thresh = 0.05,
+    title = glue("{region_type} {value_col} diff: {pair[2]} - {pair[1]}"),
+    limits = limits,
+    low_color = low_color, mid_color = mid_color, high_color = high_color
+  )
+}
+
+# GA (top) / BWP (bottom) arrangement is just row-major wrap_plots with GA's
+# plots listed first, matching how the original Rmds built these grids.
+plot_pair_brainmap_grid <- function(df, group, pair, value_col, p_col, region_type, limits) {
+  plots <- lapply(predictors, function(p) {
+    plot_pair_brainmap(df, p, group, pair, value_col, p_col, region_type, limits) +
+      labs(subtitle = predictor_label(p))
+  })
+  wrap_plots(plots, ncol = 1) & plot_layout(guides = "collect")
+}
+```
+
+```{r brainmap-plots, results = 'asis', fig.width = 6, fig.height = 10}
+region_types <- c(vol = "vol", sa = "sa", th = "th")
+
+for (pair in covariate_pairs) {
+  for (region_type in region_types) {
+
+    print(
+      plot_pair_brainmap_grid(main_stats, region_type, pair,
+                               "r2_full_vs_none", "full_p_adj", region_type,
+                               limits = c(-0.025, 0.025))
+    )
+    print(
+      plot_pair_brainmap_grid(resi_stats, region_type, pair,
+                               "RESI", "p_adj", region_type,
+                               limits = c(-0.2, 0.2))
+    )
+  }
+}
+```
+
+# Model Visualization
+```{r modelvis-fcts, echo = TRUE}
+if (params$model_vis == TRUE) {
+  get_main_model <- function(variant, this_predictor, group, phenotype) {
+    run_key <- paste(this_predictor, group, sep = "_")
+    models[[variant]][[run_key]]$main[[phenotype]]$full
+  }
+  
+  plot_main_model <- function(variant, this_predictor, group, phenotype) {
+    visualize_spline_model(
+      modobj = get_main_model(variant, this_predictor, group, phenotype),
+      smooth_var = this_predictor,
+      plot_og_scale = FALSE,
+      mean_lookup = mean_lookup_distinct,
+      sd_lookup = sd_lookup_distinct,
+      pnorm_smooth_var = FALSE,
+      plabels = phenotype,
+      color_point = if (this_predictor == "gestational_age") ga_color else bwp_color,
+      color_line  = if (this_predictor == "gestational_age") ga_color else bwp_color
+    ) +
+      predictor_x_scale(this_predictor) +
+      outcome_y_scale() +
+      labs(x = predictor_label(this_predictor), title = phenotype) +
+      theme(axis.title.y = element_blank())
+  }
+}
+```
+
+## Significant global & CMD models
+```{r modelvis-global-cmd, results = 'asis', fig.width = 10, fig.height = 8}
+if (params$model_vis == TRUE) {
+  for (this_predictor in predictors) {
+    sig_pheno <- main_stats %>%
+      filter(variant == variant_to_visualize, predictor == this_predictor,
+             group %in% c(global_groups, cmd_groups), full_p_adj < 0.05)
+  
+    if (nrow(sig_pheno) == 0) next
+  
+    plots <- Map(function(ph, grp) plot_main_model(variant_to_visualize, this_predictor, grp, ph),
+                 sig_pheno$phenotype, sig_pheno$group)
+  
+    print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
+  }
+}
+```
+
+## Top 5 RESI regions within vol / sa / th
+```{r modelvis-top5-resi, results = 'asis', fig.width = 10, fig.height = 8}
+if (params$model_vis == TRUE) {
+  for (this_predictor in predictors) {
+    for (region_type in region_types) {
+  
+      top5 <- resi_stats %>%
+        filter(variant == variant_to_visualize, predictor == this_predictor,
+               group == region_type, p_adj < 0.05) %>%
+        arrange(desc(RESI)) %>%
+        head(5)
+  
+      if (nrow(top5) == 0) next
+  
+      plots <- lapply(top5$phenotype, function(ph) plot_main_model(variant_to_visualize, this_predictor, region_type, ph))
+      print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
+    }
+  }
+}
+```
+
+## Significant interactions
+```{r modelvis-sig-fct, echo = TRUE}
+# `int_stats` is the union of columns across all three interaction_types
+# (bind_rows() fills whatever a given row's type didn't produce with NA), so
+# a row is "significant" if:
+#  - continuous: its own int_p_adj < .05
+#  - ordered:    ANY of its int1_p_adj, int2_p_adj, ... (per-level difference
+#                smooths vs. the reference level) is < .05
+#  - categorical: ANY of its per-level <level>_p_adj columns is < .05 -- there
+#                is no int_p_adj/pred_p_adj at all for categorical rows (no
+#                bare s(predictor) or ti() term exists in that formula), so
+#                those two columns are excluded from the level-column search
+#                to avoid a name collision with a moderator level literally
+#                called "int1" or "pred" (the known tradeoff of matching by
+#                column name instead of a stored, unambiguous type tag)
+if (params$model_vis == TRUE) {
+  p_adj_cols     <- grep("_p_adj$", names(int_stats), value = TRUE)
+  ordered_cols   <- grep("^int[0-9]+_p_adj$", p_adj_cols, value = TRUE)
+  categorical_cols <- setdiff(p_adj_cols, c("pred_p_adj", "int_p_adj", ordered_cols))
+  
+  any_below <- function(df, cols, thresh = 0.05) {
+    if (length(cols) == 0) return(rep(FALSE, nrow(df)))
+    mat <- as.matrix(df[, cols, drop = FALSE])
+    apply(mat < thresh, 1, any, na.rm = TRUE)
+  }
+  
+  int_stats$any_sig <- NA
+  cont_idx <- int_stats$interaction_type == "continuous"
+  ord_idx  <- int_stats$interaction_type == "ordered"
+  cat_idx  <- int_stats$interaction_type == "categorical"
+  
+  int_stats$any_sig[cont_idx] <- int_stats$int_p_adj[cont_idx] < 0.05
+  int_stats$any_sig[ord_idx]  <- any_below(int_stats[ord_idx, ], ordered_cols)
+  int_stats$any_sig[cat_idx]  <- any_below(int_stats[cat_idx, ], categorical_cols)
+}
+```
+
+```{r modelvis-interactions, results = 'asis', fig.width = 9, fig.height = 6}
+# visualize_model_int() already dispatches on the moderator's actual R class
+# (factor/ordered/numeric), so the same plotting call below works unchanged
+# across all three interaction_types -- only the significance filter above
+# needed to branch.
+if (params$model_vis == TRUE) {
+  sig_int <- int_stats %>%
+    filter(variant == variant_to_visualize, any_sig)
+  
+  for (i in seq_len(nrow(sig_int))) {
+    row <- sig_int[i, ]
+    run_key <- paste(row$predictor, row$group, sep = "_")
+    modobj <- models[[row$variant]][[run_key]]$interactions[[row$moderator_label]][[row$phenotype]]
+  
+    p <- visualize_model_int(
+      modobj = modobj,
+      smooth_var = row$predictor,
+      int_var = row$moderator,
+      plabels = glue("{row$phenotype} x {row$moderator_label}"),
+      derivative_plot = FALSE
+    ) +
+      predictor_x_scale(row$predictor) +
+      outcome_y_scale() +
+      labs(x = predictor_label(row$predictor))
+  
+    print(p)
+  }
+}
+```

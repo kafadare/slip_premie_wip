@@ -1,25 +1,90 @@
 # Functions to fit models
 
-fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL, 
+# Remove exact duplicate top-level terms from a model formula built as a
+# pasted string (e.g. when a moderator is also passed in `covariates`, so it
+# ends up both as its own term and inside the covariate string). Splits the
+# RHS on '+' at paren-depth 0, drops repeats (keeping the first occurrence),
+# and prints the original and de-duplicated formulas whenever it changes
+# anything, so silent formula edits are never silent.
+dedupe_formula_terms <- function(formula_str) {
+  parts <- strsplit(formula_str, "~", fixed = TRUE)[[1]]
+  lhs <- trimws(parts[1])
+  rhs <- trimws(paste(parts[-1], collapse = "~"))
+
+  chars <- strsplit(rhs, "")[[1]]
+  depth <- 0
+  start <- 1
+  terms_raw <- character(0)
+  for (i in seq_along(chars)) {
+    ch <- chars[i]
+    if (ch == "(") depth <- depth + 1
+    if (ch == ")") depth <- depth - 1
+    if (ch == "+" && depth == 0) {
+      terms_raw <- c(terms_raw, substr(rhs, start, i - 1))
+      start <- i + 1
+    }
+  }
+  terms_raw <- c(terms_raw, substr(rhs, start, nchar(rhs)))
+  terms_trimmed <- trimws(terms_raw)
+
+  is_dup <- duplicated(terms_trimmed)
+  final_str <- paste0(lhs, " ~ ", paste(terms_trimmed[!is_dup], collapse = " + "))
+
+  if (any(is_dup)) {
+    message("Repeated term(s) removed from formula: ", paste(terms_trimmed[is_dup], collapse = ", "))
+    message("  built formula:  ", formula_str)
+    message("  formula used:   ", final_str)
+  }
+
+  final_str
+}
+
+fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL,
                            random_effect = NULL, save = FALSE, save_dir = NULL, 
-                           save_name = NULL){
+                           save_name = NULL,
+                           method = "fREML",
+                           fx = FALSE,
+                           k = 10) {
   
-  if(save && (is.null(save_dir) || is.null(save_name))) stop("save_dir and save_name required when save = TRUE")
+  if(save && (is.null(save_dir) || is.null(save_name))) {
+    stop("save_dir and save_name required when save = TRUE")
+  }
   
-  models <- lapply(phenotypes, function(ph){
-    covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
-    re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
+  models <- lapply(phenotypes, function(ph) {
+    
+    covs <- if(!is.null(covariates)) {
+      paste(covariates, collapse = " + ")
+    } else ""
+    
+    re <- if(!is.null(random_effect)) {
+      paste0("s(", random_effect, ", bs='re')")
+    } else ""
     
     rhs <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
     
-    f_full <- as.formula(paste(ph, "~ s(", predictor, ")",
-                               if(rhs != "") paste("+", rhs)))
-    f_lin  <- as.formula(paste(ph, "~ s(", predictor, ", m=c(2,0)) +", predictor,
-                               if(rhs != "") paste("+", rhs)))
+    fx_arg <- if(fx) ", fx = TRUE" else ""
+    
+    f_full <- as.formula(
+      paste0(
+        ph, " ~ s(", predictor, ", k = ", k, fx_arg, ")",
+        if(rhs != "") paste0(" + ", rhs)
+      )
+    )
+    
+    f_lin <- as.formula(
+      paste0(
+        ph, " ~ s(", predictor, ", m = c(2,0)) + ", predictor,
+        if(rhs != "") paste0(" + ", rhs)
+      )
+    )
     
     list(
-      full = mgcv::bam(f_full, data = data, method = "fREML", discrete = TRUE),
-      nolin = mgcv::bam(f_lin, data = data, method = "fREML", discrete = TRUE)
+      full = mgcv::bam(
+        f_full, data = data, method = method, discrete = TRUE
+      ),
+      nolin = mgcv::bam(
+        f_lin, data = data, method = method, discrete = TRUE
+      )
     )
   })
   
@@ -27,31 +92,99 @@ fit_bam_models <- function(data, phenotypes, predictor, covariates = NULL,
   attr(models, "predictor") <- predictor
   attr(models, "covariates") <- covariates
   attr(models, "random_effect") <- random_effect
+  attr(models, "fx") <- fx
+  attr(models, "k") <- k
   attr(models, "type") <- "main_effect"
   
   if(save) saveRDS(models, file.path(save_dir, save_name))
   invisible(models)
 }
 
-fit_bam_interactions <- function(data, phenotypes, predictor, moderator, 
-                                 covariates = NULL, random_effect = NULL, save = FALSE, save_dir = NULL, 
-                                 save_name = NULL){
-  if(save && (is.null(save_dir) || is.null(save_name))) stop("save_dir and save_name required when save = TRUE")
+
+fit_bam_interactions <- function(data, 
+                                 phenotypes, 
+                                 predictor, 
+                                 moderator, 
+                                 interaction = "continuous",
+                                 covariates = NULL, 
+                                 random_effect = NULL, 
+                                 save = FALSE, 
+                                 save_dir = NULL, 
+                                 save_name = NULL,
+                                 method = "fREML",
+                                 fx = FALSE,
+                                 k = 10) {
   
-  models <- lapply(phenotypes, function(ph){
-    covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
-    re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
-    rhs_base <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
+  if(save && (is.null(save_dir) || is.null(save_name))) {
+    stop("save_dir and save_name required when save = TRUE")
+  }
+  
+  models <- lapply(phenotypes, function(ph) {
     
-    f <- as.formula(paste(ph, "~ s(", predictor, ") + s(", moderator, ") + ti(", predictor, ",", moderator, ")",
-                            if(rhs_base != "") paste("+", rhs_base)))
-      mod <- mgcv::bam(f, data = data, method = "fREML", discrete = TRUE)
-      mod
+    covs <- if(!is.null(covariates)) {
+      paste(covariates, collapse = " + ")
+    } else ""
+    
+    re <- if(!is.null(random_effect)) {
+      paste0("s(", random_effect, ", bs='re')")
+    } else ""
+    
+    rhs_base <- paste(
+      c(covs, re)[c(covs, re) != ""],
+      collapse = " + "
+    )
+    
+    if (interaction == "continuous") {
+
+      f_str <- paste0(
+        ph,
+        " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
+        " + s(", moderator, ", k = ", k, ", fx = ", fx, ")",
+        " + ti(", predictor, ", ", moderator,
+        ", k = c(", k, ", ", k, "), fx = ", fx, ")",
+        if(rhs_base != "") paste0(" + ", rhs_base)
+      )
+
+    } else if(interaction == "categorical") {
+
+      f_str <- paste0(
+        ph,
+        " ~ ", moderator,
+        " + s(", predictor, ", k = ", k,
+        ", by = ", moderator, ", fx = ", fx, ")",
+        if(rhs_base != "") paste0(" + ", rhs_base)
+      )
+
+    } else if (interaction == "ordered") {
+
+      f_str <- paste0(
+        ph,
+        " ~ s(", predictor, ", k = ", k, ", fx = ", fx, ")",
+        " + ", moderator,
+        " + s(", predictor, ", k = ", k,
+        ", by = ", moderator, ", fx = ", fx, ")",
+        if(rhs_base != "") paste0(" + ", rhs_base)
+      )
+
+    } else {
+      stop("interaction must be 'continuous', 'categorical', or 'ordered'")
+    }
+
+    f <- as.formula(dedupe_formula_terms(f_str))
+
+    mgcv::bam(
+      f,
+      data = data,
+      method = method,
+      discrete = TRUE
+    )
   })
   
   names(models) <- phenotypes
   attr(models, "predictor") <- predictor
   attr(models, "moderator") <- moderator
+  attr(models, "fx") <- fx
+  attr(models, "k") <- k
   attr(models, "type") <- "interaction"
   
   if(save) saveRDS(models, file.path(save_dir, save_name))

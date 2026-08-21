@@ -89,9 +89,9 @@ namemap <- read.csv(glue("{params$vars_path}name_mapping.csv"))
 # for BWP plots even though a distinct bwp_color existed. Only GA and BWP are
 # plotted going forward (birth_weight_kg was dropped as a predictor), so
 # bw_color isn't used here at all.
-ga_color  <- "#6D8299"  # muted blue-grey  -- Gestational Age
-bwp_color <- "#A68A64"  # muted tan/gold   -- Birth Weight Percentile
-bw_color = "#709085" # muted green -- Birth Weight
+ga_color  <- "blue" # muted blue-grey  -- Gestational Age
+bwp_color <- "red"  # muted tan/gold   -- Birth Weight Percentile
+bw_color = "green" # muted green -- Birth Weight
 
 # limits = c(-0.3, 0.3)
 # low_color = "#4878CF" # blue
@@ -105,7 +105,7 @@ variant_order <- c("nocovar", "eTIV", "ADI", "eTIV_ADI", "wh", "eTIV_wh",
                     "neonatal_dx", "eTIV_neonatal_dx")
 
 make_variant_family <- function(base_color, variants) {
-  setNames(colorRampPalette(c("#F0F0F0", base_color))(length(variants)), variants)
+  setNames(colorRampPalette(c("#CCCCCC", base_color))(length(variants)), variants)
 }
 
 predictor_colors <- list(

@@ -1054,7 +1054,7 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "GA partial R2 vol",
+  title = "GA avg der vol",
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1068,68 +1068,96 @@ plot_heatmap(tables_list,
   atlas = "aseg",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "GA partial R2 vol",
-  limits = c(0, 0.075)
+  title = "GA avg der vol",
+  limits = c(-0.18, 0.18),
+  low_color = "#2160B8",
+  mid_color = "white",
+  high_color = "#B82133",
+  na_color = "grey90"
 ))
 
 (ga_avgder_sa <- plot_brain_map(
   table = ga_sp_table_sa,
-  value_col = "avg_first_derivative",
+  value_col = "avg_first_deriv",
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "GA partial R2 sa",
-  limits = c(0, 0.075)
+  title = "GA avg der sa",
+  limits = c(-0.18, 0.18),
+  low_color = "#2160B8",
+  mid_color = "white",
+  high_color = "#B82133",
+  na_color = "grey90"
 ))
 
 (ga_avgder_th <- plot_brain_map(
   table = ga_sp_table_th,
-  value_col = "avg_first_derivative",
+  value_col = "avg_first_deriv",
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "GA partial R2 th",
-  limits = c(0, 0.075)
+  title = "GA avg der th",
+  limits = c(-0.18, 0.18),
+  low_color = "#2160B8",
+  mid_color = "white",
+  high_color = "#B82133",
+  na_color = "grey90"
 ))
 
 (bwp_avgder_dkt_vol <- plot_brain_map(
   table = bwp_sp_table_vol,
-  value_col = "avg_first_derivative",
+  value_col = "avg_first_deriv",
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp partial R2 vol",
-  limits = c(0, 0.075)
+  title = "bwp avg der vol",
+  limits = c(-0.18, 0.18),
+  low_color = "#2160B8",
+  mid_color = "white",
+  high_color = "#B82133",
+  na_color = "grey90"
 ))
 
 (bwp_avgder_aseg_vol <- plot_brain_map(
   table = bwp_sp_table_vol,
-  value_col = "avg_first_derivative",
+  value_col = "avg_first_deriv",
   atlas = "aseg",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp partial R2 vol",
-  limits = c(0, 0.075)
+  title = "bwp avg der vol",
+  limits = c(-0.18, 0.18),
+  low_color = "#2160B8",
+  mid_color = "white",
+  high_color = "#B82133",
+  na_color = "grey90"
 ))
 
 (bwp_avgder_sa <- plot_brain_map(
   table = bwp_sp_table_sa,
-  value_col = "avg_first_derivative",
+  value_col = "avg_first_deriv",
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp partial R2 sa",
-  limits = c(0, 0.075)
+  title = "bwp avg der sa",
+  limits = c(-0.18, 0.18),
+  low_color = "#2160B8",
+  mid_color = "white",
+  high_color = "#B82133",
+  na_color = "grey90"
 ))
 
 (bwp_avgder_th <- plot_brain_map(
   table = bwp_sp_table_th,
-  value_col = "avg_first_derivative",
+  value_col = "avg_first_deriv",
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
-  title = "bwp partial R2 th",
-  limits = c(0, 0.075)
+  title = "bwp avg der th",
+  limits = c(-0.18, 0.18),
+  low_color = "#2160B8",
+  mid_color = "white",
+  high_color = "#B82133",
+  na_color = "grey90"
 ))
 
 plots<- list(ga_avgder_dkt_vol, ga_avgder_sa, ga_avgder_th, ga_avgder_aseg_vol,
@@ -1148,6 +1176,8 @@ ga_bwp_avgder_grid <- wrap_plots(plots, ncol = 4) +
   theme(
     legend.position = "bottom"
   )
+
+ga_bwp_avgder_grid
 
 if(save_figs){
   panel_save(ga_bwp_avgder_grid, "ga_bwp_avgder_grid", "svg", plot_output_folder,

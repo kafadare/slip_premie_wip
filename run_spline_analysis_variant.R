@@ -59,6 +59,14 @@ require(RESI)
 # ---- Command line args ----
 args <- commandArgs(trailingOnly = TRUE)
 
+# args <- c("/mnt/arcus/lab/users/kafadare/slip_premie_wip/",
+#           "/mnt/arcus/lab/users/kafadare/slip_brain_vars/",
+#           "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_distinct.csv",
+#           "/mnt/arcus/lab/users/kafadare/slip_premie_results/",
+#           "gestational_age,bwp_fen,birth_weight_kg",
+#           "nocovar",
+#           1, 1, 5, "cmd")
+
 code_path <- args[1]
 vars_path <- args[2]
 qnorm_centiles_path <- args[3]
@@ -111,12 +119,34 @@ df.zscore_full <- read.csv(qnorm_centiles_path)
 median_th_mpr_flag <- any(grepl(".median", names(df.zscore_full)))
 th_qc_var <- if (median_th_mpr_flag) "euler_mean_mpr" else "qc_var"
 
+# This function removes outliers assuming input is already z-scored. CMD outliers have already been removed, so leave those out of this function.
 df.zscore <- remove_outliers(
   df.zscore_full,
   cols = c(global_self_var, global_other_vars, global_meanthick_var,
-           vol_vars, sa_vars, th_vars, cmd_vars, "bwp_fen"),
+           vol_vars, sa_vars, th_vars, "bwp_fen"),
   limit = rm_sd
 )
+# Save information on outliers removed
+outlier_summary_path <- file.path(stats_folder, "outlier_removal_summary.csv")
+
+if (!file.exists(outlier_summary_path)) {
+  outlier_cols <- intersect(
+    c(global_self_var, global_other_vars, global_meanthick_var,
+      vol_vars, sa_vars, th_vars, "bwp_fen"),
+    names(df.zscore_full)
+  )
+  
+  outlier_summary <- data.frame(
+    phenotype = outlier_cols,
+    n_total   = sapply(outlier_cols, function(col) sum(!is.na(df.zscore_full[[col]]))),
+    n_removed = sapply(outlier_cols, function(col) {
+      sum(!is.na(df.zscore_full[[col]]) & is.na(df.zscore[[col]]))
+    })
+  )
+  outlier_summary$pct_removed <- 100 * outlier_summary$n_removed / outlier_summary$n_total
+  
+  write.csv(outlier_summary, outlier_summary_path, row.names = FALSE)
+}
 rm(df.zscore_full)
 gc()
 
@@ -195,7 +225,7 @@ variants <- list(
   ),
   eTIV_neonatal_dx = list(
     group_covariates = list(
-      global_self = c("qc_var"),
+      global_self = c("qc_var", "neonatal_dx"),
       global_other = c("qc_var", "global_eTIV", "neonatal_dx"),
       global_meanthick = c(th_qc_var, "global_eTIV", "neonatal_dx"),
       vol = c("qc_var", "global_eTIV", "neonatal_dx"),
@@ -203,13 +233,13 @@ variants <- list(
       th = c(th_qc_var, "global_MeanThickness", "neonatal_dx")
     ),
     moderators = list(
-      age = list(var = "age_days_adj", type = "continuous"),
-      neo_dx = list(var = "neonatal_dx", type = "categorical")
+      age = list(var = "age_days_adj", type = "continuous")
+      #neo_dx = list(var = "neonatal_dx", type = "categorical")
     )
   ),
   neonatal_dx = list(
     group_covariates = list(
-      global_self = c("qc_var"),
+      global_self = c("qc_var" , "neonatal_dx"),
       global_other = c("qc_var", "neonatal_dx"),
       global_meanthick = c(th_qc_var, "neonatal_dx"),
       vol = c("qc_var", "neonatal_dx"),
@@ -217,8 +247,8 @@ variants <- list(
       th = c(th_qc_var, "neonatal_dx")
     ),
     moderators = list(
-      age = list(var = "age_days_adj", type = "continuous"),
-      neo_dx = list(var = "neonatal_dx", type = "categorical")
+      age = list(var = "age_days_adj", type = "continuous")
+      #neo_dx = list(var = "neonatal_dx", type = "categorical")
     )
   )
 )
@@ -250,10 +280,6 @@ build_phenotype_groups <- function(variant_name) {
   )
 }
 
-# phenotype_groups CLI selector uses these higher-level names rather than the
-# finer-grained internal group keys above -- "global" expands to every
-# non-CMD global group, "cmd" expands to every CMD group, "vol"/"sa"/"th"
-# each map to just their one regional group.
 phenotype_group_aliases <- list(
   global = c("global_self", "global_other", "global_meanthick"),
   vol = "vol",

@@ -1097,7 +1097,11 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  title = "GA avg der vol",
+=======
   title = "GA avgder vol",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1110,7 +1114,12 @@ plot_heatmap(tables_list,
   value_col = "avg_first_deriv",
   atlas = "aseg",
   p_col = "full_p_adj",
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  p_filter = TRUE,
+  title = "GA avg der vol",
+=======
   title = "GA avgder vol",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1124,7 +1133,11 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  title = "GA avg der sa",
+=======
   title = "GA avgder sa",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1138,7 +1151,11 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  title = "GA avg der th",
+=======
     title = "GA avgder th",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1152,7 +1169,11 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  title = "bwp avg der vol",
+=======
   title = "BWP avgder vol",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1166,7 +1187,11 @@ plot_heatmap(tables_list,
   atlas = "aseg",
   p_col = "full_p_adj",
   p_filter = TRUE,
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  title = "bwp avg der vol",
+=======
   title = "BWP avgder vol",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1180,7 +1205,11 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  title = "bwp avg der sa",
+=======
   title = "BWP avgder sa",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",
@@ -1194,7 +1223,11 @@ plot_heatmap(tables_list,
   atlas = "dk",
   p_col = "full_p_adj",
   p_filter = TRUE,
+<<<<<<< HEAD:slipga_spline_analysis.Rmd
+  title = "bwp avg der th",
+=======
   title = "BWP avgder th",
+>>>>>>> 19ac290b46105930f4ebdbbcc603ea388354b5c9:slipga_spline_analysis_NOglobalcovar.Rmd
   limits = c(-0.18, 0.18),
   low_color = "#2160B8",
   mid_color = "white",

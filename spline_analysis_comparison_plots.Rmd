@@ -11,6 +11,7 @@ params:
   vars_path: "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
   code_path: "/mnt/arcus/lab/users/kafadare/slip_premie_wip/"
   model_vis: FALSE
+  save_plots: TRUE
   variant_to_visualize: "eTIV"
 editor_options:
   chunk_output_type: console
@@ -29,6 +30,7 @@ if (!exists("params")) {
     vars_path = "/mnt/arcus/lab/users/kafadare/slip_brain_vars/",
     code_path = "/mnt/arcus/lab/users/kafadare/slip_premie_wip/",
     model_vis = FALSE,
+    save_plots = TRUE,
     variant_to_visualize = "eTIV"
   )
 }
@@ -122,10 +124,10 @@ covariate_pairs <- list(
   c("nocovar", "eTIV"),
   c("nocovar", "ADI"),
   c("nocovar", "wh"),
-  #c("nocovar", "neonatal_dx"),
+  c("nocovar", "neonatal_dx"),
   c("eTIV", "eTIV_ADI"),
-  c("eTIV", "eTIV_wh")
-  #c("eTIV", "eTIV_neonatal_dx")
+  c("eTIV", "eTIV_wh"),
+  c("eTIV", "eTIV_neonatal_dx")
 )
 
 predictors <- c("gestational_age", "bwp_fen")
@@ -221,19 +223,105 @@ plot_pair_lollipop <- function(df, this_predictor, groups, pair, value_col, p_co
 for (this_predictor in predictors) {
   for (pair in covariate_pairs) {
 
-    print(plot_pair_lollipop(main_stats, this_predictor, global_groups, pair,
-                              "r2_full_vs_none", "full_p_adj", "Global vars (Partial R2)"))
-    print(plot_pair_lollipop(resi_stats, this_predictor, global_groups, pair,
-                              "RESI", "p_adj", "Global vars (RESI)"))
-    print(plot_pair_lollipop(main_stats, this_predictor, cmd_groups, pair,
-                              "r2_full_vs_none", "full_p_adj", "CMD (Partial R2)"))
-    print(plot_pair_lollipop(resi_stats, this_predictor, cmd_groups, pair,
-                              "RESI", "p_adj", "CMD (RESI)"))
+    pair_label <- paste(pair, collapse = "_vs_")
+
+    p_global_r2 <- plot_pair_lollipop(main_stats, this_predictor, global_groups, pair,
+                                       "r2_full_vs_none", "full_p_adj", "Global vars (Partial R2)")
+    p_global_resi <- plot_pair_lollipop(resi_stats, this_predictor, global_groups, pair,
+                                         "RESI", "p_adj", "Global vars (RESI)")
+    p_cmd_r2 <- plot_pair_lollipop(main_stats, this_predictor, cmd_groups, pair,
+                                    "r2_full_vs_none", "full_p_adj", "CMD (Partial R2)")
+    p_cmd_resi <- plot_pair_lollipop(resi_stats, this_predictor, cmd_groups, pair,
+                                      "RESI", "p_adj", "CMD (RESI)")
+
+    print(p_global_r2)
+    print(p_global_resi)
+    print(p_cmd_r2)
+    print(p_cmd_resi)
+
+    if (params$save_plots == TRUE) {
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_r2.png"),
+             p_global_r2, width = 9, height = 6)
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_resi.png"),
+             p_global_resi, width = 9, height = 6)
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_r2.png"),
+             p_cmd_r2, width = 9, height = 6)
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_resi.png"),
+             p_cmd_resi, width = 9, height = 6)
+    }
   }
 }
 ```
 
 # Brain Maps (Vol/SA/TH, Partial R2 & RESI, GA top / BWP bottom)
+
+## define region types
+```{r}
+region_types <- c("vol", "sa", "th")
+```
+
+## single variant brain map plots
+```{r}
+# Single-variant brain map: plots df[[value_col]] directly for one `variant`
+# (e.g. "nocovar"), instead of the pair-wise difference build_diff_table() computes.
+build_variant_table <- function(df, this_predictor, group, variant, value_col, p_col, region_type) {
+  d <- df %>%
+    filter(predictor == this_predictor, group == !!group, variant == !!variant) %>%
+    select(phenotype, val = all_of(value_col), p = all_of(p_col))
+
+  add_ggseg_label(d, region_type)
+}
+
+plot_variant_brainmap <- function(df, this_predictor, group, variant, value_col, p_col, region_type,
+                                   limits = NULL, low_color = "#F2F0EC", mid_color = "#D99A9A", high_color = "#D95C72") {
+  table <- build_variant_table(df, this_predictor, group, variant, value_col, p_col, region_type)
+
+  plot_brain_map(
+    table = table,
+    value_col = "val",
+    atlas = "dk",
+    p_col = "p",
+    p_filter = TRUE,
+    p_thresh = 0.05,
+    title = glue("{region_type} {value_col}: {variant}"),
+    limits = limits,
+    low_color = low_color, mid_color = mid_color, high_color = high_color
+  )
+}
+
+# GA (top) / BWP (bottom) grid, same layout convention as plot_pair_brainmap_grid.
+plot_variant_brainmap_grid <- function(df, group, variant, value_col, p_col, region_type, limits = NULL) {
+  plots <- lapply(predictors, function(p) {
+    plot_variant_brainmap(df, p, group, variant, value_col, p_col, region_type, limits) +
+      labs(subtitle = predictor_label(p))
+  })
+  wrap_plots(plots, ncol = 1) & plot_layout(guides = "collect")
+}
+```
+
+```{r}
+for (region_type in region_types) {
+
+  p_nocovar_r2 <- plot_variant_brainmap_grid(main_stats, region_type, "nocovar",
+                                              "r2_full_vs_none", "full_p_adj", region_type,
+                                              limits = (0, 0.09))  # R2 is non-negative; set e.g. c(0, 0.05) once you know the range
+  p_nocovar_resi <- plot_variant_brainmap_grid(resi_stats, region_type, "nocovar",
+                                                "RESI", "p_adj", region_type,
+                                                limits = (0, 0.31))  # set e.g. c(-0.3, 0.3) for a diverging scale if desired
+
+  print(p_nocovar_r2)
+  print(p_nocovar_resi)
+
+  if (params$save_plots == TRUE) {
+    ggsave(glue("{plot_output_folder}brainmap_nocovar_{region_type}_r2.png"),
+           p_nocovar_r2, width = 6, height = 10)
+    ggsave(glue("{plot_output_folder}brainmap_nocovar_{region_type}_resi.png"),
+           p_nocovar_resi, width = 6, height = 10)
+  }
+}
+```
+
+## difference plots
 ```{r brainmap-fcts, echo = TRUE}
 # Difference map: pair[2]'s value minus pair[1]'s value, restricted to regions
 # significant (p < .05) in at least one of the two variants being compared.
@@ -282,8 +370,6 @@ plot_pair_brainmap_grid <- function(df, group, pair, value_col, p_col, region_ty
 ```
 
 ```{r brainmap-plots, results = 'asis', fig.width = 6, fig.height = 10}
-region_types <- c(vol = "vol", sa = "sa", th = "th")
-
 for (pair in covariate_pairs) {
   for (region_type in region_types) {
 

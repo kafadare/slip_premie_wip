@@ -369,6 +369,7 @@ nocovar_r2_limits   <- c(0, 0.09)
 nocovar_resi_limits <- c(0, 0.31)
 ```
 
+### no covar
 ```{r}
 p_nocovar_r2 <- plot_variant_brainmap_page(main_stats, "nocovar", "r2_full_vs_none", "full_p_adj",
                                             limits = nocovar_r2_limits)
@@ -386,7 +387,27 @@ if (params$save_plots == TRUE) {
 }
 ```
 
+### eTIV covar
+```{r}
+p_nocovar_r2 <- plot_variant_brainmap_page(main_stats, "eTIV", "r2_full_vs_none", "full_p_adj",
+                                            limits = nocovar_r2_limits)
+p_nocovar_resi <- plot_variant_brainmap_page(resi_stats, "eTIV", "RESI", "p_adj",
+                                              limits = nocovar_resi_limits)
+
+print(p_nocovar_r2)
+print(p_nocovar_resi)
+
+if (params$save_plots == TRUE) {
+  ggsave(glue("{plot_output_folder}brainmap_etiv_r2.svg"),
+         p_nocovar_r2, width = 16, height = 6)
+  ggsave(glue("{plot_output_folder}brainmap_etiv_resi.svg"),
+         p_nocovar_resi, width = 16, height = 6)
+}
+```
+
 ## difference plots
+
+### helper functions
 ```{r brainmap-fcts, echo = TRUE}
 # Difference map: pair[2]'s value minus pair[1]'s value, restricted to regions
 # significant (p < .05) in at least one of the two variants being compared.
@@ -464,14 +485,49 @@ plot_pair_brainmap_page <- function(df, pair, value_col, p_col, limits) {
 }
 ```
 
+### find appropriate color range for plots
 ```{r}
-# Shared color-scale limits for the difference brain map grids.
-diff_r2_limits   <- c(-0.025, 0.025)
-diff_resi_limits <- c(-0.2, 0.2)
+# ---- Find shared colorbar limits for the difference brain map grids ----
+# Mirrors exactly what plot_pair_brainmap_page() ends up plotting: for every
+# (pair, predictor, brainmap_cols column) combination, build the diff table
+# and keep only the regions that pass the same p_filter (min_p < 0.05) the
+# plots use -- so the range reflects what's actually shown, not values that
+# get dropped as non-significant and never appear on the map.
+diff_value_range <- function(df, value_col, p_col, p_thresh = 0.05) {
+  vals <- unlist(lapply(covariate_pairs, function(pair) {
+    unlist(lapply(predictors, function(this_predictor) {
+      unlist(lapply(brainmap_cols, function(col) {
+        t <- build_diff_table(df, this_predictor, col$region_type, pair,
+                               value_col, p_col, col$region_type, atlas = col$atlas)
+        t$diff[t$min_p < p_thresh]
+      }))
+    }))
+  }))
+  range(vals, na.rm = TRUE)
+}
+
+r2_diff_range   <- diff_value_range(main_stats, "r2_full_vs_none", "full_p_adj")
+resi_diff_range <- diff_value_range(resi_stats, "RESI", "p_adj")
+
+# Symmetric versions, since plot_brain_map()'s mid_color sits at mean(limits)
+# rather than at 0 -- for a diverging (blue-white-red) diff scale centered on
+# zero, use these instead of the raw min/max above.
+r2_diff_limits_sym   <- c(-1, 1) * max(abs(r2_diff_range))
+resi_diff_limits_sym <- c(-1, 1) * max(abs(resi_diff_range))
+
+print(list(r2_diff_range = r2_diff_range, resi_diff_range = resi_diff_range,
+           r2_diff_limits_sym = r2_diff_limits_sym, resi_diff_limits_sym = resi_diff_limits_sym))
 ```
 
+```{r}
+# Shared color-scale limits for the difference brain map grids.
+diff_r2_limits   <- c(-0.065, 0.065)
+diff_resi_limits <- c(-0.24, 0.24)
+```
+
+### plot and save
 ```{r brainmap-plots, results = 'asis', fig.width = 16, fig.height = 6}
-for (pair in covariate_pairs) {
+for (pair in covariate_pairs[4]) {
   pair_label <- paste(pair, collapse = "_vs_")
 
   p_pair_r2 <- plot_pair_brainmap_page(main_stats, pair, "r2_full_vs_none", "full_p_adj",
@@ -491,75 +547,10 @@ for (pair in covariate_pairs) {
 }
 ```
 
-# Model Visualization
-```{r modelvis-fcts, echo = TRUE}
-if (params$model_vis == TRUE) {
-  get_main_model <- function(variant, this_predictor, group, phenotype) {
-    run_key <- paste(this_predictor, group, sep = "_")
-    models[[variant]][[run_key]]$main[[phenotype]]$full
-  }
-  
-  plot_main_model <- function(variant, this_predictor, group, phenotype) {
-    visualize_spline_model(
-      modobj = get_main_model(variant, this_predictor, group, phenotype),
-      smooth_var = this_predictor,
-      plot_og_scale = FALSE,
-      mean_lookup = mean_lookup_distinct,
-      sd_lookup = sd_lookup_distinct,
-      pnorm_smooth_var = FALSE,
-      plabels = phenotype,
-      color_point = if (this_predictor == "gestational_age") ga_color else bwp_color,
-      color_line  = if (this_predictor == "gestational_age") ga_color else bwp_color
-    ) +
-      predictor_x_scale(this_predictor) +
-      outcome_y_scale() +
-      labs(x = predictor_label(this_predictor), title = phenotype) +
-      theme(axis.title.y = element_blank())
-  }
-}
-```
 
-## Significant global & CMD models
-```{r modelvis-global-cmd, results = 'asis', fig.width = 10, fig.height = 8}
-if (params$model_vis == TRUE) {
-  for (this_predictor in predictors) {
-    sig_pheno <- main_stats %>%
-      filter(variant == variant_to_visualize, predictor == this_predictor,
-             group %in% c(global_groups, cmd_groups), full_p_adj < 0.05)
-  
-    if (nrow(sig_pheno) == 0) next
-  
-    plots <- Map(function(ph, grp) plot_main_model(variant_to_visualize, this_predictor, grp, ph),
-                 sig_pheno$phenotype, sig_pheno$group)
-  
-    print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
-  }
-}
-```
-
-## Top 5 RESI regions within vol / sa / th
-```{r modelvis-top5-resi, results = 'asis', fig.width = 10, fig.height = 8}
-if (params$model_vis == TRUE) {
-  for (this_predictor in predictors) {
-    for (region_type in region_types) {
-  
-      top5 <- resi_stats %>%
-        filter(variant == variant_to_visualize, predictor == this_predictor,
-               group == region_type, p_adj < 0.05) %>%
-        arrange(desc(RESI)) %>%
-        head(5)
-  
-      if (nrow(top5) == 0) next
-  
-      plots <- lapply(top5$phenotype, function(ph) plot_main_model(variant_to_visualize, this_predictor, region_type, ph))
-      print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
-    }
-  }
-}
-```
-
-## Significant interactions
+# Significant interactions
 ```{r modelvis-sig-fct, echo = TRUE}
+int_stats$ interaction_type = "continuous"
 # `int_stats` is the union of columns across all three interaction_types
 # (bind_rows() fills whatever a given row's type didn't produce with NA), so
 # a row is "significant" if:
@@ -595,17 +586,16 @@ if (params$model_vis == TRUE) {
 }
 ```
 
+## Interactions across different covariate models
 ```{r}
-interactions_summary <- int_stats %>% group_by(predictor, variant) %>%
+interactions_summary <- int_stats %>%
+  filter(predictor %in% c("gestational_age", "bwp_fen")) %>%
+  group_by(predictor, variant) %>%
   summarise(
     n_sig = sum(any_sig, na.rm = TRUE),
     phenotypes = list(phenotype[any_sig]),
     .groups = "drop"
   )
-
-interactions_summary
-
-
 
 View(
 interactions_summary %>%
@@ -618,6 +608,76 @@ interactions_summary %>%
 )
 ```
 
+# Model Visualization
+```{r modelvis-fcts, echo = TRUE}
+if (params$model_vis == TRUE) {
+  get_main_model <- function(variant, this_predictor, group, phenotype) {
+    run_key <- paste(this_predictor, group, sep = "_")
+    models[[run_key]]$main[[phenotype]]$full
+  }
+  
+  plot_main_model <- function(variant, this_predictor, group, phenotype) {
+    visualize_spline_model(
+      modobj = get_main_model(variant, this_predictor, group, phenotype),
+      smooth_var = this_predictor,
+      plot_og_scale = FALSE,
+      mean_lookup = mean_lookup_distinct,
+      sd_lookup = sd_lookup_distinct,
+      pnorm_smooth_var = FALSE,
+      plabels = phenotype,
+      color_point = if (this_predictor == "gestational_age") ga_color else bwp_color,
+      color_line  = if (this_predictor == "gestational_age") ga_color else bwp_color
+    ) +
+      predictor_x_scale(this_predictor) +
+      outcome_y_scale() +
+      labs(x = predictor_label(this_predictor), title = phenotype) +
+      theme(axis.title.y = element_blank())
+  }
+}
+```
+
+## Significant global & CMD models
+```{r modelvis-global-cmd, results = 'asis', fig.width = 10, fig.height = 8}
+if (params$model_vis == TRUE) {
+  for (this_predictor in predictors) {
+    sig_pheno <- main_stats %>%
+      filter(predictor %in% c("bwp_fen")) %>%
+      filter(variant == variant_to_visualize, predictor == this_predictor,
+             group %in% c(global_groups, cmd_groups), full_p_adj < 0.05)
+  
+    if (nrow(sig_pheno) == 0) next
+  
+    plots <- Map(function(ph, grp) plot_main_model(variant_to_visualize, this_predictor, grp, ph),
+                 sig_pheno$phenotype, sig_pheno$group)
+  
+    print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
+  }
+}
+```
+
+## Top 5 RESI regions within vol / sa / th
+```{r modelvis-top5-resi, results = 'asis', fig.width = 10, fig.height = 8}
+if (params$model_vis == TRUE) {
+  for (this_predictor in predictors) {
+    for (region_type in region_types) {
+  
+      top5 <- resi_stats %>%
+        filter(predictor %in% c("gestational_age", "bwp_fen")) %>%
+        filter(variant == variant_to_visualize, predictor == this_predictor,
+               group == region_type, p_adj < 0.05) %>%
+        arrange(desc(RESI)) %>%
+        head(5)
+  
+      if (nrow(top5) == 0) next
+  
+      plots <- lapply(top5$phenotype, function(ph) plot_main_model(variant_to_visualize, this_predictor, region_type, ph))
+      print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
+    }
+  }
+}
+```
+
+## Significant Interactions
 ```{r modelvis-interactions, results = 'asis', fig.width = 9, fig.height = 6}
 # visualize_model_int() already dispatches on the moderator's actual R class
 # (factor/ordered/numeric), so the same plotting call below works unchanged
@@ -625,6 +685,7 @@ interactions_summary %>%
 # needed to branch.
 if (params$model_vis == TRUE) {
   sig_int <- int_stats %>%
+    filter(predictor %in% c("gestational_age", "bwp_fen")) %>%
     filter(variant == variant_to_visualize, any_sig)
   
   for (i in seq_len(nrow(sig_int))) {

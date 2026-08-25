@@ -49,6 +49,7 @@ require(patchwork)
 require(ggseg)
 require(ggsegDKT)
 require(scales)
+require(svglite)  # needed by ggsave() for .svg output
 
 knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```
@@ -108,8 +109,7 @@ point_size <- 2
 # One color family per predictor, with a distinct, consistent sub-color per
 # covariate_group variant (same variant = same shade everywhere in this
 # document, regardless of which pair it's being compared against).
-variant_order <- c("nocovar", "eTIV", "ADI", "eTIV_ADI", "wh", "eTIV_wh",
-                    "neonatal_dx", "eTIV_neonatal_dx")
+variant_order <- c("nocovar", "eTIV", "ADI", "eTIV_ADI", "wh", "eTIV_wh")
 
 make_variant_family <- function(base_color, variants) {
   setNames(colorRampPalette(c("#CCCCCC", base_color))(length(variants)), variants)
@@ -129,10 +129,8 @@ covariate_pairs <- list(
   c("nocovar", "eTIV"),
   c("nocovar", "ADI"),
   c("nocovar", "wh"),
-  c("nocovar", "neonatal_dx"),
   c("eTIV", "eTIV_ADI"),
-  c("eTIV", "eTIV_wh"),
-  c("eTIV", "eTIV_neonatal_dx")
+  c("eTIV", "eTIV_wh")
 )
 
 predictors <- c("gestational_age", "bwp_fen")
@@ -245,13 +243,13 @@ for (this_predictor in predictors) {
     print(p_cmd_resi)
 
     if (params$save_plots == TRUE) {
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_r2.png"),
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_r2.svg"),
              p_global_r2, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_resi.png"),
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_resi.svg"),
              p_global_resi, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_r2.png"),
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_r2.svg"),
              p_cmd_r2, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_resi.png"),
+      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_resi.svg"),
              p_cmd_resi, width = 9, height = 6)
     }
   }
@@ -269,60 +267,122 @@ region_types <- c("vol", "sa", "th")
 ```{r}
 # Single-variant brain map: plots df[[value_col]] directly for one `variant`
 # (e.g. "nocovar"), instead of the pair-wise difference build_diff_table() computes.
-build_variant_table <- function(df, this_predictor, group, variant, value_col, p_col, region_type) {
+# For region_type == "vol", `atlas` picks which subset of the "vol" group's
+# phenotypes to plot -- DK cortical volumes (aparc_GrayVol_*) or ASEG subcortical
+# volumes (aseg_*) -- since both live under the same "vol" group in
+# main_stats/resi_stats and add_ggseg_label() already knows how to label either.
+build_variant_table <- function(df, this_predictor, group, variant, value_col, p_col, region_type, atlas = "dk") {
   d <- df %>%
     filter(predictor == this_predictor, group == !!group, variant == !!variant) %>%
     select(phenotype, val = all_of(value_col), p = all_of(p_col))
+
+  if (region_type == "vol") {
+    d <- if (atlas == "aseg") {
+      d %>% filter(grepl("^aseg_", phenotype))
+    } else {
+      d %>% filter(grepl("^aparc_GrayVol_", phenotype))
+    }
+  }
 
   add_ggseg_label(d, region_type)
 }
 
 plot_variant_brainmap <- function(df, this_predictor, group, variant, value_col, p_col, region_type,
-                                   limits = NULL, low_color = "#F2F0EC", mid_color = "#D99A9A", high_color = "#D95C72") {
-  table <- build_variant_table(df, this_predictor, group, variant, value_col, p_col, region_type)
+                                   atlas = "dk", limits = NULL, title = "", fill_name = "value",
+                                   low_color = "#F2F0EC", mid_color = "#D99A9A", high_color = "#D95C72") {
+  table <- build_variant_table(df, this_predictor, group, variant, value_col, p_col, region_type, atlas)
 
   plot_brain_map(
     table = table,
     value_col = "val",
-    atlas = "dk",
+    atlas = atlas,
     p_col = "p",
     p_filter = TRUE,
     p_thresh = 0.05,
-    title = glue("{region_type} {value_col}: {variant}"),
+    title = title,
+    fill_name = fill_name,
     limits = limits,
     low_color = low_color, mid_color = mid_color, high_color = high_color
   )
 }
 
-# GA (top) / BWP (bottom) grid, same layout convention as plot_pair_brainmap_grid.
-plot_variant_brainmap_grid <- function(df, group, variant, value_col, p_col, region_type, limits = NULL) {
-  plots <- lapply(predictors, function(p) {
-    plot_variant_brainmap(df, p, group, variant, value_col, p_col, region_type, limits) +
-      labs(subtitle = predictor_label(p))
-  })
-  wrap_plots(plots, ncol = 1) & plot_layout(guides = "collect")
+# Legend title shown on the shared colorbar -- "value_col" is the raw column
+# name (r2_full_vs_none / RESI); readers should see the stat name instead.
+stat_label <- function(value_col) if (value_col == "RESI") "RESI" else "Partial R2"
+
+# Short text panels used as the shared grid's column headers (horizontal) and
+# row headers (vertical), since the brain map panels themselves carry no title.
+col_header_plot <- function(label) {
+  ggplot() + theme_void() +
+    annotate("text", x = 0, y = 0, label = label, size = 5, fontface = "bold") +
+    xlim(-1, 1) + ylim(-1, 1)
+}
+
+row_header_plot <- function(label) {
+  ggplot() + theme_void() +
+    annotate("text", x = 0, y = 0, label = label, angle = 90, size = 5, fontface = "bold") +
+    xlim(-1, 1) + ylim(-1, 1)
+}
+
+row_label_short <- function(predictor) if (predictor == "gestational_age") "GA" else "BWP"
+
+# Columns of the shared grid: DK cortical volume, DK surface area, DK cortical
+# thickness, ASEG subcortical volume.
+brainmap_cols <- list(
+  list(header = "Vol", region_type = "vol", atlas = "dk"),
+  list(header = "SA",  region_type = "sa",  atlas = "dk"),
+  list(header = "CTh", region_type = "th",  atlas = "dk"),
+  list(header = "Vol", region_type = "vol", atlas = "aseg")
+)
+
+# One page per variant/stat combination: rows are GA (top) / BWP (bottom),
+# columns are brainmap_cols, all sharing one color scale ("limits") collected
+# into a single colorbar placed at the bottom of the page.
+plot_variant_brainmap_page <- function(df, variant, value_col, p_col, limits) {
+  fill_name <- stat_label(value_col)
+
+  panels <- c(
+    list(plot_spacer()),
+    lapply(brainmap_cols, function(col) col_header_plot(col$header))
+  )
+
+  for (this_predictor in predictors) {
+    panels <- c(panels, list(row_header_plot(row_label_short(this_predictor))))
+    panels <- c(panels, lapply(brainmap_cols, function(col) {
+      plot_variant_brainmap(df, this_predictor, col$region_type, variant, value_col, p_col,
+                             col$region_type, atlas = col$atlas, limits = limits, fill_name = fill_name)
+    }))
+  }
+
+  wrap_plots(panels, ncol = 5, nrow = 1 + length(predictors),
+             widths = c(0.15, 1, 1, 1, 1), heights = c(0.15, rep(1, length(predictors))),
+             guides = "collect") &
+    theme(legend.position = "bottom")
 }
 ```
 
 ```{r}
-for (region_type in region_types) {
+# Shared color-scale limits for the single-variant ("nocovar") brain map grids --
+# fixed here (rather than per region_type) since anatomy is now a column within
+# one page and all four columns on a page share one colorbar.
+nocovar_r2_limits   <- c(0, 0.09)
+nocovar_resi_limits <- c(0, 0.31)
+```
 
-  p_nocovar_r2 <- plot_variant_brainmap_grid(main_stats, region_type, "nocovar",
-                                              "r2_full_vs_none", "full_p_adj", region_type,
-                                              limits = (0, 0.09))  # R2 is non-negative; set e.g. c(0, 0.05) once you know the range
-  p_nocovar_resi <- plot_variant_brainmap_grid(resi_stats, region_type, "nocovar",
-                                                "RESI", "p_adj", region_type,
-                                                limits = (0, 0.31))  # set e.g. c(-0.3, 0.3) for a diverging scale if desired
+```{r}
+p_nocovar_r2 <- plot_variant_brainmap_page(main_stats, "nocovar", "r2_full_vs_none", "full_p_adj",
+                                            limits = nocovar_r2_limits)
+p_nocovar_resi <- plot_variant_brainmap_page(resi_stats, "nocovar", "RESI", "p_adj",
+                                              limits = nocovar_resi_limits)
 
-  print(p_nocovar_r2)
-  print(p_nocovar_resi)
+print(p_nocovar_r2)
+print(p_nocovar_resi)
 
-  if (params$save_plots == TRUE) {
-    ggsave(glue("{plot_output_folder}brainmap_nocovar_{region_type}_r2.png"),
-           p_nocovar_r2, width = 6, height = 10)
-    ggsave(glue("{plot_output_folder}brainmap_nocovar_{region_type}_resi.png"),
-           p_nocovar_resi, width = 6, height = 10)
-  }
+if (params$save_plots == TRUE) {
+  ggsave(glue("{plot_output_folder}brainmap_nocovar_r2.svg"),
+         p_nocovar_r2, width = 16, height = 6)
+  ggsave(glue("{plot_output_folder}brainmap_nocovar_resi.svg"),
+         p_nocovar_resi, width = 16, height = 6)
 }
 ```
 
@@ -330,7 +390,9 @@ for (region_type in region_types) {
 ```{r brainmap-fcts, echo = TRUE}
 # Difference map: pair[2]'s value minus pair[1]'s value, restricted to regions
 # significant (p < .05) in at least one of the two variants being compared.
-build_diff_table <- function(df, this_predictor, group, pair, value_col, p_col, region_type) {
+# Same "vol" group / atlas split as build_variant_table() -- aseg_* phenotypes
+# (ASEG atlas) and aparc_GrayVol_* phenotypes (DK atlas) both live under group == "vol".
+build_diff_table <- function(df, this_predictor, group, pair, value_col, p_col, region_type, atlas = "dk") {
   d1 <- df %>% filter(predictor == this_predictor, group == !!group, variant == pair[1])
   d2 <- df %>% filter(predictor == this_predictor, group == !!group, variant == pair[2])
 
@@ -343,51 +405,88 @@ build_diff_table <- function(df, this_predictor, group, pair, value_col, p_col, 
   merged$diff  <- merged$val2 - merged$val1
   merged$min_p <- pmin(merged$p1, merged$p2)
 
+  if (region_type == "vol") {
+    merged <- if (atlas == "aseg") {
+      merged %>% filter(grepl("^aseg_", phenotype))
+    } else {
+      merged %>% filter(grepl("^aparc_GrayVol_", phenotype))
+    }
+  }
+
   add_ggseg_label(merged, region_type)
 }
 
 plot_pair_brainmap <- function(df, this_predictor, group, pair, value_col, p_col, region_type,
-                               limits, low_color = "#2160B8", mid_color = "white", high_color = "#B82133") {
-  diff_table <- build_diff_table(df, this_predictor, group, pair, value_col, p_col, region_type)
+                                atlas = "dk", limits, title = "", fill_name = "value",
+                                low_color = "#2160B8", mid_color = "white", high_color = "#B82133") {
+  diff_table <- build_diff_table(df, this_predictor, group, pair, value_col, p_col, region_type, atlas)
 
   plot_brain_map(
     table = diff_table,
     value_col = "diff",
-    atlas = "dk",
+    atlas = atlas,
     p_col = "min_p",
     p_filter = TRUE,
     p_thresh = 0.05,
-    title = glue("{region_type} {value_col} diff: {pair[2]} - {pair[1]}"),
+    title = title,
+    fill_name = fill_name,
     limits = limits,
     low_color = low_color, mid_color = mid_color, high_color = high_color
   )
 }
 
-# GA (top) / BWP (bottom) arrangement is just row-major wrap_plots with GA's
-# plots listed first, matching how the original Rmds built these grids.
-plot_pair_brainmap_grid <- function(df, group, pair, value_col, p_col, region_type, limits) {
-  plots <- lapply(predictors, function(p) {
-    plot_pair_brainmap(df, p, group, pair, value_col, p_col, region_type, limits) +
-      labs(subtitle = predictor_label(p))
-  })
-  wrap_plots(plots, ncol = 1) & plot_layout(guides = "collect")
+# One grid per comparison: rows are GA (top) / BWP (bottom), columns are
+# brainmap_cols (Vol DK, SA DK, CTh DK, Vol ASEG), sharing one color scale
+# collected into a single colorbar at the bottom -- same layout as
+# plot_variant_brainmap_page(), reusing its col_header_plot/row_header_plot/
+# brainmap_cols/row_label_short/stat_label helpers.
+plot_pair_brainmap_page <- function(df, pair, value_col, p_col, limits) {
+  fill_name <- stat_label(value_col)
+
+  panels <- c(
+    list(plot_spacer()),
+    lapply(brainmap_cols, function(col) col_header_plot(col$header))
+  )
+
+  for (this_predictor in predictors) {
+    panels <- c(panels, list(row_header_plot(row_label_short(this_predictor))))
+    panels <- c(panels, lapply(brainmap_cols, function(col) {
+      plot_pair_brainmap(df, this_predictor, col$region_type, pair, value_col, p_col,
+                          col$region_type, atlas = col$atlas, limits = limits, fill_name = fill_name)
+    }))
+  }
+
+  (wrap_plots(panels, ncol = 5, nrow = 1 + length(predictors),
+              widths = c(0.15, 1, 1, 1, 1), heights = c(0.15, rep(1, length(predictors))),
+              guides = "collect") &
+     theme(legend.position = "bottom")) +
+    plot_annotation(title = glue("{pair[2]} - {pair[1]}"))
 }
 ```
 
-```{r brainmap-plots, results = 'asis', fig.width = 6, fig.height = 10}
-for (pair in covariate_pairs) {
-  for (region_type in region_types) {
+```{r}
+# Shared color-scale limits for the difference brain map grids.
+diff_r2_limits   <- c(-0.025, 0.025)
+diff_resi_limits <- c(-0.2, 0.2)
+```
 
-    print(
-      plot_pair_brainmap_grid(main_stats, region_type, pair,
-                               "r2_full_vs_none", "full_p_adj", region_type,
-                               limits = c(-0.025, 0.025))
-    )
-    print(
-      plot_pair_brainmap_grid(resi_stats, region_type, pair,
-                               "RESI", "p_adj", region_type,
-                               limits = c(-0.2, 0.2))
-    )
+```{r brainmap-plots, results = 'asis', fig.width = 16, fig.height = 6}
+for (pair in covariate_pairs) {
+  pair_label <- paste(pair, collapse = "_vs_")
+
+  p_pair_r2 <- plot_pair_brainmap_page(main_stats, pair, "r2_full_vs_none", "full_p_adj",
+                                        limits = diff_r2_limits)
+  p_pair_resi <- plot_pair_brainmap_page(resi_stats, pair, "RESI", "p_adj",
+                                          limits = diff_resi_limits)
+
+  print(p_pair_r2)
+  print(p_pair_resi)
+
+  if (params$save_plots == TRUE) {
+    ggsave(glue("{plot_output_folder}brainmap_diff_{pair_label}_r2.svg"),
+           p_pair_r2, width = 16, height = 6)
+    ggsave(glue("{plot_output_folder}brainmap_diff_{pair_label}_resi.svg"),
+           p_pair_resi, width = 16, height = 6)
   }
 }
 ```

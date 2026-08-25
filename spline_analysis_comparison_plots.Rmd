@@ -10,7 +10,7 @@ params:
   lookup_stats: "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData"
   vars_path: "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
   code_path: "/mnt/arcus/lab/users/kafadare/slip_premie_wip/"
-  model_vis: FALSE
+  model_vis: TRUE
   save_plots: TRUE
   variant_to_visualize: "eTIV"
 editor_options:
@@ -84,7 +84,7 @@ load(params$lookup_stats)  # mean_lookup_distinct / sd_lookup_distinct, for the 
 namemap <- read.csv(glue("{params$vars_path}name_mapping.csv"))
 ```
 
-# Color Specifications
+# Plotting Specifications
 ```{r colors, echo = TRUE}
 # ga_color / bwp_color match the base hues used in the original spline Rmds,
 # with the mislabeling corrected there -- bw_color ("#709085") was being reused
@@ -94,6 +94,11 @@ namemap <- read.csv(glue("{params$vars_path}name_mapping.csv"))
 ga_color  <- "blue" # muted blue-grey  -- Gestational Age
 bwp_color <- "red"  # muted tan/gold   -- Birth Weight Percentile
 bw_color = "green" # muted green -- Birth Weight
+
+font_size <- 16
+theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
 
 # limits = c(-0.3, 0.3)
 # low_color = "#4878CF" # blue
@@ -491,6 +496,29 @@ if (params$model_vis == TRUE) {
 }
 ```
 
+```{r}
+interactions_summary <- int_stats %>% group_by(predictor, variant) %>%
+  summarise(
+    n_sig = sum(any_sig, na.rm = TRUE),
+    phenotypes = list(phenotype[any_sig]),
+    .groups = "drop"
+  )
+
+interactions_summary
+
+
+
+View(
+interactions_summary %>%
+  mutate(
+    phenotypes = sapply(
+      phenotypes,
+      \(x) paste(x, collapse = "\n")
+    )
+  )
+)
+```
+
 ```{r modelvis-interactions, results = 'asis', fig.width = 9, fig.height = 6}
 # visualize_model_int() already dispatches on the moderator's actual R class
 # (factor/ordered/numeric), so the same plotting call below works unchanged
@@ -503,7 +531,7 @@ if (params$model_vis == TRUE) {
   for (i in seq_len(nrow(sig_int))) {
     row <- sig_int[i, ]
     run_key <- paste(row$predictor, row$group, sep = "_")
-    modobj <- models[[row$variant]][[run_key]]$interactions[[row$moderator_label]][[row$phenotype]]
+    modobj <- models[[run_key]]$interactions[[row$moderator_label]][[row$phenotype]]
   
     p <- visualize_model_int(
       modobj = modobj,

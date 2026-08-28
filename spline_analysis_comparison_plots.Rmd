@@ -6,10 +6,11 @@ output:
   html_document:
     df_print: paged
 params:
-  output_folder: "/mnt/arcus/lab/users/kafadare/slip_premie_results/"
+  output_folder: "/mnt/arcus/lab/users/kafadare/slip_premie_results_fxfalse/"
   lookup_stats: "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData"
   vars_path: "/mnt/arcus/lab/users/kafadare/slip_brain_vars/"
   code_path: "/mnt/arcus/lab/users/kafadare/slip_premie_wip/"
+  cent_path: "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_distinct.csv"
   model_vis: TRUE
   save_plots: TRUE
   variant_to_visualize: "eTIV"
@@ -25,10 +26,11 @@ covariate-structure variants. Does not fit any models itself.
 ```{r params, echo = FALSE}
 if (!exists("params")) {
   params <- list(
-    output_folder = "/mnt/arcus/lab/users/kafadare/slip_premie_results/",
+    output_folder = "/mnt/arcus/lab/users/kafadare/slip_premie_results_fxfalse/",
     lookup_stats = "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData",
     vars_path = "/mnt/arcus/lab/users/kafadare/slip_brain_vars/",
     code_path = "/mnt/arcus/lab/users/kafadare/slip_premie_wip/",
+    cent_path = "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_distinct.csv",
     model_vis = FALSE,
     save_plots = TRUE,
     variant_to_visualize = "eTIV"
@@ -83,6 +85,7 @@ if (params$model_vis == TRUE){
 
 load(params$lookup_stats)  # mean_lookup_distinct / sd_lookup_distinct, for the GA axis conversion
 namemap <- read.csv(glue("{params$vars_path}name_mapping.csv"))
+df.zscore <- read.csv(params$cent_path)
 ```
 
 # Plotting Specifications
@@ -127,8 +130,8 @@ predictor_colors <- list(
 # are added to run_spline_analysis_variant.R.
 covariate_pairs <- list(
   c("nocovar", "eTIV"),
-  c("nocovar", "ADI"),
-  c("nocovar", "wh"),
+  #c("nocovar", "ADI"),
+  #c("nocovar", "wh"),
   c("eTIV", "eTIV_ADI"),
   c("eTIV", "eTIV_wh")
 )
@@ -197,7 +200,7 @@ add_ggseg_label <- function(df, region_type = c("vol", "sa", "th")) {
 }
 ```
 
-# Grouped Lollipop Plots (Global & CMD, Partial R2 & RESI)
+# Between Variants Grouped Lollipop Plots (Global & CMD, Partial R2 & RESI)
 ```{r lollipop-fcts, echo = TRUE}
 make_pair_table_list <- function(df, this_predictor, groups, pair) {
   sub <- df %>% filter(predictor == this_predictor, group %in% groups, variant %in% pair)
@@ -256,6 +259,79 @@ for (this_predictor in predictors) {
 }
 ```
 
+# Between Predictors Grouped Lollipop Plots (Global & CMD, Partial R2 & RESI)
+```{r}
+predictor_pairs <- list(c("gestational_age", "bwp_fen"))
+
+# Variants to loop over -- reuse the same set covariate_pairs draws from.
+variants_to_plot <- "eTIV"
+```
+
+```{r}
+make_variant_pair_table_list <- function(df, this_variant, groups, pair) {
+  sub <- df %>% filter(variant == this_variant, group %in% groups, predictor %in% pair)
+  split(sub, sub$predictor)[pair]
+}
+
+plot_variant_pair_lollipop <- function(df, this_variant, groups, pair, value_col, p_col, set_label) {
+  table_list <- make_variant_pair_table_list(df, this_variant, groups, pair)
+
+  # predictor_colors is keyed by predictor -> variant; here the pair varies by
+  # predictor while the variant is fixed, so pull each predictor's shade for
+  # this_variant instead of predictor_colors[[this_predictor]][pair].
+  color_vec <- setNames(
+    sapply(pair, function(p) predictor_colors[[p]][[this_variant]]),
+    pair
+  )
+
+  plot_grouped_lollipop(
+    table_list = table_list,
+    value_col = value_col,
+    p_col = p_col,
+    color_vec = color_vec,
+    name_mapping = namemap
+  ) +
+    labs(
+      title = glue("{set_label} -- {this_variant}: {predictor_label(pair[1])} vs {predictor_label(pair[2])}"),
+      x = value_col
+    ) +
+    theme_minimal()
+}
+```
+
+```{r}
+for (this_variant in variants_to_plot) {
+  for (pair in predictor_pairs) {
+
+    pair_label <- paste(pair, collapse = "_vs_")
+
+    p_global_r2 <- plot_variant_pair_lollipop(main_stats, this_variant, global_groups, pair,
+                                               "r2_full_vs_none", "full_p_adj", "Global vars (Partial R2)")
+    p_global_resi <- plot_variant_pair_lollipop(resi_stats, this_variant, global_groups, pair,
+                                                 "RESI", "p_adj", "Global vars (RESI)")
+    p_cmd_r2 <- plot_variant_pair_lollipop(main_stats, this_variant, cmd_groups, pair,
+                                            "r2_full_vs_none", "full_p_adj", "CMD (Partial R2)")
+    p_cmd_resi <- plot_variant_pair_lollipop(resi_stats, this_variant, cmd_groups, pair,
+                                              "RESI", "p_adj", "CMD (RESI)")
+
+    print(p_global_r2)
+    print(p_global_resi)
+    print(p_cmd_r2)
+    print(p_cmd_resi)
+
+    if (params$save_plots == TRUE) {
+      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_global_r2.svg"),
+             p_global_r2, width = 9, height = 6)
+      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_global_resi.svg"),
+             p_global_resi, width = 9, height = 6)
+      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_cmd_r2.svg"),
+             p_cmd_r2, width = 9, height = 6)
+      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_cmd_resi.svg"),
+             p_cmd_resi, width = 9, height = 6)
+    }
+  }
+}
+```
 # Brain Maps (Vol/SA/TH, Partial R2 & RESI, GA top / BWP bottom)
 
 ## define region types
@@ -365,16 +441,16 @@ plot_variant_brainmap_page <- function(df, variant, value_col, p_col, limits) {
 # Shared color-scale limits for the single-variant ("nocovar") brain map grids --
 # fixed here (rather than per region_type) since anatomy is now a column within
 # one page and all four columns on a page share one colorbar.
-nocovar_r2_limits   <- c(0, 0.09)
-nocovar_resi_limits <- c(0, 0.31)
+r2_limits   <- c(0, 0.022)
+resi_limits <- c(0, 0.15)
 ```
 
 ### no covar
 ```{r}
-p_nocovar_r2 <- plot_variant_brainmap_page(main_stats, "nocovar", "r2_full_vs_none", "full_p_adj",
-                                            limits = nocovar_r2_limits)
-p_nocovar_resi <- plot_variant_brainmap_page(resi_stats, "nocovar", "RESI", "p_adj",
-                                              limits = nocovar_resi_limits)
+p_nocovar_r2 <- plot_variant_brainmap_page(main_stats, "eTIV", "r2_full_vs_none", "full_p_adj",
+                                            limits = r2_limits)
+p_nocovar_resi <- plot_variant_brainmap_page(resi_stats, "eTIV", "RESI", "p_adj",
+                                              limits = resi_limits)
 
 print(p_nocovar_r2)
 print(p_nocovar_resi)
@@ -389,19 +465,19 @@ if (params$save_plots == TRUE) {
 
 ### eTIV covar
 ```{r}
-p_nocovar_r2 <- plot_variant_brainmap_page(main_stats, "eTIV", "r2_full_vs_none", "full_p_adj",
-                                            limits = nocovar_r2_limits)
-p_nocovar_resi <- plot_variant_brainmap_page(resi_stats, "eTIV", "RESI", "p_adj",
-                                              limits = nocovar_resi_limits)
+p_eTIV_r2 <- plot_variant_brainmap_page(main_stats, "eTIV", "r2_full_vs_none", "full_p_adj",
+                                            limits = r2_limits)
+p_eTIV_resi <- plot_variant_brainmap_page(resi_stats, "eTIV", "RESI", "p_adj",
+                                              limits = resi_limits)
 
-print(p_nocovar_r2)
-print(p_nocovar_resi)
+print(p_eTIV_r2)
+print(p_eTIV_resi)
 
 if (params$save_plots == TRUE) {
   ggsave(glue("{plot_output_folder}brainmap_etiv_r2.svg"),
-         p_nocovar_r2, width = 16, height = 6)
+         p_eTIV_r2, width = 16, height = 6)
   ggsave(glue("{plot_output_folder}brainmap_etiv_resi.svg"),
-         p_nocovar_resi, width = 16, height = 6)
+         p_eTIV_resi, width = 16, height = 6)
 }
 ```
 
@@ -641,16 +717,36 @@ if (params$model_vis == TRUE) {
 if (params$model_vis == TRUE) {
   for (this_predictor in predictors) {
     sig_pheno <- main_stats %>%
+      filter(predictor %in% c("gestational_age")) %>%
+      filter(variant == variant_to_visualize, predictor == this_predictor,
+             group %in% c(global_groups, cmd_groups), full_p_adj < 0.05)
+  
+    if (nrow(sig_pheno) == 0) next
+  
+    plots_ga <- Map(function(ph, grp) plot_main_model(variant_to_visualize, this_predictor, grp, ph),
+                 sig_pheno$phenotype, sig_pheno$group)
+    
+    print(plots_ga)
+  
+    #print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
+  }
+}
+
+if (params$model_vis == TRUE) {
+  for (this_predictor in predictors) {
+    sig_pheno <- main_stats %>%
       filter(predictor %in% c("bwp_fen")) %>%
       filter(variant == variant_to_visualize, predictor == this_predictor,
              group %in% c(global_groups, cmd_groups), full_p_adj < 0.05)
   
     if (nrow(sig_pheno) == 0) next
   
-    plots <- Map(function(ph, grp) plot_main_model(variant_to_visualize, this_predictor, grp, ph),
+    plots_bwp <- Map(function(ph, grp) plot_main_model(variant_to_visualize, this_predictor, grp, ph),
                  sig_pheno$phenotype, sig_pheno$group)
+    
+    print(plots_bwp)
   
-    print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
+    #print(wrap_plots(plots, ncol = 2) & plot_layout(guides = "collect"))
   }
 }
 ```
@@ -678,6 +774,29 @@ if (params$model_vis == TRUE) {
 ```
 
 ## Significant Interactions
+
+### calculate plotting age labels
+```{r}
+mu_age <- mean_lookup_distinct["age_days_adj"]
+sd_age <- sd_lookup_distinct["age_days_adj"]
+
+mu_ga <- mean_lookup_distinct["gestational_age"]
+sd_ga <- sd_lookup_distinct["gestational_age"]
+  
+low_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.10)) * sd_age + mu_age)/365.25
+  
+mid_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                       "age_days_adj"],
+                             probs = c(.50)) * sd_age + mu_age)/365.25
+
+high_age_label <- (quantile(df.zscore[!is.na(df.zscore$gestational_age),
+                                      "age_days_adj"],
+                            probs = c(.90)) * sd_age + mu_age)/365.25
+```
+
+### Show interaction models
 ```{r modelvis-interactions, results = 'asis', fig.width = 9, fig.height = 6}
 # visualize_model_int() already dispatches on the moderator's actual R class
 # (factor/ordered/numeric), so the same plotting call below works unchanged
@@ -703,6 +822,20 @@ if (params$model_vis == TRUE) {
       predictor_x_scale(row$predictor) +
       outcome_y_scale() +
       labs(x = predictor_label(row$predictor))
+    
+    plot_colors <- ggplot_build(p)$plot$scales$get_scales("fill")$palette(1)
+    
+    p <- p +
+  scale_fill_manual(labels = c(paste0("Low: ",
+                                      round(low_age_label,1),"yrs"),
+                               paste0("Mid: ",
+                                      round(mid_age_label,1),"yrs"),
+                               paste0("High: ",
+                                      round(high_age_label,1),"yrs")), 
+                    values = plot_colors) +
+   scale_color_gradientn(colors = plot_colors,
+    labels = function(x) round((x * sd_age + mu_age)/365.25, 1),
+    name = "")
   
     print(p)
   }

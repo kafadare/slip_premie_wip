@@ -1,0 +1,666 @@
+---
+title: "Severity/Admission Data Explore"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+# Load Packages
+```{r}
+library(bigrquery) #package to import SQL tables into R
+library(tidyverse) #package suite for data manipulation, reading data into R, and plotting (ggplot2)
+library(glue) #package to use expressions with strings
+library(ggseg)
+require(gridExtra)
+library(interactions)
+library(boot)
+library(parameters)
+library(PheWAS)
+```
+
+# Custom Functions
+```{r}
+panel_save <- function(plot, filename, extension, folder){
+  save_name <- paste0(folder, filename, ".", extension)
+  ggsave(save_name, plot = plot, dpi = 300)
+}
+
+`%nin%` = Negate(`%in%`)
+```
+
+# Get project id
+```{r}
+bq_auth()
+# proj_id <- if (exists('proj_id')) proj_id else bq_projects()[1]
+proj_id = "scit605-healthymri-2d73d69f"
+```
+
+# Get data and define folders
+```{r}
+annot_icd10 <- read.csv("/mnt/arcus/lab/users/kafadare/indication_files/indication_icd10.csv") %>% select(-X)
+
+output_folder <- "/mnt/arcus/lab/users/kafadare/indication_files/"
+
+cent_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/centiles_all_median_th_mpr_2026-04-24.csv"
+cent <- read.csv(cent_path) %>%
+  mutate(proc_ord_id_wrong = proc_ord_id,
+         proc_ord_id = sub(".*ses-([0-9]+)procId.*", "\\1", session_id))
+
+pat_id_list <- paste0("'", sapply(strsplit(cent$pat_id, ","),trimws), "'", collapse = ", ")
+proc_ord_list <- paste0("'", sapply(strsplit(cent$proc_ord_id, ","),trimws), "'", collapse = ", ")
+```
+
+# Define Queries
+```{r}
+proc_dx_query <- glue('SELECT
+  proc.proc_ord_id,
+  proc.pat_id,
+  proc.encounter_id,
+  proc.dx_id,
+  icd10.code
+  FROM arcus.procedure_order_diagnosis as proc
+  LEFT JOIN arcus.diagnosis_icd10 as icd10
+  ON proc.dx_id = icd10.dx_id
+  WHERE proc.proc_ord_id IN ({proc_ord_list});')
+
+proc_enc_dx_query <- glue('SELECT
+  proc.proc_ord_id,
+  proc.pat_id,
+  proc.encounter_id,
+  enc.encounter_id,
+  enc.dx_id,
+  icd10.code as code10,
+  icd9.code as code9
+  FROM arcus.procedure_order as proc
+  INNER JOIN arcus.encounter_diagnosis as enc
+  ON proc.encounter_id = enc.encounter_id
+  LEFT JOIN arcus.diagnosis_icd10 as icd10
+  ON icd10.dx_id = enc.dx_id
+  LEFT JOIN arcus.diagnosis_icd9 as icd9
+  ON icd9.dx_id = enc.dx_id
+  WHERE proc.proc_ord_id IN ({proc_ord_list});')
+```
+
+# Download Tables from Arcus
+```{r}
+proc_dx <- bq_project_query(proj_id, proc_dx_query) %>% bq_table_download(., page_size=3500)
+print(paste0("arcus.procedure_order_dx table with 25.11 proc_ord_ids, dimensions: ", dim(proc_dx)))
+
+proc_enc_dx <- bq_project_query(proj_id, proc_enc_dx_query) %>% bq_table_download(., page_size=3500)
+print(paste0("arcus.procedure_order table with encounter_dx 25.11 proc_ord_ids, dimensions: ", dim(proc_enc_dx)))
+```
+
+# Check availability of diagnosis based on SQL table
+```{r}
+# getting dx from procedure_diagnosis
+length(unique(cent$proc_ord_id))
+sum(cent$proc_ord_id %in% proc_dx$proc_ord_id)/nrow(cent) #57%
+sum(is.na(proc_dx$dx_id)) #0
+sum(is.na(proc_dx$code)) #312
+length(unique(proc_dx$proc_ord_id)) #7642
+
+# getting dx from encounter_diagnosis
+sum(cent$proc_ord_id %in% proc_enc_dx$proc_ord_id)/nrow(cent) #86%
+sum(is.na(proc_enc_dx$dx_id)) #0
+sum(is.na(proc_enc_dx$code10)) #2311
+sum(is.na(proc_enc_dx$code10) & is.na(proc_enc_dx$code9)) #3
+length(unique(proc_enc_dx$proc_ord_id)) #11491
+
+sum(!(proc_dx$proc_ord_id %in% proc_enc_dx$proc_ord_id)) #0
+sum(!(proc_enc_dx$proc_ord_id %in% proc_dx$proc_ord_id)) #22,747
+```
+
+# Manually add phecodes as some are missing (from Ben Jung's scripts)
+```{r}
+phecode_map_updated <- PheWAS::phecode_map %>% 
+  add_row(vocabulary_id = "ICD9CM", code = "784.0", phecode = "339") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R51.9", phecode = "339") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "564.00", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "F32.A", phecode = "296.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R11.15", phecode = "789") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "779.89", phecode = "656") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R06.03", phecode = "509.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "E87.20", phecode = "276.41") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R51.0", phecode = "339") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "765.28", phecode = "647") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q21.11", phecode = "747.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "I27.20", phecode = "415.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R05.1", phecode = "512.8") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R05.2", phecode = "512.8") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R05.3", phecode = "512.8") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R05.4", phecode = "512.8") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R05.8", phecode = "512.8") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R05.9", phecode = "512.8") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "787.91", phecode = "561.1") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "765.10", phecode = "637") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "564.00", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "564.01", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "564.02", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "564.09", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "729.5", phecode = "773") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "263.1", phecode = "260") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K59.00", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K59.01", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K59.02", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K59.03", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K59.08", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K59.09", phecode = "563") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K59.89", phecode = "564") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R19.7", phecode = "561.1") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "765.20", phecode = "637") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "787.3", phecode = "561.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R03.0", phecode = "402") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "796.2", phecode = "402") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K21.0", phecode = "530.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K21.00", phecode = "530.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K21.01", phecode = "530.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q21.10", phecode = "747.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q21.20", phecode = "747.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q21.23", phecode = "747.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "D72.10", phecode = "288.3") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "G93.45", phecode = "348.8") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R74.01", phecode = "573.6") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R74.02", phecode = "573.6") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R74.01", phecode = "573.6") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "S72.92XG", phecode = "800.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q87.19", phecode = "758") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q21.11", phecode = "747.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q75.022", phecode = "749.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q75.03", phecode = "749.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "E72.89", phecode = "270.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K58.8", phecode = "564.1") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "R05.9", phecode = "512.8") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q21.12", phecode = "747.11") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q89.89", phecode = "759") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "P84", phecode = "661") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "P22.0", phecode = "661") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "F78.A9", phecode = "315.3") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Q75.009", phecode = "749.2") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "T81.40XA", phecode = "080") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "T81.49XA", phecode = "080") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "S06.0XAA", phecode = "817") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "K63.8219", phecode = "569") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "P74.421", phecode = "656.3") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Z82.49", phecode = "1100") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Z15.89", phecode = "1010.4") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Z04.89", phecode = "1010") %>% # technically this matches Z04.8, but the ICD String is identical
+  add_row(vocabulary_id = "ICD10CM", code = "Z82.0", phecode = "1100") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Z84.89", phecode = "1100") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "G51.31", phecode = "352.2") %>% # technically this matches G51.3, but G51.31 is the same condition specified for the right side so this is a reasonable substitute
+  add_row(vocabulary_id = "ICD10CM", code = "Z13.30", phecode = "1010.3") %>% # technically this matchez Z13.0 but all other Z13 are screenings and phecode match is the same, so this is a reasonable substitute
+  add_row(vocabulary_id = "ICD10CM", code = "Z13.9", phecode = "1010.3") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Z13.6", phecode = "1010.3") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Z63.8", phecode = "1010.7") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "Z82.5", phecode = "1100") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "346.00", phecode = "340.1") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "282.41", phecode = "282.5") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "282.61", phecode = "282.5") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "346.03", phecode = "340.1") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "754.71", phecode = "755.1") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "995.54", phecode = "1015") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "995.80", phecode = "1015") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "307.9", phecode = "315") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "330.0", phecode = "331") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "346.02", phecode = "340.1") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "351.8", phecode = "352.2") %>%
+  add_row(vocabulary_id = "ICD9CM", code = "432.1", phecode = "430.3") %>%
+  ## Below 
+  add_row(vocabulary_id = "ICD10CM", code = "G43.E09", phecode = "340") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "G43.E11", phecode = "340") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "G43.E01", phecode = "340") %>%
+  add_row(vocabulary_id = "ICD10CM", code = "D57.03", phecode = "282.5") %>% # no direct match in tables, but most sequealae of SS disease have same phecode, therefore this is a reasonable substitute
+  add_row(vocabulary_id = "ICD10CM", code = "D57.42", phecode = "282.5") %>% # no direct match in tables, but most sequealae of SS disease have same phecode, therefore this is a reasonable substitute
+  add_row(vocabulary_id = "ICD10CM", code = "Q66.71", phecode = "755.1") %>% # technically this matches Q66.7, but Q66.71 is the same condition specified for the right side so this is a reasonable substitute
+  add_row(vocabulary_id = "ICD10CM", code = "Q66.72", phecode = "755.1") %>% # technically this matches Q66.7, but Q66.72 is the same condition specified for the left side so this is a reasonable substitute
+  add_row(vocabulary_id = "ICD10CM", code = "G31.80", phecode = "331") %>%
+  distinct()
+
+
+
+latest_phecodes <- read_csv("~/Phecode_map_v1_2_icd9_icd10cm.csv", show_col_types = F) %>%
+                    mutate(vocabulary_id = case_match(Flag,
+                                                      9 ~ "ICD9CM",
+                                                      10 ~ "ICD10CM")) %>%
+                    select(vocabulary_id, code = ICD, phecode = Phecode) %>%
+                    distinct()
+
+phecode_map_updated <- phecode_map_updated %>%
+                  bind_rows(latest_phecodes) %>%
+                  distinct()
+
+manual_phecodes <- read_csv("~/manually_added_phecodes.csv", col_types = "ccc")
+phecode_map_updated <- phecode_map_updated %>% bind_rows(manual_phecodes) %>% distinct()
+
+# Need to map 30 more here
+pheinfo <- PheWAS::pheinfo %>% 
+            add_row(phecode = "563", description = "Constipation", 
+                    groupnum = 10, group = c("digestive"), color = c("chartreuse4")) %>%
+            add_row(phecode = "561.1", description = "Diarrhea", 
+                    groupnum = 10, group = c("digestive"), color = c("chartreuse4")) %>%
+            add_row(phecode = "773", description = "Pain in limb", 
+                    groupnum = 17, group = c("symptoms"), color = c("purple")) %>%
+            add_row(phecode = "561.2", description = "Flatulence", 
+                    groupnum = 10, group = c("digestive"), color = c("purple")) %>%
+            add_row(phecode = "402", description = "Elevated blood pressure reading without diagnosis of hypertension", 
+                    groupnum = 8, group = c("circulatory system"), color = c("red")) %>%
+            add_row(phecode = "1000", description = "Burns", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1001", description = "Foreign Body Injury", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1002", description = "Symptoms concerning nutrition, metabolism, and development", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1004", description = "Symptoms concerning nutrition, metabolism, and development", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1005", description = "Other symptoms", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1006", description = "Crushing injury", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1007", description = "Injury to blood vessels", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1008", description = "Crushing or internal injury to organs", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1009", description = "Injury, NOS", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1010", description = "Persons encountering health services in circumstances related to reproduction", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1010.3", description = "screening for other diseases and disorders", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1010.4", description = "Genetic test", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1010.6", description = "Persons encountering health services in circumstances related to reproduction", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1010.7", description = "Persons with potential health hazards related to socioeconomic, psychosocial, and other circumstances", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1011", description = "Complications of surgical and medical procedures", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1013", description = "Asphyxia and hypoxemia", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1015", description = "Effects of other external causes", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1019", description = "Other ill-defined and unknown causes of morbidity and mortality", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "1090", description = "Acquired absence of organs", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            add_row(phecode = "564.8", description = "Abnormal findings on exam of gastrointestinal tract/ abdominal area", 
+                   groupnum = 10, group = c("digestive"), color = c("chartreuse4")) %>%
+            add_row(phecode = "598.9", description = "Other nonspecific findings on examination of urine", 
+                    groupnum = 11, group = c("genitourinary"), color = c("black")) %>%
+            add_row(phecode = "638", description = "Other high-risk pregnancy", 
+                    groupnum = 12, group = c("pregnancy complications"), color = c("royalblue4")) %>%
+            add_row(phecode = "639", description = "Complications following abortion or ectopic and molar pregnancies", 
+                    groupnum = 12, group = c("pregnancy complications"), color = c("royalblue4")) %>%
+            add_row(phecode = "651", description = "Multiple gestation", 
+                    groupnum = 12, group = c("pregnancy complications"), color = c("royalblue4")) %>%
+            add_row(phecode = "658", description = "Maternal complication of pregnancy affecting fetus or newborn", 
+                    groupnum = 12, group = c("pregnancy complications"), color = c("royalblue4")) %>%
+            add_row(phecode = "661", description = "Fetal distress and abnormal forces of labor", 
+                    groupnum = 12, group = c("pregnancy complications"), color = c("royalblue4")) %>%
+            add_row(phecode = "663", description = "Umbilical cord complications during labor and delivery", 
+                    groupnum = 12, group = c("pregnancy complications"), color = c("royalblue4")) %>%
+            add_row(phecode = "665", description = "Obstetrical/birth trauma", 
+                    groupnum = 12, group = c("pregnancy complications"), color = c("royalblue4")) %>%
+            add_row(phecode = "793.2", description = "Nonspecific abnormal findings on radiological and other examination of other intrathoracic organs (echocardiogram, etc)", 
+                    groupnum = 17, group = c("symptoms"), color = c("purple")) %>%
+            add_row(phecode = "793", description = "Nonspecific abnormal findings on radiological and other examination of musculoskeletal system", 
+                    groupnum = 17, group = c("symptoms"), color = c("purple")) %>%
+            add_row(phecode = "915", description = "Superficial injury without mention of infection", 
+                    groupnum = 18, group = c("injuries & poisonings"), color = c("gray50")) %>%
+              add_row(phecode = "1100", description = "Family history", 
+                    groupnum = NA, group = NA, color = NA) %>%
+            distinct()
+```
+
+# Convert ICD codes to phecodes and keep one row per proc_ord_id + phecode pair
+
+## Annotations
+```{r}
+# Merge annotations with phecodes on ICD
+annot_phecode <- annot_icd10 %>% 
+  rename(id = proc_ord_id,
+         code = icd10_code) %>%
+    merge(.,phecode_map_updated %>% 
+            filter(vocabulary_id == "ICD10CM") %>%
+            select(-vocabulary_id),
+            by = "code", all.x = TRUE, all.y = FALSE) 
+sum(is.na(annot_phecode$phecode)) #10524
+
+# Look at distinct snomed names
+annot_phecode_snomed <- annot_phecode %>%
+  distinct(id, snomed_name, .keep_all = T)
+sum(is.na(annot_phecode_snomed$phecode)) #204
+
+# Which snomed names are unmapped
+annot_phecode_snomed %>% filter(is.na(phecode)) %>%
+  count(snomed_name, sort = T)
+
+# What is under NA snomed names
+annot_phecode_snomed %>% filter(is.na(phecode) & is.na(snomed_name)) %>%
+  count(label, sort = T)
+
+# Proportion of annotated proc ord ids that have at least one phecode match
+length(unique(annot_phecode_snomed[!is.na(annot_phecode_snomed$phecode), "id"]))/length(unique(annot_phecode_snomed$id)) #92.6%
+
+
+## Add Phecode Info to annotations
+annot_phecode <- merge(annot_phecode,
+                       pheinfo,
+                       by = "phecode",
+                       all.x = TRUE,
+                       all.y = FALSE)
+
+# Which phecodes have no description match
+annot_phecode %>% filter(!is.na(phecode) & is.na(description)) %>%
+  distinct(phecode)
+
+# One row per proc_ord_id + phecode pair
+annot_phecode_distinct <- annot_phecode %>%
+  filter(!is.na(phecode)) %>%
+distinct(id, phecode, .keep_all = T) %>%
+  rename(phecode_name = description,
+         phecode_group = group,
+         proc_ord_id = id) %>%
+  select(-c("text_block", "main_tag",
+            "type"))
+
+length(unique(annot_phecode_distinct$proc_ord_id))
+```
+
+## Encounter Diagnosis
+```{r}
+proc_enc_dx_phecode_icd10 <- proc_enc_dx %>% 
+  rename(id = proc_ord_id,
+         code = code10) %>%
+  mutate(vocabulary_id = "ICD10CM") %>%
+    mapCodesToPhecodes(., vocabulary.map = phecode_map_updated) %>%
+  addPhecodeInfo(.) %>%
+  distinct(id, phecode, .keep_all = T) %>%
+  rename(phecode_name = description,
+         phecode_group = group,
+         proc_ord_id = id)  %>%
+  select(-code9)
+
+
+proc_enc_dx_phecode_icd9 <- proc_enc_dx %>% 
+  filter(is.na(code10)) %>%
+  rename(id = proc_ord_id,
+         code = code9) %>%
+  mutate(vocabulary_id = "ICD9CM") %>%
+    mapCodesToPhecodes(., vocabulary.map = phecode_map_updated) %>%
+  addPhecodeInfo(.) %>%
+  distinct(id, phecode, .keep_all = T) %>%
+  rename(phecode_name = description,
+         phecode_group = group,
+         proc_ord_id = id) %>%
+  select(-code10)
+
+proc_enc_dx_phecode_distinct <- rbind(proc_enc_dx_phecode_icd10, proc_enc_dx_phecode_icd9) %>%
+  distinct(proc_ord_id, phecode, .keep_all = T)
+
+sum(!(proc_enc_dx$proc_ord_id %in% proc_enc_dx_phecode_distinct$proc_ord_id)) #14
+```
+
+### Explore unmapped ICD Codes
+Manually added to tables as much as possible
+```{r}
+require(icd)
+proc_enc_dx_unmapped <- proc_enc_dx %>%
+  filter(proc_ord_id %nin% proc_enc_dx_phecode_distinct$proc_ord_id)
+sum(is.na(proc_enc_dx_unmapped$code10) & is.na(proc_enc_dx_unmapped$code9)) #0
+
+length(unique(proc_enc_dx_unmapped$code10)) #6, inc NA
+
+length(unique(proc_enc_dx_unmapped$code9)) #7, inc NA
+
+# ICD 10 Unmapped
+icd10_unmapped <- proc_enc_dx_unmapped %>%
+filter(!is.na(code10)) %>%
+group_by(code10) %>%
+  summarise(
+    n_code10 = n(),
+    .groups = "drop"
+  ) %>%
+  distinct(code10, .keep_all = T) %>%
+  mutate(
+    icd10_name = vapply(
+      code10,
+      function(x) {
+        out <- tryCatch(
+          explain_code(as.icd10cm(x), brief = TRUE),
+          error = function(e) NA_character_
+        )
+        
+        if (length(out) == 0) NA_character_ else as.character(out[1])
+      },
+      character(1)
+    ),
+  )
+
+sum(!is.na(icd10_unmapped$icd10_name))
+
+print(icd10_unmapped %>% filter (!is.na(icd10_name)) %>% arrange(-n_code10), n = 100)
+
+# 12/24
+print(icd10_unmapped %>% filter(is.na(icd10_name))  %>% arrange(-n_code10), n = 100)
+
+# ICD 9 Unmapped
+icd9_unmapped <- proc_enc_dx_unmapped %>%
+filter(!is.na(code9)) %>%
+group_by(code9) %>%
+  summarise(
+    n_code9 = n(),
+    .groups = "drop"
+  ) %>%
+  distinct(code9, .keep_all = T) %>%
+  mutate(
+    icd9_name = vapply(
+      code9,
+      function(x) {
+        out <- tryCatch(
+          explain_code(as.icd9cm(x), brief = TRUE),
+          error = function(e) NA_character_
+        )
+        
+        if (length(out) == 0) NA_character_ else as.character(out[1])
+      },
+      character(1)
+    ),
+  )
+
+sum(!is.na(icd9_unmapped$icd9_name)) # 0
+
+print(icd9_unmapped %>% filter (!is.na(icd9_name)) %>% arrange(-n_code9), n = 100)
+
+# 12/24
+print(icd9_unmapped %>% filter(is.na(icd9_name))  %>% arrange(-n_code9), n = 100)
+```
+
+# Merge on Proc Ord Id
+```{r}
+df <- merge(annot_phecode_distinct %>% 
+                rename(phecode_annot = phecode,
+                       phecode_annot_name = phecode_name,
+                       phecode_annot_group = phecode_group),
+              proc_enc_dx_phecode_distinct %>%
+                rename(phecode_enc = phecode,
+                       phecode_enc_name = phecode_name,
+                       phecode_enc_group = phecode_group),
+              by = "proc_ord_id", all.x = F, all.y = F)
+
+
+report_sets_phecode <- df %>%
+  group_by(proc_ord_id) %>%
+  summarise(
+    phecode_enc = list(unique(na.omit(phecode_enc))),
+    
+    annot_dx = list(
+      tibble(
+        phecode = phecode_annot,
+        phecode_name = phecode_annot_name
+      ) %>%
+        distinct()
+    ),
+    
+    .groups = "drop"
+  ) %>%
+  mutate(
+    matched_dx = map2(
+      phecode_enc,
+      annot_dx,
+      ~ .y %>%
+        filter(phecode %in% .x)
+    ),
+    
+    unmatched_enc = map2(
+      phecode_enc,
+      annot_dx,
+      ~ setdiff(.x, .y$phecode)
+    ),
+    
+    unmatched_annot = map2(
+      annot_dx,
+      phecode_enc,
+      ~ setdiff(.x$phecode, .y)
+    ),
+    
+    n_matched = map_int(matched_dx, nrow),
+    
+    report_match_status = n_matched > 0
+  )
+
+
+sum(report_sets_phecode$report_match_status == TRUE)/nrow(report_sets_phecode) #87%
+
+```
+
+# Tables of matched and unmatched Phecodes
+```{r}
+matched_pair_counts <- report_sets_phecode %>%
+  select(proc_ord_id, matched_dx) %>%
+  unnest(matched_dx) %>%
+  count(phecode, phecode_name, name = "n_occurrences") %>%
+  arrange(desc(n_occurrences))
+
+kableExtra::kable(head(matched_pair_counts, 10))
+
+
+matched_enc_unmatched_dx_counts <- report_sets_phecode %>%
+  filter(n_matched > 0) %>%
+  select(unmatched_enc) %>%
+  unnest(unmatched_enc) %>%
+  rename(phecode = unmatched_enc) %>%
+  addPhecodeInfo(.) %>%
+  rename(phecode_name = description) %>%
+  count(phecode, phecode_name, name = "n_occurrences") %>%
+  arrange(desc(n_occurrences))
+
+kableExtra::kable(head(matched_enc_unmatched_dx_counts, 10))
+
+unmatched_annot_counts <- report_sets_phecode %>%
+  filter(n_matched == 0) %>%
+  select(annot_dx) %>%
+  unnest(annot_dx) %>%
+  count(phecode, phecode_name, name = "n_occurrences") %>%
+  arrange(desc(n_occurrences))
+
+kableExtra::kable(head(unmatched_annot_counts, 10))
+
+
+unmatched_enc_counts <- report_sets_phecode %>%
+  filter(n_matched == 0) %>%
+  select(unmatched_enc) %>%
+  unnest(unmatched_enc) %>%
+  rename(phecode = unmatched_enc) %>%
+  addPhecodeInfo(.) %>%
+  rename(phecode_name = description) %>%
+  count(phecode, phecode_name, name = "n_occurrences") %>%
+  arrange(desc(n_occurrences))
+
+kableExtra::kable(head(unmatched_enc_counts, 10))
+```
+
+# Save output tables
+```{r}
+write.csv(annot_phecode_distinct, glue("{output_folder}annotations_phecode_distinct.csv"))
+write.csv(proc_enc_dx_phecode_distinct, glue("{output_folder}proc_enc_dx_phecode_distinct.csv"))
+write.csv(matched_pair_counts, glue("{output_folder}proc_enc_dx_annotations_matched.csv"))
+write.csv(proc_enc_dx_phecode_distinct, glue("{output_folder}proc_enc_dx_phecode_distinct.csv"))
+```
+
+# Diagnoses Summary From Encounter Dx
+```{r}
+proc_enc_dx_summary <- proc_enc_dx_phecode_distinct %>%
+  group_by(phecode) %>%
+  summarise(
+    n = n(),
+    phecode_name = first(phecode_name),
+    phecode_group = first(phecode_group),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n))
+
+head(proc_enc_dx_summary, 10)
+length(unique(proc_enc_dx_phecode_distinct$proc_ord_id))
+  
+proc_enc_dx_phecode_distinct <- merge(proc_enc_dx_phecode_distinct,
+              cent %>% select(proc_ord_id, age_at_scan_years, sex, gestational_age, bwp_fen),
+              by = "proc_ord_id", all.x = T, all.y = F)
+
+# Within Age Quintiles
+proc_enc_dx_summary_age <- proc_enc_dx_phecode_distinct %>%
+  mutate(
+    age_quintile = ntile(age_at_scan_years, 5)
+  ) %>%
+  group_by(age_quintile) %>%
+  mutate(
+    age_range = paste0(
+      round(min(age_at_scan_years, na.rm = TRUE), 1),
+      "–",
+      round(max(age_at_scan_years, na.rm = TRUE), 1),
+      " years"
+    )
+  ) %>%
+  ungroup() %>%
+  count(age_quintile, age_range, phecode, phecode_name, sort = TRUE) %>%
+  group_by(age_quintile, age_range) %>%
+  arrange(desc(n)) %>%
+  ungroup()
+
+for (q in sort(unique(proc_enc_dx_summary_age$age_quintile))) {
+  
+  cat("\nAge quintile", q, 
+      "(", unique(proc_enc_dx_summary_age$age_range[proc_enc_dx_summary_age$age_quintile == q]), ")\n")
+  
+  print(
+    proc_enc_dx_summary_age %>%
+      filter(age_quintile == q) %>%
+      slice_head(n = 5) %>%
+      select(phecode, phecode_name, n)
+  )
+}
+
+# With GA Buckets
+proc_enc_dx_summary_ga <- proc_enc_dx_phecode_distinct %>%
+  mutate(
+    ga_group = cut(
+      gestational_age,
+      breaks = 5,
+      include.lowest = TRUE
+    )
+  ) %>%
+  count(ga_group, phecode, phecode_name, sort = TRUE) %>%
+  group_by(ga_group) %>%
+  arrange(desc(n)) %>%
+  ungroup()
+
+for (g in levels(proc_enc_dx_summary_ga$ga_group)) {
+  
+  cat("\nGestational age:", g, "days\n")
+  
+  print(
+    proc_enc_dx_summary_ga %>%
+      filter(ga_group == g) %>%
+      slice_head(n = 5) %>%
+      select(phecode, phecode_name, n)
+  )
+}
+```

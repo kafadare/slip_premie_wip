@@ -494,12 +494,12 @@ if(save_figs == TRUE){
 ```{r}
 ogdq_sp_models_cmd <- fit_bam_models(df.zscore_avg, cmd_vars, 
                                         predictor = "median_dq",
-                                        covariates = c("qc_var"), save = FALSE)
+                                        covariates = c("qc_var", "global_eTIV"), save = FALSE)
   
 ogdq_sp_table_cmd <- extract_bam_features_main(models = ogdq_sp_models_cmd, 
                                                   data = df.zscore_avg, 
                                                   predictor = "median_dq",
-                                                  covariates = c("qc_var"))
+                                                  covariates = c("qc_var", "global_eTIV"))
 
 knitr::kable(t(ogdq_sp_table_cmd))
 ```
@@ -666,6 +666,20 @@ plot_grouped_lollipop(
   labs(
     x = expression("Partial " * R^2),
     color = NULL
+  )
+```
+
+## Show lollipop plot for OG DQ CMD 
+```{r}
+plot_lollipop(
+  data = ogdq_sp_table_cmd %>% mutate(phenotype = rownames(.)),
+  value_col = "r2_full_vs_none",
+  p_col = "full_p_adj",
+  color = swyc_color
+) +
+  labs(
+    x = expression("Partial " * R^2),
+    color = swyc_color
   )
 ```
 
@@ -927,35 +941,61 @@ if(save_figs == TRUE){
 
 ### fit spline models
 ```{r}
-ogdq_sp_models_global <- fit_bam_models(df.zscore_avg,
-                            c("global_eTIV","global_SubCortGrayVol","global_CortexVol",
-                                        "global_CerebralWhiteMatterVol",
-                                        "global_VentricleChoroidVol","global_SurfaceArea"), 
+ogdq_sp_models_eTIV<- fit_bam_models(df.zscore_avg,
+                            c("global_eTIV"), 
                                       predictor = "median_dq",
                                       covariates = c("qc_var"), save = FALSE)
 
-ogdq_sp_table_global <- extract_bam_features_main(models = ogdq_sp_models_global, 
+ogdq_sp_table_eTIV <- extract_bam_features_main(models = ogdq_sp_models_eTIV, 
                                                 data = df.zscore_avg, 
                                                 predictor = "median_dq",
                                                 covariates = c("qc_var"))
 
+ogdq_sp_models_global <- fit_bam_models(df.zscore_avg,
+                            c("global_SubCortGrayVol","global_CortexVol",
+                                        "global_CerebralWhiteMatterVol",
+                                        "global_VentricleChoroidVol","global_SurfaceArea"), 
+                                      predictor = "median_dq",
+                                      covariates = c("qc_var", "global_eTIV"), save = FALSE)
+
+ogdq_sp_table_global <- extract_bam_features_main(models = ogdq_sp_models_global, 
+                                                data = df.zscore_avg, 
+                                                predictor = "median_dq",
+                                                covariates = c("qc_var", "global_eTIV"))
+
 
 ogdq_sp_models_meanthick <- fit_bam_models(df.zscore_avg, "global_MeanThickness", 
                                       predictor = "median_dq",
-                                      covariates = c("euler_mean_mpr"), save = FALSE)
+                                      covariates = c("euler_mean_mpr", "global_eTIV"), save = FALSE)
 
 ogdq_sp_table_meanthick <- extract_bam_features_main(models = ogdq_sp_models_meanthick, 
                                                 data = df.zscore_avg, 
                                                 predictor = "median_dq",
-                                                covariates = c("euler_mean_mpr"))
+                                                covariates = c("euler_mean_mpr", "global_eTIV"))
 
-ogdq_sp_models_global <- c(ogdq_sp_models_global, ogdq_sp_models_meanthick)
-ogdq_sp_table_global <- rbind(ogdq_sp_table_global, ogdq_sp_table_meanthick)
+ogdq_sp_models_global <- c(ogdq_sp_models_eTIV, ogdq_sp_models_global, ogdq_sp_models_meanthick)
+ogdq_sp_table_global <- rbind(ogdq_sp_table_eTIV, ogdq_sp_table_global, ogdq_sp_table_meanthick)
 
-rm(ogdq_sp_models_meanthick, ogdq_sp_table_meanthick)
+rm(ogdq_sp_models_meanthick, ogdq_sp_table_meanthick, ogdq_sp_models_eTIV, ogdq_sp_table_eTIV)
   
 knitr::kable(t(ogdq_sp_table_global[1:4,]))
 knitr::kable(t(ogdq_sp_table_global[5:7,]))
+```
+
+
+### Show lollipop plot for OG DQ Global
+```{r}
+plot_lollipop(
+  data = ogdq_sp_table_global %>% mutate(phenotype = rownames(.)),
+  value_col = "r2_full_vs_none",
+  p_col = "full_p_adj",
+  color = swyc_color,
+  name_mapping = namemap
+) +
+  labs(
+    x = expression("Partial " * R^2),
+    color = swyc_color
+  )
 ```
 
 ### visualize no interaction model
@@ -1314,13 +1354,13 @@ for(metric in c("vol", "sa", "th")){
   vars <- get(paste0(metric, "_vars"))
     
   covs <- if (metric == "th" && median_th_mpr_flag) {
-    c("euler_mean_mpr")
+    c("euler_mean_mpr", "global_MeanThickness")
   } else if (metric == "vol") {
-    c("qc_var")
+    c("qc_var", "global_eTIV")
   } else if (metric == "sa") {
-    c("qc_var")
+    c("qc_var", "global_SurfaceArea")
   } else if (metric == "th") {
-    c("qc_var")
+    c("qc_var", "global_MeanThickness")
   } else {
     NULL
   }
@@ -1395,7 +1435,10 @@ ogdq_resi_table_th$label <- rownames(ogdq_resi_table_th) %>%
   p_col = "full_p_adj",
   p_filter = TRUE,
   title = "OG DQ partial R2 vol",
-  limits = c(0, 0.1)
+  limits = c(0, 0.1),
+  low_color  = "#F3F0F5",
+mid_color  = "#CDB8D9",
+high_color = "#9D73BA"
 ))
 
 (ogdq_partialr2_aseg_vol <- plot_brain_map(
@@ -1405,7 +1448,10 @@ ogdq_resi_table_th$label <- rownames(ogdq_resi_table_th) %>%
   p_col = "full_p_adj",
   p_filter = TRUE,
   title = "OG DQ partial R2 vol",
-  limits = c(0, 0.1)
+  limits = c(0, 0.1),
+  low_color  = "#F3F0F5",
+mid_color  = "#CDB8D9",
+high_color = "#9D73BA"
 ))
 
 (ogdq_partialr2_sa <- plot_brain_map(
@@ -1415,7 +1461,10 @@ ogdq_resi_table_th$label <- rownames(ogdq_resi_table_th) %>%
   p_col = "full_p_adj",
   p_filter = TRUE,
   title = "OG DQ partial R2 sa",
-  limits = c(0, 0.1)
+  limits = c(0, 0.1),
+  low_color  = "#F3F0F5",
+mid_color  = "#CDB8D9",
+high_color = "#9D73BA"
 ))
 
 (ogdq_partialr2_th <- plot_brain_map(
@@ -1425,7 +1474,64 @@ ogdq_resi_table_th$label <- rownames(ogdq_resi_table_th) %>%
   p_col = "full_p_adj",
   p_filter = TRUE,
   title = "OG DQ partial R2 th",
-  limits = c(0, 0.1)
+  limits = c(0, 0.1),
+  low_color  = "#F3F0F5",
+mid_color  = "#CDB8D9",
+high_color = "#9D73BA"
+))
+```
+### OG DQ visualize ggseg - avg first deriv
+```{r}
+(ogdq_deriv_dkt_vol <- plot_brain_map(
+  table = ogdq_sp_table_vol,
+  value_col = "avg_first_deriv",
+  atlas = "dk",
+  p_col = "full_p_adj",
+  p_filter = TRUE,
+  title = "OG DQ partial R2 vol",
+  limits = c(-0.35, 0.35),
+  low_color = "#4878CF",
+mid_color = "white",
+high_color = "#D65F5F"
+))
+
+(ogdq_deriv_aseg_vol <- plot_brain_map(
+  table = ogdq_sp_table_vol,
+  value_col = "avg_first_deriv",
+  atlas = "aseg",
+  p_col = "full_p_adj",
+  p_filter = TRUE,
+  title = "OG DQ partial R2 vol",
+  limits = c(-0.35, 0.35),
+  low_color = "#4878CF",
+mid_color = "white",
+high_color = "#D65F5F"
+))
+
+(ogdq_deriv_sa <- plot_brain_map(
+  table = ogdq_sp_table_sa,
+  value_col = "avg_first_deriv",
+  atlas = "dk",
+  p_col = "full_p_adj",
+  p_filter = TRUE,
+  title = "OG DQ partial R2 sa",
+  limits = c(-0.35, 0.35),
+  low_color = "#4878CF",
+mid_color = "white",
+high_color = "#D65F5F"
+))
+
+(ogdq_deriv_th <- plot_brain_map(
+  table = ogdq_sp_table_th,
+  value_col = "avg_first_deriv",
+  atlas = "dk",
+  p_col = "full_p_adj",
+  p_filter = TRUE,
+  title = "OG DQ partial R2 th",
+  limits = c(-0.35, 0.35),
+  low_color = "#4878CF",
+mid_color = "white",
+high_color = "#D65F5F"
 ))
 ```
 ### OG DQ visualize ggseg - RESI
@@ -1892,6 +1998,31 @@ using p-value from the ML-based LRT comparison table
 ```
 
 ## Put ggseg plots together
+
+### main effects partial R2 -- ogDQ only
+```{r}
+plots<- list(ogdq_partialr2_dkt_vol, ogdq_partialr2_sa, ogdq_partialr2_th, ogdq_partialr2_aseg_vol)
+
+plots <- lapply(plots, function(p) {
+  p +
+    labs(title = NULL) +
+    theme(
+      legend.position = "bottom"
+    )
+})
+
+dq_partialr2_grid <- wrap_plots(plots, ncol = 4) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "bottom")
+
+dq_partialr2_grid
+
+if(save_figs){
+  panel_save(dq_partialr2_grid, "dq_partialr2_nocovar_grid", "svg", plot_output_folder,
+             plot_width = 16, plot_height = 10)
+}
+```
 
 ### main effects partial R2
 ```{r}

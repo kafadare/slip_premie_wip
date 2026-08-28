@@ -421,6 +421,7 @@ merge_write_models <- function(new_models, path) {
   out <- if (file.exists(path)) readRDS(path) else list()
   out[names(new_models)] <- new_models
   saveRDS(out, path)
+  rm(out)
 }
 
 # ---- Run requested variant(s), writing each variant's output as soon as it's

@@ -13,10 +13,11 @@
 
 require(dplyr)
 
-args <- commandArgs(trailingOnly = TRUE)
-output_folder <- args[1]
+#args <- commandArgs(trailingOnly = TRUE)
+#output_folder <- args[1]
+output_folder <- "/mnt/arcus/lab/users/kafadare/slip_premie_results_fxfalse/"
 
-models_folder <- paste0(output_folder, "models/")
+# models_folder <- paste0(output_folder, "models/")
 stats_folder <- paste0(output_folder, "results_csv/")
 
 read_variant_csvs <- function(suffix) {
@@ -33,12 +34,14 @@ write.csv(main_stats_long, file.path(stats_folder, "main_effects_stats_all_varia
 write.csv(resi_stats_long, file.path(stats_folder, "resi_stats_all_variants.csv"), row.names = FALSE)
 write.csv(int_stats_long, file.path(stats_folder, "interaction_stats_all_variants.csv"), row.names = FALSE)
 
-model_files <- list.files(models_folder, pattern = "_models\\.rds$", full.names = TRUE)
-if (length(model_files) == 0) stop("No files found matching *_models.rds in ", models_folder)
+# comment out merging all models because unnecessary and object becomes too big.
 
-variant_names <- sub("_models\\.rds$", "", basename(model_files))
-all_models <- setNames(lapply(model_files, readRDS), variant_names)
-
-saveRDS(all_models, file.path(models_folder, "all_variants_models.rds"))
-
-message("Merged ", length(variant_names), " variant(s): ", paste(variant_names, collapse = ", "))
+# model_files <- list.files(models_folder, pattern = "_models\\.rds$", full.names = TRUE)
+# if (length(model_files) == 0) stop("No files found matching *_models.rds in ", models_folder)
+# 
+# variant_names <- sub("_models\\.rds$", "", basename(model_files))
+# all_models <- setNames(lapply(model_files, readRDS), variant_names)
+# 
+# saveRDS(all_models, file.path(models_folder, "all_variants_models.rds"))
+# 
+# message("Merged ", length(variant_names), " variant(s): ", paste(variant_names, collapse = ", "))

@@ -246,3 +246,71 @@ phewasManhattan(
   OR.direction = TRUE,
   OR.size = TRUE 
 )
+
+phecode <- merge(phecode,PheWAS::pheinfo %>%
+                           select(phecode, description, group, color) %>%
+                           rename(disease_group = group, disease_color = color,
+                                  disease_name = description) %>%
+                           distinct(),
+                         by = "phecode",
+                         all.x = TRUE, all.y = FALSE
+)
+
+
+# Check neonatal diagnoses
+phecode_neonate <- phecode %>% filter(age < 28)
+
+table((phecode_neonate$disease_name))
+
+table((phecode_neonate$disease_group))
+
+length(unique(phecode_neonate$pat_id)) # 1695
+
+pat_id_neonate_dx <- phecode_neonate %>% pull(pat_id)
+
+pat_id_pregnancy_comp <- phecode_neonate %>% pull(pat_id)
+
+cent_noneo_dx <- cent %>% filter(!(pat_id %in% pat_id_neonate_dx))
+
+cor.test(cent_noneo_dx$global_eTIV, cent_noneo_dx$gestational_age)
+cor.test(cent$global_eTIV, cent$gestational_age)
+
+cor.test(cent_noneo_dx$global_eTIV, cent_noneo_dx$bwp_fen)
+cor.test(cent$global_eTIV, cent$bwp_fen)
+
+
+# Add true/false column of ANY neonatal diagnosis
+cent$neonatal_dx <- ifelse(cent$pat_id %in% pat_id_neonate_dx, 1, 0)
+
+# Save with neonatal diagnosis
+
+write.csv(cent, cent_path)
+
+# Make table of neuropsych diagnoses
+
+phecode_psych <- phecode %>% filter(disease_group %in% c("mental disorders"))
+
+table((phecode_psych$disease_name))
+
+length(unique(phecode_psych$pat_id)) # 7895
+
+sum(duplicated(phecode_psych$pat_phecode))/nrow(phecode_psych)
+
+phecode_psych_minage <- phecode_psych %>%
+  group_by(pat_phecode) %>%
+  slice_min(age)
+
+sum(duplicated(phecode_psych_minage$pat_phecode))/nrow(phecode_psych_minage)
+
+phecode_psych_minage <- phecode_psych_minage %>%
+  distinct(pat_phecode, .keep_all = TRUE)
+
+cent_psych <- merge(cent,
+                    phecode_psych_minage %>%
+                      select(phecode, pat_id, encounter_id, age, disease_name,
+                             disease_group, disease_color) %>%
+                      rename(age_min_psych_dx = age), 
+                    by = "pat_id", all.x = TRUE, all.y = FALSE)
+
+
+write.csv(cent_psych, "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/df_zscore_distinct_psychdx.csv")

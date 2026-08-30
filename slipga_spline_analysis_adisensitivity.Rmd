@@ -1326,7 +1326,7 @@ tables_list <- list(
 color_vec <- c(GA = ga_color, BWP = bw_color)
 
 ## Grouped lolli
-ga_bwp_global_partialr2_plot <- plot_grouped_lollipop(
+ga_bwp_global_partialr2_plot <- plot_lollipop(
   table_list = tables_list,
   value_col = "r2_full_vs_none",
   p_col = "full_p_adj",
@@ -1628,7 +1628,7 @@ pheno_list <- unique(c(tables_list$GA %>% filter(full_p_adj < 0.05) %>% pull(phe
 color_vec <- c(GA = ga_color, BWP = bw_color)
 
 ## Grouped lollipop
-(ga_bwp_th_partialr2_plot <- plot_grouped_lollipop(
+(ga_bwp_th_partialr2_plot <- plot_lollipop(
   table_list = tables_list,
   value_col = "r2_full_vs_none",
   p_col = "full_p_adj",
@@ -1663,7 +1663,7 @@ tables_list <- list(
 color_vec <- c(GA = ga_color, BWP = bw_color)
 
 ## Grouped lolli
-ga_bwp_adi_int_global_partialr2_plot <- plot_grouped_lollipop(
+ga_bwp_adi_int_global_partialr2_plot <- plot_lollipop(
   table_list = tables_list,
   value_col = "partial_r2",
   p_col = "int_p_adj",
@@ -1703,7 +1703,7 @@ tables_list <- list(
 color_vec <- c(GA = ga_color, BWP = bw_color)
 
 ## Grouped lolli
-ga_bwp_int_global_partialr2_plot <- plot_grouped_lollipop(
+ga_bwp_int_global_partialr2_plot <- plot_lollipop(
   table_list = tables_list,
   value_col = "partial_r2",
   p_col = "int_p_adj",

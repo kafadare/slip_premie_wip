@@ -69,6 +69,9 @@ models_folder <- paste0(params$output_folder, "models/")
 
 plot_output_folder <- paste0(params$output_folder, "plots/")
 if (!dir.exists(plot_output_folder)) dir.create(plot_output_folder, recursive = TRUE)
+
+spin_output_folder <- paste0(params$output_folder, "spin_tables/")
+if (!dir.exists(spin_output_folder)) dir.create(spin_output_folder, recursive = TRUE)
 ```
 
 # Load data
@@ -90,14 +93,27 @@ df.zscore <- read.csv(params$cent_path)
 
 # Plotting Specifications
 ```{r colors, echo = TRUE}
-# ga_color / bwp_color match the base hues used in the original spline Rmds,
-# with the mislabeling corrected there -- bw_color ("#709085") was being reused
-# for BWP plots even though a distinct bwp_color existed. Only GA and BWP are
-# plotted going forward (birth_weight_kg was dropped as a predictor), so
-# bw_color isn't used here at all.
-ga_color  <- "blue" # muted blue-grey  -- Gestational Age
-bwp_color <- "red"  # muted tan/gold   -- Birth Weight Percentile
-bw_color = "green" # muted green -- Birth Weight
+# One dark + one medium-dark hue per predictor -- replaces the old per-variant
+# color ramp (make_variant_family()/predictor_colors), which was only ever
+# used to shade a pair of things being compared. Two fixed shades per
+# predictor cover that: the "reference" item in a pair gets the medium shade,
+# the "extra"/emphasis item gets the dark shade.
+predictor_hues <- list(
+  gestational_age = c(dark = "#0B3D42", medium = "#3E7C89"),  # dark / medium petrol blue
+  bwp_fen         = c(dark = "#1B4332", medium = "#52796F")   # dark / medium forest green
+)
+
+# Kept for the Model Visualization section, which colors points/lines by
+# predictor directly (not through a pair comparison) -- single source of
+# truth now instead of independently-set constants.
+ga_color  <- predictor_hues$gestational_age[["dark"]]
+bwp_color <- predictor_hues$bwp_fen[["dark"]]
+bw_color = "green" # muted green -- Birth Weight (birth_weight_kg dropped as a predictor; unused)
+
+# For lollipop plots colored by effect direction (average first derivative
+# sign) instead of by predictor/variant identity.
+deriv_pos_color <- "#B85C5C"  # muted red  -- positive average derivative
+deriv_neg_color <- "#5C7CB8"  # muted blue -- negative average derivative
 
 font_size <- 16
 theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
@@ -108,20 +124,6 @@ point_size <- 2
 # low_color = "#4878CF" # blue
 # mid_color = "white"
 # high_color = "#D65F5F" # red
-
-# One color family per predictor, with a distinct, consistent sub-color per
-# covariate_group variant (same variant = same shade everywhere in this
-# document, regardless of which pair it's being compared against).
-variant_order <- c("nocovar", "eTIV", "ADI", "eTIV_ADI", "wh", "eTIV_wh")
-
-make_variant_family <- function(base_color, variants) {
-  setNames(colorRampPalette(c("#CCCCCC", base_color))(length(variants)), variants)
-}
-
-predictor_colors <- list(
-  gestational_age = make_variant_family(ga_color, variant_order),
-  bwp_fen         = make_variant_family(bwp_color, variant_order)
-)
 ```
 
 # Covariate-structure comparison pairs
@@ -200,136 +202,131 @@ add_ggseg_label <- function(df, region_type = c("vol", "sa", "th")) {
 }
 ```
 
-# Between Variants Grouped Lollipop Plots (Global & CMD, Partial R2 & RESI)
+# Grouped Lollipop Plots
 ```{r lollipop-fcts, echo = TRUE}
-make_pair_table_list <- function(df, this_predictor, groups, pair) {
-  sub <- df %>% filter(predictor == this_predictor, group %in% groups, variant %in% pair)
-  split(sub, sub$variant)[pair]
+# fixed_col/varying_col name which axis is held constant vs. compared, so the
+# same filter+split logic covers "same predictor, compare variants" and "same
+# variant, compare predictors" without two near-duplicate functions.
+make_pair_table_list <- function(df, fixed_col, fixed_value, groups, varying_col, pair) {
+  sub <- df %>%
+    filter(.data[[fixed_col]] == fixed_value, group %in% groups, .data[[varying_col]] %in% pair)
+  split(sub, sub[[varying_col]])[pair]
 }
 
-plot_pair_lollipop <- function(df, this_predictor, groups, pair, value_col, p_col, set_label) {
-  table_list <- make_pair_table_list(df, this_predictor, groups, pair)
-
-  plot_grouped_lollipop(
-    table_list = table_list,
-    value_col = value_col,
-    p_col = p_col,
-    color_vec = predictor_colors[[this_predictor]][pair],
-    name_mapping = namemap
-  ) +
-    labs(
-      title = glue("{set_label} -- {predictor_label(this_predictor)}: {pair[1]} vs {pair[2]}"),
-      x = value_col
-    ) +
-    theme_minimal()
-}
+# avg_first_deriv comes straight out of extract_bam_features_main() (see
+# model_extract_fcts.R), so it's already in main_stats -- only main_stats has
+# it (resi_stats doesn't), so the derivative-sign-colored plots below only
+# work for Partial R2 right now. To use them with RESI (or anything else),
+# join deriv_sign in from main_stats by phenotype/predictor/variant/group first.
+main_stats$deriv_sign <- ifelse(main_stats$avg_first_deriv >= 0, "Positive", "Negative")
 ```
 
-```{r lollipop-plots, results = 'asis', fig.width = 9, fig.height = 6}
-for (this_predictor in predictors) {
-  for (pair in covariate_pairs) {
+Each plot below is a standalone block for one specific comparison -- not a loop that regenerates every predictor x variant x group x stat combination, since most of those aren't actually used downstream.
 
-    pair_label <- paste(pair, collapse = "_vs_")
+## GA vs BW within eTIV, colored by average-derivative sign (Partial R2)
+```{r lollipop-etiv-ga-vs-bw-deriv, fig.width = 9, fig.height = 6}
+this_variant <- "eTIV"
+pair         <- c("gestational_age", "bwp_fen")
+groups       <- global_groups
+df           <- main_stats            # swap to resi_stats for RESI (see note above re: deriv_sign)
+value_col    <- "r2_full_vs_none"     # swap to "RESI" for RESI
+p_col        <- "full_p_adj"          # swap to "p_adj" for RESI
 
-    p_global_r2 <- plot_pair_lollipop(main_stats, this_predictor, global_groups, pair,
-                                       "r2_full_vs_none", "full_p_adj", "Global vars (Partial R2)")
-    p_global_resi <- plot_pair_lollipop(resi_stats, this_predictor, global_groups, pair,
-                                         "RESI", "p_adj", "Global vars (RESI)")
-    p_cmd_r2 <- plot_pair_lollipop(main_stats, this_predictor, cmd_groups, pair,
-                                    "r2_full_vs_none", "full_p_adj", "CMD (Partial R2)")
-    p_cmd_resi <- plot_pair_lollipop(resi_stats, this_predictor, cmd_groups, pair,
-                                      "RESI", "p_adj", "CMD (RESI)")
+table_list <- make_pair_table_list(df, "variant", this_variant, groups, "predictor", pair)
 
-    print(p_global_r2)
-    print(p_global_resi)
-    print(p_cmd_r2)
-    print(p_cmd_resi)
+p <- plot_lollipop(
+  table_list = table_list,
+  value_col = value_col,
+  p_col = p_col,
+  color_col = "deriv_sign",
+  color_vec = c(Positive = deriv_pos_color, Negative = deriv_neg_color),
+  name_mapping = namemap
+) +
+  labs(title = glue("{this_variant} -- Gestational Age vs Birth Weight Percentile (Partial R2)"), x = value_col) +
+  theme_minimal()
 
-    if (params$save_plots == TRUE) {
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_r2.svg"),
-             p_global_r2, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_global_resi.svg"),
-             p_global_resi, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_r2.svg"),
-             p_cmd_r2, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_predictor}_{pair_label}_cmd_resi.svg"),
-             p_cmd_resi, width = 9, height = 6)
-    }
-  }
+# Add-on: mark which dodge position is GA vs BW, since color no longer
+# identifies the predictor. plot_lollipop() doesn't expose the df it
+# actually plots (post name_mapping / reorder), so this rebuilds just enough
+# of it here to place text at the right y / x / dodge position -- a one-off,
+# not worth a function for.
+label_df <- dplyr::bind_rows(table_list, .id = "predictor")
+if (!is.null(namemap)) {
+  label_df <- merge(label_df, namemap, by.x = "phenotype", by.y = "key", all.x = TRUE)
+  label_df$plot_label <- ifelse(is.na(label_df$plot_names), label_df$phenotype, label_df$plot_names)
+} else {
+  label_df$plot_label <- label_df$phenotype
 }
-```
+label_df$predictor_short <- ifelse(label_df$predictor == "gestational_age", "GA", "BW")
 
-# Between Predictors Grouped Lollipop Plots (Global & CMD, Partial R2 & RESI)
-```{r}
-predictor_pairs <- list(c("gestational_age", "bwp_fen"))
-
-# Variants to loop over -- reuse the same set covariate_pairs draws from.
-variants_to_plot <- "eTIV"
-```
-
-```{r}
-make_variant_pair_table_list <- function(df, this_variant, groups, pair) {
-  sub <- df %>% filter(variant == this_variant, group %in% groups, predictor %in% pair)
-  split(sub, sub$predictor)[pair]
-}
-
-plot_variant_pair_lollipop <- function(df, this_variant, groups, pair, value_col, p_col, set_label) {
-  table_list <- make_variant_pair_table_list(df, this_variant, groups, pair)
-
-  # predictor_colors is keyed by predictor -> variant; here the pair varies by
-  # predictor while the variant is fixed, so pull each predictor's shade for
-  # this_variant instead of predictor_colors[[this_predictor]][pair].
-  color_vec <- setNames(
-    sapply(pair, function(p) predictor_colors[[p]][[this_variant]]),
-    pair
+p <- p +
+  geom_text(
+    data = label_df,
+    aes(y = plot_label, x = .data[[value_col]], group = predictor, label = predictor_short),
+    position = position_dodge(width = 0.6),
+    hjust = -0.3, size = 3, color = "grey30"
   )
 
-  plot_grouped_lollipop(
-    table_list = table_list,
-    value_col = value_col,
-    p_col = p_col,
-    color_vec = color_vec,
-    name_mapping = namemap
-  ) +
-    labs(
-      title = glue("{set_label} -- {this_variant}: {predictor_label(pair[1])} vs {predictor_label(pair[2])}"),
-      x = value_col
-    ) +
-    theme_minimal()
+print(p)
+
+if (params$save_plots == TRUE) {
+  ggsave(glue("{plot_output_folder}lollipop_{this_variant}_ga_vs_bw_derivsign_{value_col}.svg"), p, width = 9, height = 6)
 }
 ```
 
-```{r}
-for (this_variant in variants_to_plot) {
-  for (pair in predictor_pairs) {
+## GA only, colored by average-derivative sign (Partial R2)
+```{r lollipop-etiv-ga-only-deriv, fig.width = 9, fig.height = 6}
+this_variant <- "eTIV"
+groups       <- global_groups
+df           <- main_stats
+value_col    <- "r2_full_vs_none"
+p_col        <- "full_p_adj"
 
-    pair_label <- paste(pair, collapse = "_vs_")
+ga_df <- df %>% filter(predictor == "gestational_age", variant == this_variant, group %in% groups)
 
-    p_global_r2 <- plot_variant_pair_lollipop(main_stats, this_variant, global_groups, pair,
-                                               "r2_full_vs_none", "full_p_adj", "Global vars (Partial R2)")
-    p_global_resi <- plot_variant_pair_lollipop(resi_stats, this_variant, global_groups, pair,
-                                                 "RESI", "p_adj", "Global vars (RESI)")
-    p_cmd_r2 <- plot_variant_pair_lollipop(main_stats, this_variant, cmd_groups, pair,
-                                            "r2_full_vs_none", "full_p_adj", "CMD (Partial R2)")
-    p_cmd_resi <- plot_variant_pair_lollipop(resi_stats, this_variant, cmd_groups, pair,
-                                              "RESI", "p_adj", "CMD (RESI)")
+p_ga <- plot_lollipop(
+  table_list = ga_df,
+  value_col = value_col,
+  p_col = p_col,
+  color_col = "deriv_sign",
+  color_vec = c(Positive = deriv_pos_color, Negative = deriv_neg_color),
+  name_mapping = namemap
+) +
+  labs(title = glue("{this_variant} -- Gestational Age (Partial R2)"), x = value_col) +
+  theme_minimal()
 
-    print(p_global_r2)
-    print(p_global_resi)
-    print(p_cmd_r2)
-    print(p_cmd_resi)
+print(p_ga)
 
-    if (params$save_plots == TRUE) {
-      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_global_r2.svg"),
-             p_global_r2, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_global_resi.svg"),
-             p_global_resi, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_cmd_r2.svg"),
-             p_cmd_r2, width = 9, height = 6)
-      ggsave(glue("{plot_output_folder}lollipop_{this_variant}_{pair_label}_cmd_resi.svg"),
-             p_cmd_resi, width = 9, height = 6)
-    }
-  }
+if (params$save_plots == TRUE) {
+  ggsave(glue("{plot_output_folder}lollipop_{this_variant}_ga_only_derivsign_{value_col}.svg"), p_ga, width = 9, height = 6)
+}
+```
+
+## BW only, colored by average-derivative sign (Partial R2)
+```{r lollipop-etiv-bw-only-deriv, fig.width = 9, fig.height = 6}
+this_variant <- "eTIV"
+groups       <- global_groups
+df           <- main_stats
+value_col    <- "r2_full_vs_none"
+p_col        <- "full_p_adj"
+
+bw_df <- df %>% filter(predictor == "bwp_fen", variant == this_variant, group %in% groups)
+
+p_bw <- plot_lollipop(
+  table_list = bw_df,
+  value_col = value_col,
+  p_col = p_col,
+  color_col = "deriv_sign",
+  color_vec = c(Positive = deriv_pos_color, Negative = deriv_neg_color),
+  name_mapping = namemap
+) +
+  labs(title = glue("{this_variant} -- Birth Weight Percentile (Partial R2)"), x = value_col) +
+  theme_minimal()
+
+print(p_bw)
+
+if (params$save_plots == TRUE) {
+  ggsave(glue("{plot_output_folder}lollipop_{this_variant}_bw_only_derivsign_{value_col}.svg"), p_bw, width = 9, height = 6)
 }
 ```
 # Brain Maps (Vol/SA/TH, Partial R2 & RESI, GA top / BWP bottom)
@@ -435,6 +432,43 @@ plot_variant_brainmap_page <- function(df, variant, value_col, p_col, limits) {
              guides = "collect") &
     theme(legend.position = "bottom")
 }
+```
+
+## Spin test export
+```{r spin-export-fct, echo = TRUE}
+# Reuses build_variant_table() above (filter + add_ggseg_label()) instead of
+# re-deriving the ggseg label / hemisphere split by hand the way
+# slipga_linearanalyses_new.Rmd's "save betas" chunk did for each table.
+save_stat_for_spin <- function(df, this_predictor, this_variant, group, value_col, p_col,
+                                region_type, atlas = "dk", output_folder) {
+
+  table <- build_variant_table(df, this_predictor, group, this_variant, value_col, p_col, region_type, atlas)
+
+  # Spin tests want hemisphere as its own column and a bare region name in
+  # `label`, not the ggseg-style "lh_"/"rh_" prefix -- same convention
+  # slipga_linearanalyses_new.Rmd applied by hand for each table it saved.
+  table$hemisphere <- dplyr::case_when(
+    grepl("^lh_", table$label) ~ "L",
+    grepl("^rh_", table$label) ~ "R",
+    TRUE ~ NA_character_
+  )
+  table$label <- sub("^lh_|^rh_", "", table$label)
+
+  names(table)[names(table) == "val"] <- value_col
+  names(table)[names(table) == "p"]   <- p_col
+
+  filename <- glue("{output_folder}{this_predictor}_{this_variant}_{group}_{value_col}_spin.csv")
+  write.csv(table, filename, row.names = FALSE)
+  invisible(table)
+}
+```
+
+```{r spin-export-run, echo = TRUE}
+# One call per (predictor, variant, group, value_col) combination needed for
+# a given spin test -- add calls here as new ones come up rather than
+# exporting every combination main_stats/resi_stats could produce.
+save_stat_for_spin(main_stats, "gestational_age", "eTIV", "vol", "r2_full_vs_none", "full_p_adj",
+                    region_type = "vol", atlas = "dk", output_folder = spin_output_folder)
 ```
 
 ```{r}

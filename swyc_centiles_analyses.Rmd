@@ -657,7 +657,7 @@ tables_list <- list(
 color_vec <- c(OG = swyc_color, GA_ADJ = ga_adj_color)
 
 ## Main effects: Original DQ vs GA-adjusted DQ
-plot_grouped_lollipop(
+plot_lollipop(
   table_list = tables_list,
   value_col = "r2_full_vs_none",
   color_vec = color_vec,
@@ -672,7 +672,7 @@ plot_grouped_lollipop(
 ## Show lollipop plot for OG DQ CMD 
 ```{r}
 plot_lollipop(
-  data = ogdq_sp_table_cmd %>% mutate(phenotype = rownames(.)),
+  table_list = ogdq_sp_table_cmd %>% mutate(phenotype = rownames(.)),
   value_col = "r2_full_vs_none",
   p_col = "full_p_adj",
   color = swyc_color
@@ -698,7 +698,7 @@ tables_list <- list(
 color_vec <- c(OG = swyc_color, GA_ADJ = ga_adj_color)
 
 ## Main effects: Original DQ vs GA-adjusted DQ
-plot_grouped_lollipop(
+plot_lollipop(
   table_list = tables_list,
   value_col = "RESI",
   color_vec = color_vec,
@@ -736,7 +736,7 @@ tables_list <- list(
 color_vec <- c(PENALIZED = "pink", FIXED = "red")
 
 ## Main effects: Original DQ vs GA-adjusted DQ
-plot_grouped_lollipop(
+plot_lollipop(
   table_list = tables_list,
   value_col = "RESI",
   color_vec = color_vec,
@@ -758,7 +758,7 @@ tables_list <- list(
 color_vec <- c(PENALIZED = "pink", FIXED = "red")
 
 ## Main effects: Original DQ vs GA-adjusted DQ
-plot_grouped_lollipop(
+plot_lollipop(
   table_list = tables_list,
   value_col = "full_edf",
   color_vec = color_vec,
@@ -986,7 +986,7 @@ knitr::kable(t(ogdq_sp_table_global[5:7,]))
 ### Show lollipop plot for OG DQ Global
 ```{r}
 plot_lollipop(
-  data = ogdq_sp_table_global %>% mutate(phenotype = rownames(.)),
+  table_list = ogdq_sp_table_global %>% mutate(phenotype = rownames(.)),
   value_col = "r2_full_vs_none",
   p_col = "full_p_adj",
   color = swyc_color,
@@ -1285,7 +1285,7 @@ tables_list <- list(
 color_vec <- c(OG = swyc_color, GA_ADJ = ga_adj_color)
 
 ## Main effects: Original DQ vs GA-adjusted DQ
-plot_grouped_lollipop(
+plot_lollipop(
   table_list = tables_list,
   value_col = "r2_full_vs_none",
   color_vec = color_vec,
@@ -1299,7 +1299,7 @@ plot_grouped_lollipop(
 
 
 ## Ordered form interactions
-plot_grouped_lollipop(
+plot_lollipop(
   table_list = list(
     ogdq_sp_int_table_global,
     adjdq_sp_int_table_global
@@ -1332,7 +1332,7 @@ tables_list <- list(
 color_vec <- c(OG = swyc_color, GA_ADJ = ga_adj_color)
 
 ## Main effects: Original DQ vs GA-adjusted DQ
-plot_grouped_lollipop(
+plot_lollipop(
   table_list = tables_list,
   value_col = "RESI",
   color_vec = color_vec,
@@ -2400,7 +2400,7 @@ knitr::kable(ga_global_covars_table)
 ```{r}
 ## RESI of GA with different brain covar
 resi_covar_plot <- plot_lollipop(
-  data = ga_covars_table, 
+  table_list = ga_covars_table, 
          value_col = "resi",
          label_col = "covar") +
   labs(
@@ -2423,7 +2423,7 @@ resi_covar_plot +
 
 ## partial R2 of GA with different brain covar
 partialr2_covar_plot <- plot_lollipop(
-  data = ga_covars_table, 
+  table_list = ga_covars_table, 
          value_col = "partial_r2",
          label_col = "covar") +
   labs(
@@ -2482,7 +2482,7 @@ knitr::kable(ga_vol_covars_table)
 ```{r}
 ## RESI of GA with different brain covar
 resi_covar_plot <- plot_lollipop(
-  data = ga_vol_covars_table, 
+  table_list = ga_vol_covars_table, 
          value_col = "resi",
          label_col = "covar") +
   labs(
@@ -2505,7 +2505,7 @@ resi_covar_plot +
 
 ## partial R2 of GA with different brain covar
 partialr2_covar_plot <- plot_lollipop(
-  data = ga_vol_covars_table, 
+  table_list = ga_vol_covars_table, 
          value_col = "partial_r2",
          label_col = "covar") +
   labs(
@@ -2566,7 +2566,7 @@ knitr::kable(ga_sa_covars_table)
 ```{r}
 ## RESI of GA with different brain covar
 resi_covar_plot <- plot_lollipop(
-  data = ga_sa_covars_table, 
+  table_list = ga_sa_covars_table, 
          value_col = "resi",
          label_col = "covar") +
   labs(
@@ -2589,7 +2589,7 @@ resi_covar_plot +
 
 ## partial R2 of GA with different brain covar
 partialr2_covar_plot <- plot_lollipop(
-  data = ga_sa_covars_table, 
+  table_list = ga_sa_covars_table, 
          value_col = "partial_r2",
          label_col = "covar") +
   labs(

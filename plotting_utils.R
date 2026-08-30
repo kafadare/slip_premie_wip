@@ -52,44 +52,44 @@ plot_grouped_bar <- function(table_list, value_col,
     labs(x = NULL, y = value_col)
 }
 
-plot_grouped_lollipop <- function(table_list,
-                                  value_col,
-                                  label_col = "phenotype",
-                                  group_names = NULL,
-                                  color_vec = NULL,
-                                  p_col = NULL,
-                                  p_thresh = 0.05,
-                                  var_names = NULL,
-                                  name_mapping = NULL,
-                                  group_col = NULL,
-                                  position_dodge_width = 0.6,
-                                  line_width = 1,
-                                  point_size = 5) {
-  
-  # Handle single dataframe
+plot_lollipop <- function(table_list,
+                          value_col,
+                          label_col = "phenotype",
+                          group_names = NULL,
+                          color_vec = NULL,
+                          color_col = NULL,
+                          color = "steelblue",
+                          p_col = NULL,
+                          p_thresh = 0.05,
+                          var_names = NULL,
+                          name_mapping = NULL,
+                          group_col = NULL,
+                          position_dodge_width = 0.6,
+                          line_width = 1,
+                          point_size = 5) {
+
+  # Handle single dataframe -- group_col is optional here; omitting it means
+  # "one implicit group" (no dodge), covering what used to be a separate,
+  # ungrouped plot_lollipop() with a single fixed color.
   if (is.data.frame(table_list)) {
-    
-    if (is.null(group_col)) {
-      stop("group_col must be supplied when table_list is a dataframe.")
-    }
-    
+
     df <- table_list
-    df$group <- df[[group_col]]
-    
+    df$group <- if (!is.null(group_col)) df[[group_col]] else "1"
+
   } else {
-    
+
     # Handle list of tables
     df <- dplyr::bind_rows(table_list, .id = "group")
   }
-  
+
   # Optional filtering
   if (!is.null(var_names)) {
     df <- df[df[[label_col]] %in% var_names, ]
   }
-  
+
   # Optional name mapping
   if (!is.null(name_mapping)) {
-    
+
     df <- merge(
       df,
       name_mapping,
@@ -97,18 +97,18 @@ plot_grouped_lollipop <- function(table_list,
       by.y = "key",
       all.x = TRUE
     )
-    
+
     df$plot_label <- ifelse(
       is.na(df$plot_names),
       df[[label_col]],
       df$plot_names
     )
-    
+
   } else {
-    
+
     df$plot_label <- df[[label_col]]
   }
-  
+
   # Optional group names
   if (!is.null(group_names)) {
     df$group <- factor(
@@ -117,123 +117,77 @@ plot_grouped_lollipop <- function(table_list,
       labels = group_names
     )
   }
-  
+
   # Significance
   df$signif <- TRUE
-  
+
   if (!is.null(p_col)) {
     df$signif <- df[[p_col]] < p_thresh
   }
-  
-  # Plot
-  ggplot(
-    df,
-    aes(
-      y = reorder(plot_label, .data[[value_col]]),
-      x = .data[[value_col]]
-    )
-  ) +
-    geom_linerange(
-      aes(
-        xmin = 0,
-        xmax = .data[[value_col]],
-        color = group,
-        alpha = signif
-      ),
-      position = position_dodge(width = position_dodge_width),
-      linewidth = line_width
-    ) +
-    geom_point(
-      aes(
-        color = group,
-        alpha = signif
-      ),
-      position = position_dodge(width = position_dodge_width),
-      size = point_size
-    ) +
-    scale_color_manual(values = color_vec) +
-    scale_alpha_manual(
-      values = c(`TRUE` = 1, `FALSE` = 0.3)
-    ) +
-    theme_minimal() +
-    labs(
-      x = value_col,
-      y = NULL
-    )
-}
 
-plot_lollipop <- function(data, value_col,
-                          label_col = "phenotype",
-                          p_col = NULL,
-                          p_thresh = 0.05,
-                          var_names = NULL,
-                          name_mapping = NULL,
-                          line_width = 1,
-                          point_size = 5,
-                          color = "steelblue"){
-  
-  df <- data
-  
-  # optional filtering
-  if(!is.null(var_names)){
-    df <- df[df[[label_col]] %in% var_names, ]
-  }
-  
-  # optional name mapping
-  if(!is.null(name_mapping)){
-    df <- merge(
-      df,
-      name_mapping,
-      by.x = label_col,
-      by.y = "key",
-      all.x = TRUE
-    )
-    
-    df$plot_label <- ifelse(
-      is.na(df$plot_names),
-      df[[label_col]],
-      df$plot_names
-    )
-    
-  } else {
-    df$plot_label <- df[[label_col]]
-  }
-  
-  # significance
-  df$signif <- TRUE
-  
-  if(!is.null(p_col)){
-    df$signif <- df[[p_col]] < p_thresh
-  }
-  
-  ggplot(
+  # Color can come from a different column than the dodge/legend group --
+  # defaults to `group` (color = which group a point belongs to). With
+  # neither color_col supplied nor more than one group, there's nothing
+  # meaningful to color-map, so fall back to a single fixed color and skip
+  # the legend entirely -- this is the old single-series plot_lollipop() case.
+  df$color_val <- if (!is.null(color_col)) df[[color_col]] else df$group
+  mapped_color <- !is.null(color_col) || length(unique(df$group)) > 1
+
+  p <- ggplot(
     df,
     aes(
       y = reorder(plot_label, .data[[value_col]]),
-      x = .data[[value_col]]
+      x = .data[[value_col]],
+      group = group
     )
-  ) +
-    
-    geom_linerange(
-      aes(
-        xmin = 0,
-        xmax = .data[[value_col]],
-        alpha = signif
-      ),
-      linewidth = line_width,
-      color = color
-    ) +
-    
-    geom_point(
-      aes(alpha = signif),
-      size = point_size,
-      color = color
-    ) +
-    
+  )
+
+  if (mapped_color) {
+
+    p <- p +
+      geom_linerange(
+        aes(
+          xmin = 0,
+          xmax = .data[[value_col]],
+          color = color_val,
+          alpha = signif
+        ),
+        position = position_dodge(width = position_dodge_width),
+        linewidth = line_width
+      ) +
+      geom_point(
+        aes(
+          color = color_val,
+          alpha = signif
+        ),
+        position = position_dodge(width = position_dodge_width),
+        size = point_size
+      ) +
+      scale_color_manual(values = color_vec)
+
+  } else {
+
+    p <- p +
+      geom_linerange(
+        aes(
+          xmin = 0,
+          xmax = .data[[value_col]],
+          alpha = signif
+        ),
+        linewidth = line_width,
+        color = color
+      ) +
+      geom_point(
+        aes(alpha = signif),
+        size = point_size,
+        color = color
+      )
+  }
+
+  p +
     scale_alpha_manual(
       values = c(`TRUE` = 1, `FALSE` = 0.3)
     ) +
-    
     theme_minimal() +
     labs(
       x = value_col,

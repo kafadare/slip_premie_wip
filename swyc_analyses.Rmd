@@ -100,7 +100,7 @@ panel_save <- function(plot, filename, extension, folder, plot_width = 8, plot_h
 # Load data 
 ```{r}
 swyc_all_path <- "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/processed_tables/swyc_allforms.csv"
-swyc_avg_path <- "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/processed_tables/swyc_avg.csv"
+swyc_avg_path <- "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/processed_tables/swyc_avg_minformtwo.csv"
 
 swyc_all <- read.csv(swyc_all_path) %>% select(-X)
 swyc_avg <- read.csv(swyc_avg_path) %>% select(-X)
@@ -108,16 +108,38 @@ swyc_avg <- read.csv(swyc_avg_path) %>% select(-X)
 
 # Colors
 ```{r}
-ga_color = "#6D8299"
-bw_color = "#709085"
-bwp_color = "#A68A64"
+# ga_color = "#6D8299"
+# bw_color = "#709085"
+# bwp_color = "#A68A64"
+# 
+# 
+# 
+# limits = c(-0.3, 0.3)
+# low_color = "#4878CF" # blue
+# mid_color = "white"
+# high_color = "#D65F5F" # red
+
+predictor_hues <- list(
+  gestational_age = c(dark = "#0B3D42", medium = "#3E7C89"),  # dark / medium petrol blue
+  bwp_fen         = c(dark = "#1B4332", medium = "#52796F")   # dark / medium forest green
+)
+
+# Kept for the Model Visualization section, which colors points/lines by
+# predictor directly (not through a pair comparison) -- single source of
+# truth now instead of independently-set constants.
+ga_color  <- predictor_hues$gestational_age[["medium"]]
+bwp_color <- predictor_hues$bwp_fen[["medium"]]
 swyc_color = "#9D73BA"
 
+# For lollipop plots colored by effect direction (average first derivative
+# sign) instead of by predictor/variant identity.
+deriv_pos_color <- "#B85C5C"  # muted red  -- positive average derivative
+deriv_neg_color <- "#5C7CB8"  # muted blue -- negative average derivative
 
-limits = c(-0.3, 0.3)
-low_color = "#4878CF" # blue
-mid_color = "white"
-high_color = "#D65F5F" # red
+font_size <- 16
+theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
 ```
 
 # Prep Data for Analysis
@@ -138,6 +160,14 @@ swyc_avg <- swyc_avg %>%
                          "final_ADI", "final_ADI3_FINS", "final_ADI3_ECON", "final_ADI3_EDU" )),
                 ~as.numeric(scale(.x)), .names = "{.col}_zscore"),
          bwp_fen_zscore = qnorm(bwp_fen))
+
+# Remove outliers
+rm_sd = 5
+swyc_avg <- remove_outliers(
+  swyc_avg,
+  cols = c("bwp_fen_zscore"),
+  limit = rm_sd
+)
 
 # set sex as factor
 swyc_avg$sex <- as.factor(swyc_avg$sex)
@@ -163,6 +193,10 @@ swyc_all <- swyc_all %>%
                 ~as.numeric(scale(.x)), .names = "{.col}_zscore"),
          bwp_fen_zscore = qnorm(bwp_fen)) %>%
   ungroup()
+
+# remove bwp fen based on outlier removal in the 1 row per pat_id df
+swyc_all <- merge(swyc_all %>% select(-bwp_fen_zscore), swyc_avg %>% select(pat_id, bwp_fen_zscore),
+                  by = "pat_id", all.x = TRUE)
 
 # set sex as factor
 swyc_all$sex <- as.factor(swyc_all$sex_abbr)
@@ -222,12 +256,7 @@ forms_totest <- c("06_Month",
                        "24_Month",
                        "30_Month")
 
-og_dq_vars_totest <- c("06_Month", 
-                       "09_Month",
-                       "15_Month",
-                       "18_Month",
-                       "24_Month",
-                       "30_Month")
+og_dq_vars_totest <- paste0("norm_devo_quotient_", forms_totest)
 
 ga_adj_dq_vars_totest <- paste0("ga_adj_", og_dq_vars_totest)
 ```
@@ -273,7 +302,6 @@ if(save_figs == TRUE){
 ```{r}
 bf_vars <- c(
   "gestational_age",
-  "birth_weight_kg",
   "bwp_fen"
 )
 
@@ -305,18 +333,22 @@ ogDQ_bf_cor_results <- swyc_all %>%
        aes(x = r,
            y = form_name,
            colour = bf_type)) +
+    scale_color_manual(
+      values = c("bwp_fen" = bwp_color,
+                 "gestational_age" = ga_color)
+    ) +
   geom_vline(xintercept = 0,
              linetype = 2,
              colour = "grey60") +
   geom_errorbarh(
     aes(xmin = lower, xmax = upper),
-    height = 0.2
+    height = 0.3
   ) +
-  geom_point(size = 3) +
+  geom_point(size = 4) +
   facet_wrap(~bf_type) +
   scale_x_continuous(
-    limits = c(-1, 1),
-    breaks = seq(-1, 1, 0.25)
+    limits = c(-0.1, 1),
+    breaks = seq(0, 1, 0.25)
   ) +
   labs(
     x = "Pearson correlation (r)",
@@ -324,7 +356,8 @@ ogDQ_bf_cor_results <- swyc_all %>%
     title = "OG DQ",
     colour = "bf measure"
   ) +
-  theme_classic())
+  theme_classic() +
+    theme(strip.text = element_blank()))
 
 ga_adjDQ_bf_cor_results <- swyc_all %>%
   filter(form_name %in% forms_totest) %>%
@@ -354,18 +387,22 @@ ga_adjDQ_bf_cor_results <- swyc_all %>%
        aes(x = r,
            y = form_name,
            colour = bf_type)) +
+      scale_color_manual(
+      values = c("bwp_fen" = bwp_color,
+                 "gestational_age" = ga_color)
+    ) +
   geom_vline(xintercept = 0,
              linetype = 2,
              colour = "grey60") +
   geom_errorbarh(
     aes(xmin = lower, xmax = upper),
-    height = 0.2
+    height = 0.3
   ) +
-  geom_point(size = 3) +
+  geom_point(size = 4) +
   facet_wrap(~bf_type) +
   scale_x_continuous(
-    limits = c(-1, 1),
-    breaks = seq(-1, 1, 0.25)
+    limits = c(-0.1, 1),
+    breaks = seq(0, 1, 0.25)
   ) +
   labs(
     x = "Pearson correlation (r)",
@@ -373,11 +410,93 @@ ga_adjDQ_bf_cor_results <- swyc_all %>%
     title = "GA-ADJ DQ",
     colour = "bf measure"
   ) +
-  theme_classic())
+  theme_classic() +
+    theme(strip.text = element_blank()))
 
 if(save_figs == TRUE){
-  panel_save(swyc_ogDQ_forms_bf_corrs_plot, "swyc_ogDQ_bf_cors", "svg", plot_output_folder)
-  panel_save(swyc_ga_adjDQ_forms_bf_corrs_plot, "swyc_ga_adjDQ_bf_cors", "svg", plot_output_folder)
+  ggsave(glue("{plot_output_folder}swyc_ogDQ_byform_gabw_cors.svg"), swyc_ogDQ_forms_bf_corrs_plot, width = 9, height = 6)
+  ggsave(glue("{plot_output_folder}swyc_adjDQ_byform_gabw_cors.svg"), swyc_ga_adjDQ_forms_bf_corrs_plot, width = 9, height = 6)
+}
+```
+
+### Test linear relationships, with median DQ
+```{r}
+#GA
+swyc_ga_ogdq_median_lm <- lm(median_dq_zscore ~ gestational_age_zscore, 
+                      data = swyc_avg)
+
+summary(swyc_ga_ogdq_median_lm)
+
+swyc_ga_adjdq_median_lm <- lm(ga_adj_median_dq_zscore ~ gestational_age_zscore, 
+                      data = swyc_avg)
+
+summary(swyc_ga_adjdq_median_lm)
+
+#BWP
+swyc_bwp_ogdq_median_lm <- lm(ga_adj_median_dq_zscore ~ bwp_fen_zscore, 
+                      data = swyc_avg)
+
+summary(swyc_bwp_ogdq_median_lm)
+
+swyc_bwp_adjdq_median_lm <- lm(ga_adj_median_dq_zscore ~ bwp_fen_zscore, 
+                      data = swyc_avg)
+
+summary(swyc_bwp_adjdq_median_lm)
+```
+
+### Plot median DQ ~ GA/BWP linear model
+```{r}
+(ogdq_ga_linear_plot <- ggplot(swyc_avg,
+       aes(x = gestational_age_zscore,
+           y = median_dq_zscore)) +
+  geom_smooth(method = "lm", color = ga_color) +
+  geom_point(color = ga_color, alpha = 0.3) +
+  labs(
+    x = "Gestational age z-score",
+    y = "Median Quotient z-score",
+  ) +
+  theme_classic())
+
+(adjdq_ga_linear_plot <- ggplot(swyc_avg,
+       aes(x = gestational_age_zscore,
+           y = ga_adj_median_dq_zscore)) +
+  geom_smooth(method = "lm", color = ga_color) +
+  geom_point(color = ga_color, alpha = 0.3) +
+  labs(
+    x = "Gestational age z-score",
+    y = "Median Adjusted Quotient z-score",
+  ) +
+  theme_classic())
+
+(ogdq_bwp_linear_plot <- ggplot(swyc_avg,
+       aes(x = bwp_fen_zscore,
+           y = median_dq_zscore)) +
+  geom_smooth(method = "lm", color = bw_color) +
+  geom_point(color = bw_color, alpha = 0.3) +
+  labs(
+    x = "BW Percentile (qnorm)",
+    y = "Median Quotient z-score",
+  ) +
+  theme_classic())
+
+(adjdq_bwp_linear_plot <- ggplot(swyc_avg,
+       aes(x = bwp_fen_zscore,
+           y = ga_adj_median_dq_zscore)) +
+  geom_smooth(method = "lm", color = bw_color) +
+  geom_point(color = bw_color, alpha = 0.3) +
+  labs(
+    x = "BW Percentile (qnorm)",
+    y = "Median Adjusted Quotient z-score",
+  ) +
+  theme_classic())
+
+
+
+if(save_figs == TRUE){
+  ggsave(glue("{plot_output_folder}ogdq_ga_linear_model.svg"), ogdq_ga_linear_plot, width = 9, height = 6)
+  ggsave(glue("{plot_output_folder}adjdq_ga_linear_model.svg"), adjdq_ga_linear_plot, width = 9, height = 6)
+  ggsave(glue("{plot_output_folder}ogdq_bwp_linear_model.svg"), ogdq_bwp_linear_plot, width = 9, height = 6)
+  ggsave(glue("{plot_output_folder}adjdq_bwp_linear_model.svg"), adjdq_bwp_linear_plot, width = 9, height = 6)
 }
 ```
 
@@ -388,20 +507,20 @@ swyc_ga_ogdq_lm <- lm(norm_devo_quotient_zscore ~ gestational_age_zscore*form_na
 
 summary(swyc_ga_ogdq_lm)
 
-swyc_ga_ga_adjdq_lm <- lm(ga_adj_norm_devo_quotient_zscore ~ gestational_age_zscore*form_name, 
+swyc_ga_adjdq_lm <- lm(ga_adj_norm_devo_quotient_zscore ~ gestational_age_zscore*form_name, 
                       data = swyc_all %>% filter(form_name %in% forms_totest))
 
-summary(swyc_ga_ga_adjdq_lm)
+summary(swyc_ga_adjdq_lm)
 
 swyc_bwp_ogdq_lm <- lm(norm_devo_quotient_zscore ~ bwp_fen_zscore*form_name, 
                       data = swyc_all %>% filter(form_name %in% forms_totest))
 
 summary(swyc_bwp_ogdq_lm)
 
-swyc_bwp_ga_adjdq_lm <- lm(ga_adj_norm_devo_quotient_zscore ~ bwp_fen_zscore*form_name, 
+swyc_bwp_adjdq_lm <- lm(ga_adj_norm_devo_quotient_zscore ~ bwp_fen_zscore*form_name, 
                       data = swyc_all %>% filter(form_name %in% forms_totest))
 
-summary(swyc_bwp_ga_adjdq_lm)
+summary(swyc_bwp_adjdq_lm)
 ```
 
 ### Plot form type X GA linear interaction
@@ -435,7 +554,7 @@ pred <- ggpredict(
   theme_classic())
 
 pred <- ggpredict(
-  swyc_ga_ga_adjdq_lm,
+  swyc_ga_adjdq_lm,
   terms = c(
     "gestational_age_zscore",
     "form_name"
@@ -443,7 +562,7 @@ pred <- ggpredict(
 )
 
 # Plot interaction
-(ga_adjdq_ga_form_interaction_plot <- ggplot(pred,
+(adjdq_ga_form_interaction_plot <- ggplot(pred,
        aes(x = x,
            y = predicted,
            colour = group)) +
@@ -462,13 +581,14 @@ pred <- ggpredict(
   theme_classic())
 
 if(save_figs == TRUE){
-  panel_save(ogdq_ga_form_interaction_plot, "ogdq_ga_form_interaction_plot", "svg", plot_output_folder)
-  panel_save(ga_adjdq_ga_form_interaction_plot, "ga_adjdq_ga_form_interaction_plot", "svg", plot_output_folder)
+    ggsave(glue("{plot_output_folder}ogdq_ga_form_int_model.svg"), ogdq_ga_form_interaction_plot, width = 9, height = 6)
+  ggsave(glue("{plot_output_folder}adjdq_ga_form_int_model.svg"), adjdq_ga_form_interaction_plot, width = 9, height = 6)
 }
 ```
 
 
-### Test spline between GA and DQ
+
+### Test spline between GA/BWP and DQ
 
 #### with OG DQ 
 
@@ -528,7 +648,7 @@ feats <- lapply(names(models), function(ph){
     region <- if(sum(d$sig) > 0) c(min(d[d$sig == T, predictor]), max(d[d$sig == T, predictor])) else c(NA, NA)
     
     c(
-      #r2_full_vs_none = r2_full_vs_none,
+      r2_full_vs_none = summary(ga_ogdq_model$median_dq_zscore$full)$r.sq,
       r2_spline_vs_linear = r2_spline_vs_linear,
       avg_first_deriv = avg_deriv,
       region_start = region[1],
@@ -537,18 +657,83 @@ feats <- lapply(names(models), function(ph){
   })
   
 ga_ogdq_table <- cbind(tab, do.call(rbind, feats))
+
+# BWP
+bwp_ogdq_model <- fit_bam_models(swyc_avg, "median_dq_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                 save = FALSE)
   
+tab <- extract_bam_table(models = bwp_ogdq_model, 
+                                                  predictor ="bwp_fen_zscore")
+# Add the rest here manually, because bam() won't run with just an intercept (m_red crashes inside the function)
+
+models = bwp_ogdq_model
+predictor ="bwp_fen_zscore"
+data = swyc_avg 
+covariates = NULL
+random_effect = NULL
+
+feats <- lapply(names(models), function(ph){
+    
+    m_full  <- models[[ph]]$full
+    m_nolin <- models[[ph]]$nolin
+    
+    # rebuild reduced model WITHOUT predictor entirely
+    covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
+    re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
+    
+    rhs <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
+
+    f_red <- as.formula(paste(ph, "~ 1", 
+                              if(rhs != "") paste("+", rhs)))
+    
+    f_onlylin <- as.formula(paste(ph, "~ 1 + ", predictor,
+                                  if(rhs != "") paste("+", rhs)))
+    
+    # subset data to only include predictor is not NA to fit reduced model
+    data_fit <- data %>% filter(!is.na(get(predictor)) & !is.na(get(ph)))
+    #m_red <- mgcv:bam(f_red, data = data_fit, method = "fREML", discrete = TRUE)
+    m_onlylin <- mgcv::bam(f_onlylin, data = data_fit, method = "fREML", discrete = TRUE)
+    
+    # partial R2: full predictor contribution vs no predictor model
+    #r2_full_vs_none <- 1 - deviance(m_full)/deviance(m_red)
+    #r2_full_vs_none <- (summary(m_full)$r.sq - summary(m_red)$r.sq) /  (1 - summary(m_red)$r.sq)
+    
+    # partial R2: spline contribution over linear model
+    r2_spline_vs_linear <- 1 - deviance(m_full)/deviance(m_onlylin)
+    #r2_spline_vs_linear <- (summary(m_full)$r.sq - summary(m_onlylin)$r.sq) /  (1 - summary(m_onlylin)$r.sq)
+    
+    # average first derivative
+    d <- derivatives(m_full)
+    avg_deriv <- mean(d$.derivative)
+    
+    # region of effect (CI crossing rule)
+    d <- d %>%
+      mutate (sig = !(0 >.lower_ci & 0 < .upper_ci))
+    region <- if(sum(d$sig) > 0) c(min(d[d$sig == T, predictor]), max(d[d$sig == T, predictor])) else c(NA, NA)
+    
+    c(
+      r2_full_vs_none = summary(bwp_ogdq_model$median_dq_zscore$full)$r.sq,
+      r2_spline_vs_linear = r2_spline_vs_linear,
+      avg_first_deriv = avg_deriv,
+      region_start = region[1],
+      region_end = region[2]
+    )
+  })
+  
+bwp_ogdq_table <- cbind(tab, do.call(rbind, feats))
 ```
 
 ##### print no interaction model table
 ```{r}
 knitr::kable(t(ga_ogdq_table))
 
+knitr::kable(t(bwp_ogdq_table))
 ```
 
 ##### visualize no interaction model
 ```{r}
-ga_ogdq_plot <- visualize_spline_model(
+ga_ogdq_spline_plot <- visualize_spline_model(
   modobj = ga_ogdq_model$median_dq_zscore$full,
   plot_og_scale = FALSE,
   pnorm_smooth_var = FALSE,
@@ -559,16 +744,29 @@ ga_ogdq_plot <- visualize_spline_model(
     scale_x_continuous(
       breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean(swyc_avg[,.y], na.rm =T))/(sd(swyc_avg[,.y], na.rm = T))),
       labels = \(x) round(map2_dbl(x, "gestational_age", ~ (.x*sd(swyc_avg[,.y], na.rm = T) + mean(swyc_avg[,.y], na.rm = T))/7))) +
-    # scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
-    #                    labels = c("<=1st",  "50th", ">=99th")) +
     labs(x= "Gestational Age (weeks)",
          y = "OG DQ (z-score)",
          title = "")
 
-ga_ogdq_plot
+bwp_ogdq_spline_plot <- visualize_spline_model(
+  modobj = bwp_ogdq_model$median_dq_zscore$full,
+  plot_og_scale = FALSE,
+  pnorm_smooth_var = FALSE,
+  smooth_var = "bwp_fen_zscore",
+  plabels = "Gestational Age",
+  color_point = bw_color,
+  color_line = bw_color) + 
+    scale_x_continuous(breaks = qnorm(c(.01, .50, .99)), labels = c("<=1st", "50th", ">=99th")) +
+    labs(x= "Birth Weight Percentile (GA-corrected)",
+         y = "OG DQ (z-score)",
+         title = "")
+
+ga_ogdq_spline_plot
+bwp_ogdq_spline_plot
 
 if(save_figs){
-saveRDS(ga_ogdq_plot, glue("{plot_output_folder}ga_ogdq_spline_model_plot.rds"))
+ggsave(glue("{plot_output_folder}ogdq_ga_spline_model.svg"), ga_ogdq_spline_plot, width = 6, height = 6)
+ggsave(glue("{plot_output_folder}ogdq_bwp_spline_model.svg"), bwp_ogdq_spline_plot, width = 6, height = 6)
 }
 
 ```
@@ -586,9 +784,20 @@ ga_ogdq_formint_table <- extract_bam_features_interaction(models = ga_ogdq_formi
                                                   predictor = "gestational_age_zscore",
                                                   moderator = "form_month_num")
 
+bwp_ogdq_formint_model <- fit_bam_interactions(data = swyc_all,
+                                        phenotypes = "norm_devo_quotient_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                        moderator = "form_month_num",
+                                        covariates = NULL, save = FALSE)
+  
+bwp_ogdq_formint_table <- extract_bam_features_interaction(models = bwp_ogdq_formint_model, 
+                                                  data = swyc_all, 
+                                                  predictor = "bwp_fen_zscore",
+                                                  moderator = "form_month_num")
+
+knitr::kable(t(ga_ogdq_formint_table))
 knitr::kable(t(ga_ogdq_formint_table))
 ```
-
 
 ##### fit the model with form interaction (form as ordered)
 ```{r} 
@@ -608,15 +817,33 @@ ga_ogdq_formint_categorical_table <- extract_bam_features_interaction(
                                                           predictor = "gestational_age_zscore",
                                                           moderator = "form_name",
                                                        interaction_type = "ordered")
+
+bwp_ogdq_formint_categorical_model <- fit_bam_interactions(swyc_all %>% 
+                                                            filter(form_name %in% forms_totest), 
+                                        "norm_devo_quotient_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                        moderator = "form_name",
+                                        interaction = "ordered",
+                                        covariates = NULL, 
+                                        save = FALSE)
+  
+bwp_ogdq_formint_categorical_table <- extract_bam_features_interaction(
+                                                        models = bwp_ogdq_formint_categorical_model,
+                                                          data = swyc_all %>% 
+                                                            filter(form_name %in% forms_totest),
+                                                          predictor = "bwp_fen_zscore",
+                                                          moderator = "form_name",
+                                                       interaction_type = "ordered")
   
 knitr::kable(t(ga_ogdq_formint_categorical_table))
+knitr::kable(t(bwp_ogdq_formint_categorical_table))
 ```
 
 ##### significance testing using log likelihood test for interaction term
 shouldnt use fREML if comparing log ratio using ANOVA, using ML to fit models
 ```{r}
-m1 <- fit_bam_interactions(swyc_all %>% 
-                                                            filter(form_name %in% forms_totest), 
+#GA
+m1 <- fit_bam_interactions(swyc_all %>% filter(form_name %in% forms_totest), 
                                         "norm_devo_quotient_zscore", 
                                         predictor = "gestational_age_zscore",
                                         moderator = "form_name",
@@ -627,9 +854,29 @@ m1 <- fit_bam_interactions(swyc_all %>%
 
 m1 <- m1$norm_devo_quotient_zscore
 
-m0 <- fit_bam_models(swyc_all %>% 
-                       filter(form_name %in% forms_totest), "norm_devo_quotient_zscore", 
+m0 <- fit_bam_models(swyc_all %>%  filter(form_name %in% forms_totest), "norm_devo_quotient_zscore", 
                      predictor = "gestational_age_zscore",
+                                 save = FALSE,
+                                method = "ML")
+
+m0 <- m0$norm_devo_quotient_zscore$full
+
+anova(m0, m1, test = "Chisq")
+
+#BWP
+m1 <- fit_bam_interactions(swyc_all %>% filter(form_name %in% forms_totest), 
+                                        "norm_devo_quotient_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                        moderator = "form_name",
+                                        interaction = "ordered",
+                                        covariates = NULL, 
+                                        save = FALSE,
+                                        method = "ML")
+
+m1 <- m1$norm_devo_quotient_zscore
+
+m0 <- fit_bam_models(swyc_all %>%  filter(form_name %in% forms_totest), "norm_devo_quotient_zscore", 
+                     predictor = "bwp_fen_zscore",
                                  save = FALSE,
                                 method = "ML")
 
@@ -658,8 +905,6 @@ ga_ogdq_formint_plot <- visualize_model(
       scale_x_continuous(
       breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean(swyc_avg[,.y], na.rm =T))/(sd(swyc_avg[,.y], na.rm = T))),
       labels = \(x) round(map2_dbl(x, "gestational_age", ~ (.x*sd(swyc_avg[,.y], na.rm = T) + mean(swyc_avg[,.y], na.rm = T))/7)))
-    # scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
-    #                    labels = c("<=1st",  "50th", ">=99th")) +
     
 ga_ogdq_formint_plot
 ```
@@ -680,15 +925,31 @@ ga_ogdq_formint_categorical_plot <- visualize_model_int(
   derivative_plot = F) + 
     labs(x="Gestational Age (wks)",
          title = "",
+         y = "OG DQ (z-score)",
          color = "Form Month") +
-    theme(axis.title.y = element_blank()) +
       scale_x_continuous(
       breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean(swyc_avg[,.y], na.rm =T))/(sd(swyc_avg[,.y], na.rm = T))),
       labels = \(x) round(map2_dbl(x, "gestational_age", ~ (.x*sd(swyc_avg[,.y], na.rm = T) + mean(swyc_avg[,.y], na.rm = T))/7)))
-    # scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
-    #                    labels = c("<=1st",  "50th", ">=99th")) +
+
+bwp_ogdq_formint_categorical_plot <- visualize_model_int(
+  modobj = bwp_ogdq_formint_categorical_model$norm_devo_quotient_zscore,
+  smooth_var = "bwp_fen_zscore",
+  int_var = "form_name",
+  plabels = "categorical",
+  derivative_plot = F) + 
+          scale_x_continuous(breaks = qnorm(c(.01, .50, .99)), labels = c("<=1st", "50th", ">=99th")) +
+    labs(x= "Birth Weight Percentile (GA-corrected)",
+         y = "OG DQ (z-score)",
+         title = "",
+         color = "Form Month")
     
 ga_ogdq_formint_categorical_plot
+bwp_ogdq_formint_categorical_plot
+
+if(save_figs){
+ggsave(glue("{plot_output_folder}ogdq_ga_formint_spline_model.svg"), ga_ogdq_formint_categorical_plot, width = 9, height = 6)
+ggsave(glue("{plot_output_folder}ogdq_bwp_formint_spline_model.svg"), bwp_ogdq_formint_categorical_plot, width = 9, height = 6)
+}
 ```
 
 
@@ -696,15 +957,15 @@ ga_ogdq_formint_categorical_plot
 
 ##### fit the no interaction model
 ```{r}
-ga_ga_adjdq_model <- fit_bam_models(swyc_avg, "ga_adj_median_dq_zscore", 
+ga_adjdq_model <- fit_bam_models(swyc_avg, "ga_adj_median_dq_zscore", 
                                         predictor = "gestational_age_zscore",
                                  save = FALSE)
   
-tab <- extract_bam_table(models = ga_ga_adjdq_model, 
+tab <- extract_bam_table(models = ga_adjdq_model, 
                                                   predictor ="gestational_age_zscore")
 # Add the rest here manually, because bam() won't run with just an intercept (m_red crashes inside the function)
 
-models = ga_ga_adjdq_model
+models = ga_adjdq_model
 predictor ="gestational_age_zscore"
 data = swyc_avg 
 covariates = NULL
@@ -750,7 +1011,7 @@ feats <- lapply(names(models), function(ph){
     region <- if(sum(d$sig) > 0) c(min(d[d$sig == T, predictor]), max(d[d$sig == T, predictor])) else c(NA, NA)
     
     c(
-      #r2_full_vs_none = r2_full_vs_none,
+      r2_full_vs_none = summary(ga_adjdq_model$ga_adj_median_dq_zscore$full)$r.sq,
       r2_spline_vs_linear = r2_spline_vs_linear,
       avg_first_deriv = avg_deriv,
       region_start = region[1],
@@ -758,19 +1019,85 @@ feats <- lapply(names(models), function(ph){
     )
   })
   
-ga_ga_adjdq_table <- cbind(tab, do.call(rbind, feats))
+ga_adjdq_table <- cbind(tab, do.call(rbind, feats))
+
+#BWP
+bwp_adjdq_model <- fit_bam_models(swyc_avg, "ga_adj_median_dq_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                 save = FALSE)
+  
+tab <- extract_bam_table(models = bwp_adjdq_model, 
+                                                  predictor ="bwp_fen_zscore")
+# Add the rest here manually, because bam() won't run with just an intercept (m_red crashes inside the function)
+
+models = bwp_adjdq_model
+predictor ="bwp_fen_zscore"
+data = swyc_avg 
+covariates = NULL
+random_effect = NULL
+
+feats <- lapply(names(models), function(ph){
+    
+    m_full  <- models[[ph]]$full
+    m_nolin <- models[[ph]]$nolin
+    
+    # rebuild reduced model WITHOUT predictor entirely
+    covs <- if(!is.null(covariates)) paste(covariates, collapse = " + ") else ""
+    re <- if(!is.null(random_effect)) paste0("s(", random_effect, ", bs='re')") else ""
+    
+    rhs <- paste(c(covs, re)[c(covs, re) != ""], collapse = " + ")
+
+    f_red <- as.formula(paste(ph, "~ 1", 
+                              if(rhs != "") paste("+", rhs)))
+    
+    f_onlylin <- as.formula(paste(ph, "~ 1 + ", predictor,
+                                  if(rhs != "") paste("+", rhs)))
+    
+    # subset data to only include predictor is not NA to fit reduced model
+    data_fit <- data %>% filter(!is.na(get(predictor)) & !is.na(get(ph)))
+    #m_red <- mgcv:bam(f_red, data = data_fit, method = "fREML", discrete = TRUE)
+    m_onlylin <- mgcv::bam(f_onlylin, data = data_fit, method = "fREML", discrete = TRUE)
+    
+    # partial R2: full predictor contribution vs no predictor model
+    #r2_full_vs_none <- 1 - deviance(m_full)/deviance(m_red)
+    #r2_full_vs_none <- (summary(m_full)$r.sq - summary(m_red)$r.sq) /  (1 - summary(m_red)$r.sq)
+    
+    # partial R2: spline contribution over linear model
+    r2_spline_vs_linear <- 1 - deviance(m_full)/deviance(m_onlylin)
+    #r2_spline_vs_linear <- (summary(m_full)$r.sq - summary(m_onlylin)$r.sq) /  (1 - summary(m_onlylin)$r.sq)
+    
+    # average first derivative
+    d <- derivatives(m_full)
+    avg_deriv <- mean(d$.derivative)
+    
+    # region of effect (CI crossing rule)
+    d <- d %>%
+      mutate (sig = !(0 >.lower_ci & 0 < .upper_ci))
+    region <- if(sum(d$sig) > 0) c(min(d[d$sig == T, predictor]), max(d[d$sig == T, predictor])) else c(NA, NA)
+    
+    c(
+      r2_full_vs_none = summary(bwp_adjdq_model$ga_adj_median_dq_zscore$full)$r.sq,
+      r2_spline_vs_linear = r2_spline_vs_linear,
+      avg_first_deriv = avg_deriv,
+      region_start = region[1],
+      region_end = region[2]
+    )
+  })
+  
+bwp_adjdq_table <- cbind(tab, do.call(rbind, feats))
   
 ```
 
 ##### print no interaction model table
 ```{r}
-knitr::kable(t(ga_ga_adjdq_table))
+knitr::kable(t(ga_adjdq_table))
+knitr::kable(t(bwp_adjdq_table))
 ```
 
 ##### visualize no interaction model
 ```{r}
-ga_ga_adjdq_plot <- visualize_spline_model(
-  modobj = ga_ga_adjdq_model$ga_adj_median_dq_zscore$full,
+ga_adjdq_spline_plot <- visualize_spline_model(
+  modobj = ga_adjdq_model$ga_adj_median_dq_zscore$full,
   plot_og_scale = FALSE,
   pnorm_smooth_var = FALSE,
   smooth_var = "gestational_age_zscore",
@@ -786,58 +1113,74 @@ ga_ga_adjdq_plot <- visualize_spline_model(
          y = "GA-ADJ DQ (z-score)",
          title = "")
 
-ga_ga_adjdq_plot
+bwp_adjdq_spline_plot <- visualize_spline_model(
+  modobj = bwp_adjdq_model$ga_adj_median_dq_zscore$full,
+  plot_og_scale = FALSE,
+  pnorm_smooth_var = FALSE,
+  smooth_var = "bwp_fen_zscore",
+  plabels = "Birth Weight Percentile",
+  color_point = bw_color,
+  color_line = bw_color) + 
+    scale_x_continuous(breaks = qnorm(c(.01, .50, .99)), labels = c("<=1st", "50th", ">=99th")) +
+    labs(x= "Birth Weight Percentile (GA-corrected)",
+         y = "GA-ADJ DQ (z-score)",
+         title = "")
+
+ga_adjdq_spline_plot
+bwp_adjdq_spline_plot
 
 if(save_figs){
-saveRDS(ga_ga_adjdq_plot, glue("{plot_output_folder}ga_ga_adjdq_spline_model_plot.rds"))
+ggsave(glue("{plot_output_folder}adjdq_ga_spline_model.svg"), ga_adjdq_spline_plot, width = 6, height = 6)
+ggsave(glue("{plot_output_folder}adjdq_bwp_spline_model.svg"), bwp_adjdq_spline_plot, width = 6, height = 6)
 }
 
 ```
 
-##### fit the model with form interaction (form as numerical with month)
+##### fit the model with form interaction (form as ordered)
 ```{r} 
-ga_ga_adjdq_formint_model <- fit_bam_interactions(data = swyc_all,
-                                        phenotypes = "norm_devo_quotient_zscore", 
-                                        predictor = "gestational_age_zscore",
-                                        moderator = "form_month_num",
-                                        covariates = NULL, save = FALSE)
-  
-ga_ga_adjdq_formint_table <- extract_bam_features_interaction(models = ga_ga_adjdq_formint_model, 
-                                                  data = swyc_all, 
-                                                  predictor = "gestational_age_zscore",
-                                                  moderator = "form_month_num")
-
-knitr::kable(t(ga_ga_adjdq_formint_table))
-  
-```
-
-
-##### fit the model with form interaction (form as categorical/ordered)
-```{r} 
-ga_ga_adjdq_formint_categorical_model <- fit_bam_interactions(swyc_all %>% 
+ga_adjdq_formint_categorical_model <- fit_bam_interactions(swyc_all %>% 
                                                             filter(form_name %in% forms_totest), 
                                         "ga_adj_norm_devo_quotient_zscore", 
                                         predictor = "gestational_age_zscore",
                                         moderator = "form_name",
                                         interaction = "ordered",
-                                        covariates = NULL, save = FALSE)
+                                        covariates = NULL, 
+                                        save = FALSE)
   
-ga_ga_adjdq_formint_categorical_table <-  extract_bam_features_interaction(
-                                                        models = ga_ga_adjdq_formint_categorical_model,
+ga_adjdq_formint_categorical_table <- extract_bam_features_interaction(
+                                                        models = ga_adjdq_formint_categorical_model,
                                                           data = swyc_all %>% 
                                                             filter(form_name %in% forms_totest),
                                                           predictor = "gestational_age_zscore",
                                                           moderator = "form_name",
                                                        interaction_type = "ordered")
 
-knitr::kable(t(ga_ga_adjdq_formint_categorical_table))
+bwp_adjdq_formint_categorical_model <- fit_bam_interactions(swyc_all %>% 
+                                                            filter(form_name %in% forms_totest), 
+                                        "ga_adj_norm_devo_quotient_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                        moderator = "form_name",
+                                        interaction = "ordered",
+                                        covariates = NULL, 
+                                        save = FALSE)
+  
+bwp_adjdq_formint_categorical_table <- extract_bam_features_interaction(
+                                                        models = bwp_adjdq_formint_categorical_model,
+                                                          data = swyc_all %>% 
+                                                            filter(form_name %in% forms_totest),
+                                                          predictor = "bwp_fen_zscore",
+                                                          moderator = "form_name",
+                                                       interaction_type = "ordered")
+  
+knitr::kable(t(ga_adjdq_formint_categorical_table))
+knitr::kable(t(bwp_adjdq_formint_categorical_table))
 ```
 
 ##### significance testing using log likelihood test for interaction term
 shouldnt use fREML if comparing log ratio using ANOVA, using ML to fit models
 ```{r}
-m1 <- fit_bam_interactions(swyc_all %>% 
-                                                            filter(form_name %in% forms_totest), 
+#GA
+m1 <- fit_bam_interactions(swyc_all %>% filter(form_name %in% forms_totest), 
                                         "ga_adj_norm_devo_quotient_zscore", 
                                         predictor = "gestational_age_zscore",
                                         moderator = "form_name",
@@ -848,9 +1191,29 @@ m1 <- fit_bam_interactions(swyc_all %>%
 
 m1 <- m1$ga_adj_norm_devo_quotient_zscore
 
-m0 <- fit_bam_models(swyc_all %>% 
-                       filter(form_name %in% forms_totest), "ga_adj_norm_devo_quotient_zscore", 
+m0 <- fit_bam_models(swyc_all %>%  filter(form_name %in% forms_totest), "ga_adj_norm_devo_quotient_zscore", 
                      predictor = "gestational_age_zscore",
+                                 save = FALSE,
+                                method = "ML")
+
+m0 <- m0$ga_adj_norm_devo_quotient_zscore$full
+
+anova(m0, m1, test = "Chisq")
+
+#BWP
+m1 <- fit_bam_interactions(swyc_all %>% filter(form_name %in% forms_totest), 
+                                        "ga_adj_norm_devo_quotient_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                        moderator = "form_name",
+                                        interaction = "ordered",
+                                        covariates = NULL, 
+                                        save = FALSE,
+                                        method = "ML")
+
+m1 <- m1$ga_adj_norm_devo_quotient_zscore
+
+m0 <- fit_bam_models(swyc_all %>%  filter(form_name %in% forms_totest), "ga_adj_norm_devo_quotient_zscore", 
+                     predictor = "bwp_fen_zscore",
                                  save = FALSE,
                                 method = "ML")
 
@@ -866,23 +1229,188 @@ theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
 line_size <- 1.5
 point_size <- 2
 
-ga_ga_adjdq_formint_categorical_plot <- visualize_model_int(
-  modobj = ga_ga_adjdq_formint_categorical_model$ga_adj_norm_devo_quotient_zscore,
+ga_adjdq_formint_categorical_plot <- visualize_model_int(
+  modobj = ga_adjdq_formint_categorical_model$ga_adj_norm_devo_quotient_zscore,
   smooth_var = "gestational_age_zscore",
   int_var = "form_name",
   plabels = "categorical",
   derivative_plot = F) + 
     labs(x="Gestational Age (wks)",
          title = "",
+         y = "ADJ DQ (z-score)",
          color = "Form Month") +
+      scale_x_continuous(
+      breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean(swyc_avg[,.y], na.rm =T))/(sd(swyc_avg[,.y], na.rm = T))),
+      labels = \(x) round(map2_dbl(x, "gestational_age", ~ (.x*sd(swyc_avg[,.y], na.rm = T) + mean(swyc_avg[,.y], na.rm = T))/7)))
+
+bwp_adjdq_formint_categorical_plot <- visualize_model_int(
+  modobj = bwp_adjdq_formint_categorical_model$ga_adj_norm_devo_quotient_zscore,
+  smooth_var = "bwp_fen_zscore",
+  int_var = "form_name",
+  plabels = "categorical",
+  derivative_plot = F) + 
+          scale_x_continuous(breaks = qnorm(c(.01, .50, .99)), labels = c("<=1st", "50th", ">=99th")) +
+    labs(x= "Birth Weight Percentile (GA-corrected)",
+         y = "ADJ DQ (z-score)",
+         title = "",
+         color = "Form Month")
+    
+ga_adjdq_formint_categorical_plot
+bwp_adjdq_formint_categorical_plot
+
+if(save_figs){
+ggsave(glue("{plot_output_folder}adjdq_ga_formint_spline_model.svg"), ga_adjdq_formint_categorical_plot, width = 9, height = 6)
+ggsave(glue("{plot_output_folder}adjdq_bwp_formint_spline_model.svg"), bwp_adjdq_formint_categorical_plot, width = 9, height = 6)
+}
+```
+
+
+
+## SWYC and birth factors WITH ADI covariate
+### Test linear relationships, with median DQ
+```{r}
+#GA
+swyc_ga_adi_ogdq_median_lm <- lm(median_dq_zscore ~ gestational_age_zscore + final_ADI_zscore, 
+                      data = swyc_avg)
+
+summary(swyc_ga_adi_ogdq_median_lm)
+
+swyc_ga_adi_adjdq_median_lm <- lm(ga_adj_median_dq_zscore ~ gestational_age_zscore + final_ADI_zscore, 
+                      data = swyc_avg)
+
+summary(swyc_ga_adi_adjdq_median_lm)
+
+#BWP
+swyc_bwp_adi_ogdq_median_lm <- lm(ga_adj_median_dq_zscore ~ bwp_fen_zscore + final_ADI_zscore, 
+                      data = swyc_avg)
+
+summary(swyc_bwp_adi_ogdq_median_lm)
+```
+
+### Test linear relationships, with form type interaction
+```{r}
+swyc_ga_adi_ogdq_lm <- lm(norm_devo_quotient_zscore ~ gestational_age_zscore*form_name + ADI.median_zscore, 
+                      data = swyc_all %>% filter(form_name %in% forms_totest))
+
+summary(swyc_ga_adi_ogdq_lm)
+
+swyc_ga_adi_adjdq_lm <- lm(ga_adj_norm_devo_quotient_zscore ~ gestational_age_zscore*form_name + ADI.median_zscore, 
+                      data = swyc_all %>% filter(form_name %in% forms_totest))
+
+summary(swyc_ga_adi_adjdq_lm)
+```
+
+### Test spline between GA/BWP and DQ
+
+#### with OG DQ 
+
+##### fit the no interaction model
+```{r}
+ga_adi_ogdq_model <- fit_bam_models(swyc_avg, "median_dq_zscore", 
+                                        predictor = "gestational_age_zscore",
+                                        covariates = c("final_ADI_zscore"),
+                                 save = FALSE)
+  
+ga_adi_ogdq_table <- extract_bam_features_main(ga_adi_ogdq_model,
+                                               swyc_avg, 
+                                              predictor = "gestational_age_zscore",
+                                        covariates = c("final_ADI_zscore"))
+
+# BWP
+bwp_adi_ogdq_model <- fit_bam_models(swyc_avg, "median_dq_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                        covariates = c("final_ADI_zscore"),
+                                 save = FALSE)
+  
+bwp_adi_ogdq_table <- extract_bam_features_main(bwp_adi_ogdq_model,
+                                               swyc_avg, 
+                                              predictor = "bwp_fen_zscore",
+                                        covariates = c("final_ADI_zscore"))
+```
+
+##### print no interaction model table
+```{r}
+knitr::kable(t(ga_adi_ogdq_table))
+
+knitr::kable(t(bwp_adi_ogdq_table))
+```
+##### fit model with ADI interaction
+```{r} 
+ga_ogdq_adiint_model <- fit_bam_interactions(swyc_all %>% 
+                                                            filter(form_name %in% forms_totest), 
+                                        "norm_devo_quotient_zscore", 
+                                        predictor = "gestational_age_zscore",
+                                        moderator = "ADI.median_zscore",
+                                        interaction = "continuous",
+                                        covariates = "form_name", 
+                                        save = FALSE)
+  
+ga_ogdq_adiint_table <- extract_bam_features_interaction(
+                                                        models = ga_ogdq_adiint_model,
+                                                          data = swyc_all %>% 
+                                                            filter(form_name %in% forms_totest),
+                                                          predictor = "gestational_age_zscore",
+                                        moderator = "ADI.median_zscore",
+                                        interaction_type = "continuous",
+                                        covariates = "form_name")
+
+bwp_ogdq_adiint_model <- fit_bam_interactions(swyc_all %>% 
+                                                            filter(form_name %in% forms_totest), 
+                                        "norm_devo_quotient_zscore", 
+                                        predictor = "bwp_fen_zscore",
+                                        moderator = "ADI.median_zscore",
+                                        interaction = "continuous",
+                                        covariates = "form_name", 
+                                        save = FALSE)
+  
+bwp_ogdq_adiint_table <- extract_bam_features_interaction(
+                                                        models = bwp_ogdq_adiint_model,
+                                                          data = swyc_all %>% 
+                                                            filter(form_name %in% forms_totest),
+                                                          predictor = "bwp_fen_zscore",
+                                        moderator = "ADI.median_zscore",
+                                        interaction_type = "continuous",
+                                        covariates = "form_name")
+  
+knitr::kable(t(ga_ogdq_adiint_table))
+knitr::kable(t(bwp_ogdq_adiint_table))
+```
+
+##### visualize ADI interaction model (continuous)
+```{r}
+font_size <- 16
+theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
+
+ga_ogdq_formint_plot <- visualize_model(
+  modobj = ga_ogdq_adiint_model$norm_devo_quotient_zscore,
+  smooth_var = "gestational_age_zscore",
+  int_var = "ADI.median_zscore",
+  plabels = "continuous interaction",
+  derivative_plot = F) + 
+    labs(x="Gestational Age (wks)",
+         title = "",
+                  fill = "ADI") +
     theme(axis.title.y = element_blank()) +
       scale_x_continuous(
       breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean(swyc_avg[,.y], na.rm =T))/(sd(swyc_avg[,.y], na.rm = T))),
       labels = \(x) round(map2_dbl(x, "gestational_age", ~ (.x*sd(swyc_avg[,.y], na.rm = T) + mean(swyc_avg[,.y], na.rm = T))/7)))
-    # scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
-    #                    labels = c("<=1st",  "50th", ">=99th")) +
-    
-ga_ga_adjdq_formint_categorical_plot
+
+bwp_ogdq_formint_plot <- visualize_model(
+  modobj = bwp_ogdq_adiint_model$norm_devo_quotient_zscore,
+  smooth_var = "bwp_fen_zscore",
+  int_var = "ADI.median_zscore",
+  plabels = "continuous interaction",
+  derivative_plot = F) + 
+          scale_x_continuous(breaks = qnorm(c(.01, .50, .99)), labels = c("<=1st", "50th", ">=99th")) +
+    labs(x= "Birth Weight Percentile (GA-corrected)",
+         y = "OG DQ (z-score)",
+         title = "",
+         color = "ADI")
+
+ga_ogdq_formint_plot
+bwp_ogdq_formint_plot
 ```
 
 ## SWYC and ADI

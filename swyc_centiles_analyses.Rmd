@@ -73,11 +73,8 @@ if (!dir.exists(csv_tables_folder)) dir.create(csv_tables_folder)
 csv_output_folder <-  paste0(save_path, "results_csv/")
 if (!dir.exists(csv_output_folder)) dir.create(csv_output_folder)
 
-betas_folder <- paste0(csv_output_folder, "full_betas/")
-if (!dir.exists(betas_folder)) dir.create(betas_folder)
-
-dkt_folder <- paste0(csv_output_folder, "dkt_betas/")
-if (!dir.exists(dkt_folder)) dir.create(dkt_folder)
+spin_folder <- paste0(csv_output_folder, "spin_tables/")
+if (!dir.exists(spin_folder)) dir.create(spin_folder)
 ```
 
 # Load custom functions
@@ -99,28 +96,41 @@ panel_save <- function(plot, filename, extension, folder, plot_width = 8, plot_h
 
 # Colors
 ```{r}
-ga_color = "#6D8299"
-bw_color = "#709085"
-bwp_color = "#A68A64"
+predictor_hues <- list(
+  gestational_age = c(dark = "#0B3D42", medium = "#3E7C89"),  # dark / medium petrol blue
+  bwp_fen         = c(dark = "#1B4332", medium = "#52796F")   # dark / medium forest green
+)
+
+# Kept for the Model Visualization section, which colors points/lines by
+# predictor directly (not through a pair comparison) -- single source of
+# truth now instead of independently-set constants.
+ga_color  <- predictor_hues$gestational_age[["medium"]]
+bwp_color <- predictor_hues$bwp_fen[["medium"]]
 swyc_color = "#9D73BA"
-ga_adj_color = "#BA73AE"
 
+# For lollipop plots colored by effect direction (average first derivative
+# sign) instead of by predictor/variant identity.
+deriv_pos_color <- "#B85C5C"  # muted red  -- positive average derivative
+deriv_neg_color <- "#5C7CB8"  # muted blue -- negative average derivative
 
-limits = c(-0.3, 0.3)
-low_color = "#4878CF" # blue
-mid_color = "white"
-high_color = "#D65F5F" # red
+font_size <- 16
+theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
+line_size <- 1.5
+point_size <- 2
 ```
 
 # Load centiles
 ```{r}
-cent_avg_path <- "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/processed_tables/swyc_avgtwoyrs_cent.csv"
+cent_avg_path <- "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/processed_tables/swyc_avgtwoyrs_formintwo_cent.csv"
 cent_avg <- read.csv(cent_avg_path)
 
 cent_all_path <- "/mnt/arcus/lab/users/kafadare/swyc_premie_analysis_results/processed_tables/swyc_allforms_cent.csv"
 cent_all <- read.csv(cent_all_path)
 
 load("/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_distinct.RData")
+
+#determine if there is both mpr and median for thickness values
+median_th_mpr_flag <- any(grepl(".median", names(cent_all)))
 
 
 #lmsz_ga_centiles_path <- "/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lmsz_adjusted_centiles_ga.csv"
@@ -141,11 +151,32 @@ load("/mnt/arcus/lab/users/kafadare/slip_centiles_processed_tables/lookup_stats_
 # df.zscore.distinct$pat_id <- sub("sub-", "", df.zscore.distinct$participant_id)
 # df.zscore.all$pat_id <- sub("sub-", "", df.zscore.all$participant_id)
 # centiles_all$pat_id <- sub("sub-", "", centiles_all$participant_id)
-
-#determine if there is both mpr and median for thickness values
-median_th_mpr_flag <- any(grepl(".median", names(cent_all)))
 ```
 
+# Calculate swyc-avg for all shared pat-id (N form >= 2)
+```{r}
+## Take SWYC DQ Median Within SWYC forms that are <= 2 years from Scan
+swyc_avg_full <- cent_all %>%
+  group_by(pat_id) %>%
+  filter(n() >= 2) %>%
+  summarise(n_forms = n(),
+            all_2s_sum = sum(all_2s == TRUE, na.rm = TRUE),
+            all_0s_sum = sum(all_0s == TRUE, na.rm = TRUE),
+            final_swyc_age = max(effective_age, na.rm = TRUE),
+            final_swyc_age_ga_adj = max(ga_adj_effective_age),
+            median_dq = median(norm_devo_quotient, na.rm = TRUE), 
+            ga_adj_median_dq = median(ga_adj_norm_devo_quotient, na.rm = TRUE),
+            final_swyc_date = effective_datetime[which.max(effective_age)],
+            proc_ord_id = first(proc_ord_id),
+            .groups = "drop")
+
+cent_avg_full <- merge(cent_all %>% distinct(proc_ord_id, .keep_all = TRUE) %>%
+  select(-c("form_friendly_name", "pat_form", "norm_devo_quotient",
+            "ga_adj_norm_devo_quotient", "effective_age", "ga_adj_effective_age",
+            "all_2s", "sum_answers", "all_0s", "effective_datetime", "scan_swyc_age_diff_days", 
+            "scan_before_swyc")), swyc_avg_full, by = "proc_ord_id", all.x = FALSE, all.y = TRUE)
+
+```
 # Load vars
 ```{r}
 full_vars <- read.csv(paste0(vars_path,"all_vars.csv")) %>% pull(x)
@@ -193,7 +224,7 @@ cent_all <- cent_all %>%
                      ~.x*sd_lookup_distinct[[cur_column()]] + mean_lookup_distinct[[cur_column()]]))
 ```
 
-### zscore swyc avg dataframe 
+### zscore swyc avg dataframes
 ```{r, echo = FALSE}
 # zscore centiles and other variables of interest
 if (median_th_mpr_flag) {
@@ -237,6 +268,48 @@ df.zscore_avg <- cent_avg %>%
 # set sex and preterm as factor
 df.zscore_avg$sex <- as.factor(df.zscore_avg$sex)
 df.zscore_avg$preterm <- as.factor(df.zscore_avg$preterm)
+
+if (median_th_mpr_flag) {
+df.zscore_avg_full <- cent_avg_full %>%
+  mutate(across(all_of(c("gestational_age", 
+                         "birth_weight_kg",
+                         "birth_weight_kg_inc_out",
+                         "age_at_scan", 
+                         "age_at_scan_years", 
+                         "age_days_adj",
+                         "age_years_adj",
+                         "qc_var", 
+                         "euler_mean_mpr", 
+                         "median_euler_mean",
+                         "median_dq", 
+                         "ga_adj_median_dq",
+                         "ADI.median", 
+                         "ADI3_FINS.median", 
+                         "ADI3_ECON.median", 
+                         "ADI3_EDU.median")), 
+                ~as.numeric(scale(.x))))
+} else {
+  df.zscore_avg_full <- cent_avg_full %>%
+  mutate(across(all_of(c("gestational_age", 
+                         "birth_weight_kg",
+                         "birth_weight_kg_inc_out",
+                         "age_at_scan", 
+                         "age_at_scan_years", 
+                         "age_days_adj",
+                         "age_years_adj",
+                         "qc_var",
+                         "median_dq", 
+                         "ga_adj_median_dq",
+                         "ADI.median", 
+                         "ADI3_FINS.median", 
+                         "ADI3_ECON.median", 
+                         "ADI3_EDU.median")), 
+                ~as.numeric(scale(.x))))
+}
+
+# set sex and preterm as factor
+df.zscore_avg_full$sex <- as.factor(df.zscore_avg_full$sex)
+df.zscore_avg_full$preterm <- as.factor(df.zscore_avg_full$preterm)
 ```
 
 ### zscore dataframe with all swyc forms
@@ -490,7 +563,7 @@ if(save_figs == TRUE){
 
 ## Spline with OG DQ
 
-### fit spline models
+### fit spline models to median
 ```{r}
 ogdq_sp_models_cmd <- fit_bam_models(df.zscore_avg, cmd_vars, 
                                         predictor = "median_dq",
@@ -502,9 +575,35 @@ ogdq_sp_table_cmd <- extract_bam_features_main(models = ogdq_sp_models_cmd,
                                                   covariates = c("qc_var", "global_eTIV"))
 
 knitr::kable(t(ogdq_sp_table_cmd))
+
+ogdq_sp_table_cmd <- ogdq_sp_table_cmd %>% mutate(signed_partial_r2 = r2_full_vs_none*sign(avg_first_deriv),
+                                                  phenotype = rownames(.))
 ```
 
-### visualize no interaction model
+### lollipop, signed partial R
+```{r}
+df           <- ogdq_sp_table_cmd
+value_col    <- "signed_partial_r2"
+p_col        <- "full_p_adj"
+
+p <- plot_lollipop(
+  table_list = df,
+  value_col = value_col,
+  p_col = p_col,
+  color = swyc_color,
+  name_mapping = namemap
+) +
+  labs(title = glue("SWYC Median OG DQ (Partial R2)"), x = value_col) +
+  theme_minimal()
+
+p
+
+if (params$save_plots == TRUE) {
+  ggsave(glue("{plot_output_folder}lollipop_swyc_cmd.svg"), p, width = 9, height = 6)
+}
+```
+
+### visualize model with median dq
 ```{r}
 ogdq_sp_plots_cmd <- lapply(ogdq_sp_models_cmd, function(x) {
   
@@ -529,10 +628,8 @@ ogdq_sp_plots_cmd <- lapply(ogdq_sp_models_cmd, function(x) {
 
 ogdq_sp_plots_cmd  <- setNames(ogdq_sp_plots_cmd , cmd_vars)
 
-wrap_plots(ogdq_sp_plots_cmd[1:5], ncol = 2)
-
 if(save_figs){
-saveRDS(ogdq_sp_plots_cmd, glue("{plot_output_folder}ogdq_sp_modelvis_plots_cmd.rds"))
+ggsave(glue("{plot_output_folder}swyc_ogdq_volcmd_model.svg"), ogdq_sp_plots_cmd$vol.cmd, width = 9, height = 6)
 }
 ```
 
@@ -571,7 +668,7 @@ ogdq_int_lrt_cmd <- test_interaction_lrt(data = cent_all %>% filter(form_name %i
 knitr::kable((ogdq_int_lrt_cmd))
 ```
 
-### visualize form interaction model (ordered)
+### visualize form interaction model (ordered) ** I think the significant interactions are due to data, and not meaningful?
 ```{r}
 font_size <- 16
 theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
@@ -590,22 +687,14 @@ ogdq_sp_int_plots_cmd <- lapply(ogdq_sp_int_models_cmd, function(x) {
          title = glue("{x$terms[[2]]}"),
          color = "Form Month") +
     theme(axis.title.y = element_blank())
-      # scale_x_continuous(
-      # breaks = map2_dbl(c(24*7, 28*7, 32*7, 36*7, 40*7), "gestational_age", ~ (.x - mean(swyc_avg[,.y], na.rm =T))/(sd(swyc_avg[,.y], na.rm = T))),
-      # labels = \(x) round(map2_dbl(x, "gestational_age", ~ (.x*sd(swyc_avg[,.y], na.rm = T) + mean(swyc_avg[,.y], na.rm = T))/7)))
-    # scale_y_continuous(breaks = qnorm(c(.01, .50, .99)), 
-    #                    labels = c("<=1st",  "50th", ">=99th")) +
     
 })
 
 ogdq_sp_int_plots_cmd <- setNames(ogdq_sp_int_plots_cmd, cmd_vars)
 
-wrap_plots(ogdq_sp_int_plots_cmd[1:2], ncol = 2, guides = "collect")
-wrap_plots(ogdq_sp_int_plots_cmd[3:4], ncol = 2, guides = "collect")
-wrap_plots(ogdq_sp_int_plots_cmd[5], ncol = 2, guides = "collect")
 
 if(save_figs){
-saveRDS(plot_output_folder, glue("{plot_output_folder}ogdq_sp_int_modelvis_plots_cmd.rds"))
+ggsave(glue("{plot_output_folder}swyc_ogdq_volcmd_model.svg"), ogdq_sp_plots_cmd$vol.cmd, width = 9, height = 6)
 }
 ```
 
@@ -669,19 +758,6 @@ plot_lollipop(
   )
 ```
 
-## Show lollipop plot for OG DQ CMD 
-```{r}
-plot_lollipop(
-  table_list = ogdq_sp_table_cmd %>% mutate(phenotype = rownames(.)),
-  value_col = "r2_full_vs_none",
-  p_col = "full_p_adj",
-  color = swyc_color
-) +
-  labs(
-    x = expression("Partial " * R^2),
-    color = swyc_color
-  )
-```
 
 ## RESI plots for median DQ
 ```{r}
@@ -939,7 +1015,7 @@ if(save_figs == TRUE){
 
 ## Splines with OG DQ
 
-### fit spline models
+### fit spline models with median DQ
 ```{r}
 ogdq_sp_models_eTIV<- fit_bam_models(df.zscore_avg,
                             c("global_eTIV"), 
@@ -985,17 +1061,20 @@ knitr::kable(t(ogdq_sp_table_global[5:7,]))
 
 ### Show lollipop plot for OG DQ Global
 ```{r}
-plot_lollipop(
-  table_list = ogdq_sp_table_global %>% mutate(phenotype = rownames(.)),
-  value_col = "r2_full_vs_none",
+p <- plot_lollipop(
+  table_list = ogdq_sp_table_global %>% mutate(phenotype = rownames(.), 
+                                               signed_partial_r2 = r2_full_vs_none*sign(avg_first_deriv)),
+  value_col = "signed_partial_r2",
   p_col = "full_p_adj",
   color = swyc_color,
   name_mapping = namemap
 ) +
   labs(
-    x = expression("Partial " * R^2),
+    x = expression("Signed Partial " * R^2),
     color = swyc_color
   )
+
+ggsave(glue("{plot_output_folder}lollipop_swyc_global.svg"), p, width = 9, height = 6)
 ```
 
 ### visualize no interaction model
@@ -1016,8 +1095,6 @@ ogdq_sp_plots_global <- lapply(ogdq_sp_models_global, function(x) {
   color_line = swyc_color)
   
   model_plot <- model_plot + 
-    scale_y_continuous(breaks = qnorm(c(.01, .50, .99)),
-                       labels = c("<=1st",  "50th", ">=99th")) +
     labs(x= "OG SWYC (z-scored)",
          title = glue("{modobj$terms[[2]]}")) +
     theme(axis.title.y = element_blank())
@@ -1025,12 +1102,8 @@ ogdq_sp_plots_global <- lapply(ogdq_sp_models_global, function(x) {
 
 ogdq_sp_plots_global  <- setNames(ogdq_sp_plots_global , global_vars_totest)
 
-wrap_plots(ogdq_sp_plots_global[1:4], ncol = 2)
-wrap_plots(ogdq_sp_plots_global[5:7], ncol = 2)
-
-if(save_figs){
-saveRDS(ogdq_sp_plots_global, glue("{plot_output_folder}ogdq_sp_modelvis_plots_global.rds"))
-}
+ggsave(glue("{plot_output_folder}swyc_ogdq_vent_model.svg"), ogdq_sp_plots_global$global_VentricleChoroidVol, width = 9, height = 6)
+ggsave(glue("{plot_output_folder}swyc_ogdq_subcortgray_model.svg"), ogdq_sp_plots_global$global_SubCortGrayVol, width = 9, height = 6)
 ```
 
 ### fit interactions with form type
@@ -1091,42 +1164,7 @@ ogdq_int_lrt_global <- test_interaction_lrt(data = cent_all %>% filter(form_name
 
 knitr::kable((ogdq_int_lrt_global))
 ```
-
-### visualize form interaction model (ordered)
-```{r}
-font_size <- 16
-theme_set(theme_classic(base_family = "Helvetica",base_size = font_size))
-line_size <- 1.5
-point_size <- 2
-
-ogdq_sp_int_plots_global <- lapply(ogdq_sp_int_models_global, function(x) {
-  
-  model_plot <- visualize_model_int(
-  modobj = x,
-  smooth_var = "norm_devo_quotient_zscore",
-  int_var = "form_name",
-  plabels = "ordered",
-  derivative_plot = F) + 
-    labs(x="OG DQ Median (z-scored)",
-         title = glue("{x$terms[[2]]}"),
-         color = "Form Month") +
-    theme(axis.title.y = element_blank()) +
-    scale_y_continuous(breaks = qnorm(c(.01, .50, .99)),
-                       labels = c("<=1st",  "50th", ">=99th"))
-    
-})
-
-ogdq_sp_int_plots_global <- setNames(ogdq_sp_int_plots_global, global_vars_totest)
-
-wrap_plots(ogdq_sp_int_plots_global[1:4], ncol = 2, guides = "collect")
-wrap_plots(ogdq_sp_int_plots_global[5:7], ncol = 2, guides = "collect")
-
-if(save_figs){
-saveRDS(plot_output_folder, glue("{plot_output_folder}ogdq_sp_int_modelvis_plots_global.rds"))
-}
-```
-
-
+Non-significant form interactions for global phenotypes
 
 ## Splines with GA-ADJ DQ
 
@@ -1346,6 +1384,104 @@ plot_lollipop(
 
 # Regional Variables
 
+## ggseg helpers
+### ggseg label helper
+```{r ggseg-label-fct, echo = TRUE}
+# plot_brain_map() joins on a `label` column matching ggseg::dk/ggseg::aseg,
+# but main_stats/resi_stats only carry the raw FreeSurfer `phenotype` name
+# (run_spline_analysis_variant.R doesn't add a label column). Reproduces the
+# per-region-type cleanup the original Rmds applied right after stat
+# extraction (e.g. `ga_sp_table_vol$label <- rownames(ga_sp_table_vol) %>% ...`).
+add_ggseg_label <- function(df, region_type = c("vol", "sa", "th")) {
+  region_type <- match.arg(region_type)
+
+  if (region_type == "vol") {
+    cols_edit <- grepl("aseg(?!_CC)", df$phenotype, perl = TRUE)
+    df$label <- df$phenotype %>%
+      sub("aparc_GrayVol_", "", .) %>%
+      sub("aseg_", "", .) %>%
+      sub("X", "x", .) %>%
+      sub("rd_Ventricle", "rd_ventricle", .) %>%
+      sub("th_Ventricle", "th_ventricle", .) %>%
+      sub("Thalamus", "Thalamus-Proper", .)
+    df$label[cols_edit] <- gsub("_", "-", df$label[cols_edit])
+  } else if (region_type == "sa") {
+    df$label <- sub("aparc_SurfArea_", "", df$phenotype)
+  } else {
+    df$label <- sub("aparc_ThickAvg_", "", df$phenotype)
+  }
+
+  df
+}
+```
+
+
+### helper functions for plotting
+```{r}
+build_ggseg_table <- function(df, group, value_col, p_col, region_type, atlas = "dk") {
+  d <-  df %>%
+    filter(group == !!group) %>%
+    select(phenotype, val = all_of(value_col), p = all_of(p_col))
+
+  if (region_type == "vol") {
+    d <- if (atlas == "aseg") {
+      d %>% filter(grepl("^aseg_", phenotype))
+    } else {
+      d %>% filter(grepl("^aparc_GrayVol_", phenotype))
+    }
+  }
+
+  add_ggseg_label(d, region_type)
+}
+
+plot_variant_brainmap <- function(df, group, value_col, p_col, region_type,
+                                   atlas = "dk", limits = NULL, title = "", fill_name = "value",
+                                   low_color = "#F2F0EC", mid_color = "#D99A9A", high_color = "#D95C72") {
+  
+  table <- build_ggseg_table(df, group, value_col, p_col, region_type, atlas)
+
+  plot_brain_map(
+    table = table,
+    value_col = "val",
+    atlas = atlas,
+    p_col = "p",
+    p_filter = TRUE,
+    p_thresh = 0.05,
+    title = title,
+    fill_name = fill_name,
+    limits = limits,
+    low_color = low_color, mid_color = mid_color, high_color = high_color
+  )
+}
+
+# Legend title shown on the shared colorbar -- "value_col" is the raw column
+# name (r2_full_vs_none / RESI); readers should see the stat name instead.
+stat_label <- function(value_col) if (value_col == "RESI") "RESI" else "Partial R2"
+
+# Short text panels used as the shared grid's column headers (horizontal) and
+# row headers (vertical), since the brain map panels themselves carry no title.
+col_header_plot <- function(label) {
+  ggplot() + theme_void() +
+    annotate("text", x = 0, y = 0, label = label, size = 5, fontface = "bold") +
+    xlim(-1, 1) + ylim(-1, 1)
+}
+
+row_header_plot <- function(label) {
+  ggplot() + theme_void() +
+    annotate("text", x = 0, y = 0, label = label, angle = 90, size = 5, fontface = "bold") +
+    xlim(-1, 1) + ylim(-1, 1)
+}
+
+# Columns of the shared grid: DK cortical volume, DK surface area, DK cortical
+# thickness, ASEG subcortical volume.
+brainmap_cols <- list(
+  list(header = "Vol", region_type = "vol", atlas = "dk"),
+  list(header = "SA",  region_type = "sa",  atlas = "dk"),
+  list(header = "CTh", region_type = "th",  atlas = "dk"),
+  list(header = "Vol", region_type = "vol", atlas = "aseg")
+)
+```
+
 ## Main Effects
 ### OG DQ fit main effects
 ```{r}
@@ -1388,194 +1524,46 @@ for(metric in c("vol", "sa", "th")){
          ))
 }
 
-# Add label column that matches ggseg for plotting
-
-## volume
-cols_edit <- grepl("aseg(?!_CC)", rownames(ogdq_sp_table_vol), perl = TRUE)
-ogdq_sp_table_vol$label <- rownames(ogdq_sp_table_vol) %>% 
-  sub("aparc_GrayVol_", "", .) %>% 
-  sub("aseg_", "", .) %>%
-  sub("X", "x", .) %>%
-  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
-ogdq_sp_table_vol$label[cols_edit] <- gsub("_", "-", ogdq_sp_table_vol$label[cols_edit])
-
-## surface area
-ogdq_sp_table_sa$label <- rownames(ogdq_sp_table_sa) %>% 
-  sub("aparc_SurfArea_", "", .)
-
-## thickness
-ogdq_sp_table_th$label <- rownames(ogdq_sp_table_th) %>% 
-  sub("aparc_ThickAvg_", "", .)
+ogdq_sp_tables_regional <- rbind(ogdq_sp_table_vol %>% mutate(group = "vol"),
+                                 ogdq_sp_table_sa %>% mutate(group = "sa"),
+                                 ogdq_sp_table_th %>% mutate(group = "th")) %>%
+  mutate(phenotype = rownames(.),
+         signed_partial_r2 = r2_full_vs_none*sign(avg_first_deriv))
 
 
-## volume
-cols_edit <- grepl("aseg(?!_CC)", rownames(ogdq_resi_table_vol), perl = TRUE)
-ogdq_resi_table_vol$label <- rownames(ogdq_resi_table_vol) %>% 
-  sub("aparc_GrayVol_", "", .) %>% 
-  sub("aseg_", "", .) %>%
-  sub("X", "x", .) %>%
-  sub("rd_Ventricle", "rd_ventricle", .) %>%     sub("th_Ventricle", "th_ventricle", .) %>% sub("Thalamus", "Thalamus-Proper", .)
-ogdq_resi_table_vol$label[cols_edit] <- gsub("_", "-", ogdq_resi_table_vol$label[cols_edit])
-
-## surface area
-ogdq_resi_table_sa$label <- rownames(ogdq_resi_table_sa) %>% 
-  sub("aparc_SurfArea_", "", .)
-
-## thickness
-ogdq_resi_table_th$label <- rownames(ogdq_resi_table_th) %>% 
-  sub("aparc_ThickAvg_", "", .)
 ```
 
-### OG DQ visualize ggseg - partial R2
+### GGSeg plot with og-dq, signed partial r2
 ```{r}
-(ogdq_partialr2_dkt_vol <- plot_brain_map(
-  table = ogdq_sp_table_vol,
-  value_col = "r2_full_vs_none",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 vol",
-  limits = c(0, 0.1),
-  low_color  = "#F3F0F5",
-mid_color  = "#CDB8D9",
-high_color = "#9D73BA"
-))
+df = ogdq_sp_tables_regional %>% mutate(signed_partial_r2 = r2_full_vs_none*sign(avg_first_deriv))
+value_col = "signed_partial_r2"
+p_col = "full_p_adj"
+range(df %>% filter(group %in% c("vol", "sa", "th")) %>% pull(value_col))
+signed_limits = c(-0.12, 0.12)
 
-(ogdq_partialr2_aseg_vol <- plot_brain_map(
-  table = ogdq_sp_table_vol,
-  value_col = "r2_full_vs_none",
-  atlas = "aseg",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 vol",
-  limits = c(0, 0.1),
-  low_color  = "#F3F0F5",
-mid_color  = "#CDB8D9",
-high_color = "#9D73BA"
-))
+fill_name <- "Signed Partial R2"
 
-(ogdq_partialr2_sa <- plot_brain_map(
-  table = ogdq_sp_table_sa,
-  value_col = "r2_full_vs_none",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 sa",
-  limits = c(0, 0.1),
-  low_color  = "#F3F0F5",
-mid_color  = "#CDB8D9",
-high_color = "#9D73BA"
-))
+  panels <- c(
+    list(plot_spacer()),
+    lapply(brainmap_cols, function(col) col_header_plot(col$header))
+  )
+  panels <- c(panels, list(row_header_plot("SWYC Median")))
+  panels <- c(panels, lapply(brainmap_cols, function(col) {
+    plot_variant_brainmap(df, col$region_type, value_col, p_col,
+                             col$region_type, atlas = col$atlas, limits = signed_limits, fill_name = fill_name,
+                            low_color = "#4775AD", mid_color = "white", high_color = "#B84A58")
+  }))
 
-(ogdq_partialr2_th <- plot_brain_map(
-  table = ogdq_sp_table_th,
-  value_col = "r2_full_vs_none",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 th",
-  limits = c(0, 0.1),
-  low_color  = "#F3F0F5",
-mid_color  = "#CDB8D9",
-high_color = "#9D73BA"
-))
+  
+ogdq_signedR2_regions_plot <- wrap_plots(panels, ncol = 5, nrow = 2,
+             widths = c(0.15, 1, 1, 1, 1), heights = c(0.15, 1),
+             guides = "collect") &
+    theme(legend.position = "bottom")
+  
+ggsave(glue("{plot_output_folder}ggseg_ogdq_median_signedr2.svg"), ogdq_signedR2_regions_plot, width = 16, height = 6)
+
 ```
-### OG DQ visualize ggseg - avg first deriv
-```{r}
-(ogdq_deriv_dkt_vol <- plot_brain_map(
-  table = ogdq_sp_table_vol,
-  value_col = "avg_first_deriv",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 vol",
-  limits = c(-0.35, 0.35),
-  low_color = "#4878CF",
-mid_color = "white",
-high_color = "#D65F5F"
-))
 
-(ogdq_deriv_aseg_vol <- plot_brain_map(
-  table = ogdq_sp_table_vol,
-  value_col = "avg_first_deriv",
-  atlas = "aseg",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 vol",
-  limits = c(-0.35, 0.35),
-  low_color = "#4878CF",
-mid_color = "white",
-high_color = "#D65F5F"
-))
-
-(ogdq_deriv_sa <- plot_brain_map(
-  table = ogdq_sp_table_sa,
-  value_col = "avg_first_deriv",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 sa",
-  limits = c(-0.35, 0.35),
-  low_color = "#4878CF",
-mid_color = "white",
-high_color = "#D65F5F"
-))
-
-(ogdq_deriv_th <- plot_brain_map(
-  table = ogdq_sp_table_th,
-  value_col = "avg_first_deriv",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "OG DQ partial R2 th",
-  limits = c(-0.35, 0.35),
-  low_color = "#4878CF",
-mid_color = "white",
-high_color = "#D65F5F"
-))
-```
-### OG DQ visualize ggseg - RESI
-```{r}
-(ogdq_resi_dkt_vol <- plot_brain_map(
-  table = ogdq_resi_table_vol,
-  value_col = "RESI",
-  atlas = "dk",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "OG DQ RESI vol",
-  limits = c(0, 0.31)
-))
-
-(ogdq_resi_aseg_vol <- plot_brain_map(
-  table = ogdq_resi_table_vol,
-  value_col = "RESI",
-  atlas = "aseg",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "OG DQ RESI vol",
-  limits = c(0, 0.31)
-))
-
-(ogdq_resi_sa <- plot_brain_map(
-  table = ogdq_resi_table_sa,
-  value_col = "RESI",
-  atlas = "dk",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "OG DQ RESI sa",
-  limits = c(0, 0.31)
-))
-
-(ogdq_resi_th <- plot_brain_map(
-  table = ogdq_resi_table_th,
-  value_col = "RESI",
-  atlas = "dk",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "OG DQ RESI th",
-  limits = c(0, 0.31)
-))
-```
 ### GA-ADJ DQ fit main effects
 ```{r}
 for(metric in c("vol", "sa", "th")){
@@ -1655,91 +1643,6 @@ adjdq_resi_table_th$label <- rownames(adjdq_resi_table_th) %>%
   sub("aparc_ThickAvg_", "", .)
 ```
 
-### GA-ADJ DQ visualize ggseg - partial R2
-```{r}
-(adjdq_partialr2_dkt_vol <- plot_brain_map(
-  table = adjdq_sp_table_vol,
-  value_col = "r2_full_vs_none",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ partial R2 vol",
-  limits = c(0, 0.1)
-))
-
-(adjdq_partialr2_aseg_vol <- plot_brain_map(
-  table = adjdq_sp_table_vol,
-  value_col = "r2_full_vs_none",
-  atlas = "aseg",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ partial R2 vol",
-  limits = c(0, 0.1)
-))
-
-(adjdq_partialr2_sa <- plot_brain_map(
-  table = adjdq_sp_table_sa,
-  value_col = "r2_full_vs_none",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ partial R2 sa",
-  limits = c(0, 0.1)
-))
-
-(adjdq_partialr2_th <- plot_brain_map(
-  table = adjdq_sp_table_th,
-  value_col = "r2_full_vs_none",
-  atlas = "dk",
-  p_col = "full_p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ partial R2 th",
-  limits = c(0, 0.1)
-))
-```
-
-### GA-ADJ DQ visualize ggseg - RESI
-```{r}
-(adjdq_resi_dkt_vol <- plot_brain_map(
-  table = adjdq_resi_table_vol,
-  value_col = "RESI",
-  atlas = "dk",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ RESI vol",
-  limits = c(0, 0.31)
-))
-
-(adjdq_resi_aseg_vol <- plot_brain_map(
-  table = adjdq_resi_table_vol,
-  value_col = "RESI",
-  atlas = "aseg",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ RESI vol",
-  limits = c(0, 0.31)
-))
-
-(adjdq_resi_sa <- plot_brain_map(
-  table = adjdq_resi_table_sa,
-  value_col = "RESI",
-  atlas = "dk",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ RESI sa",
-  limits = c(0, 0.31)
-))
-
-(adjdq_resi_th <- plot_brain_map(
-  table = adjdq_resi_table_th,
-  value_col = "RESI",
-  atlas = "dk",
-  p_col = "p_adj",
-  p_filter = TRUE,
-  title = "GA-ADJ DQ RESI th",
-  limits = c(0, 0.31)
-))
-```
 
 ## Interaction with Form Type
 ### OG DQ fit interactions
@@ -1995,86 +1898,6 @@ using p-value from the ML-based LRT comparison table
   title = "GA-ADJ DQ partial R2 th",
   limits = c(0, 0.015)
 ))
-```
-
-## Put ggseg plots together
-
-### main effects partial R2 -- ogDQ only
-```{r}
-plots<- list(ogdq_partialr2_dkt_vol, ogdq_partialr2_sa, ogdq_partialr2_th, ogdq_partialr2_aseg_vol)
-
-plots <- lapply(plots, function(p) {
-  p +
-    labs(title = NULL) +
-    theme(
-      legend.position = "bottom"
-    )
-})
-
-dq_partialr2_grid <- wrap_plots(plots, ncol = 4) +
-  plot_layout(guides = "collect") &
-  theme(
-    legend.position = "bottom")
-
-dq_partialr2_grid
-
-if(save_figs){
-  panel_save(dq_partialr2_grid, "dq_partialr2_nocovar_grid", "svg", plot_output_folder,
-             plot_width = 16, plot_height = 10)
-}
-```
-
-### main effects partial R2
-```{r}
-plots<- list(ogdq_partialr2_dkt_vol, ogdq_partialr2_sa, ogdq_partialr2_th, ogdq_partialr2_aseg_vol,
-                                      adjdq_partialr2_dkt_vol, adjdq_partialr2_sa, adjdq_partialr2_th, adjdq_partialr2_aseg_vol)
-
-plots <- lapply(plots, function(p) {
-  p +
-    labs(title = NULL) +
-    theme(
-      legend.position = "bottom"
-    )
-})
-
-dq_partialr2_grid <- wrap_plots(plots, ncol = 4) +
-  plot_layout(guides = "collect") &
-  theme(
-    legend.position = "bottom")
-
-dq_partialr2_grid
-
-if(save_figs){
-  panel_save(dq_partialr2_grid, "dq_partialr2_nocovar_grid", "svg", plot_output_folder,
-             plot_width = 16, plot_height = 10)
-}
-```
-
-
-### main effects RESI
-```{r}
-plots<- list(ogdq_resi_dkt_vol, ogdq_resi_sa, ogdq_resi_th, ogdq_resi_aseg_vol,
-                                      adjdq_resi_dkt_vol, adjdq_resi_sa, adjdq_resi_th, adjdq_resi_aseg_vol)
-
-plots <- lapply(plots, function(p) {
-  p +
-    labs(title = NULL) +
-    theme(
-      legend.position = "bottom"
-    )
-})
-
-dq_resi_grid <- wrap_plots(plots, ncol = 4) +
-  plot_layout(guides = "collect") &
-  theme(
-    legend.position = "bottom")
-
-dq_resi_grid
-
-if(save_figs){
-  panel_save(dq_resi_grid, "dq_resi_nocovar_grid", "svg", plot_output_folder,
-             plot_width = 16, plot_height = 10)
-}
 ```
 
 
@@ -2423,7 +2246,7 @@ resi_covar_plot +
 
 ## partial R2 of GA with different brain covar
 partialr2_covar_plot <- plot_lollipop(
-  table_list = ga_covars_table, 
+  table_list = ga_global_covars_table, 
          value_col = "partial_r2",
          label_col = "covar") +
   labs(
@@ -2436,7 +2259,7 @@ partialr2_covar_plot <- plot_lollipop(
 
 partialr2_covar_plot + 
   geom_vline(
-    xintercept = ga_covars_table %>% 
+    xintercept = ga_global_covars_table %>% 
       filter(covar == "No covariate") %>% 
       pull("partial_r2"),
     linetype = "dashed",
@@ -2663,6 +2486,50 @@ adjdq_stats <- mget(ls(pattern = "^adjdq_sp(_int)?_table"))
 # save(bwp_models,
 #      file = file.path(models_folder,
 #                       "bwp_nocovar_all_models.RData"))
+```
+
+
+# Spin test export
+```{r spin-export-fct, echo = TRUE}
+save_stat_for_spin <- function(df, group, value_col, p_col,
+                                region_type, atlas = "dk", output_folder) {
+
+  table <- build_ggseg_table(df,  group, value_col, p_col, region_type, atlas)
+
+  table$hemisphere <- dplyr::case_when(
+    grepl("^lh_", table$label) ~ "L",
+    grepl("^rh_", table$label) ~ "R",
+    TRUE ~ NA_character_
+  )
+  table$label <- sub("^lh_|^rh_", "", table$label)
+
+  names(table)[names(table) == "val"] <- value_col
+  names(table)[names(table) == "p"]   <- p_col
+
+  filename <- glue("{output_folder}swyc_{group}_{value_col}_spin.csv")
+  write.csv(table, filename, row.names = FALSE)
+  invisible(table)
+}
+```
+
+```{r spin-export-run, echo = TRUE}
+save_stat_for_spin(ogdq_sp_tables_regional, "vol", "r2_full_vs_none", "full_p_adj",
+                    region_type = "vol", atlas = "dk", output_folder = spin_folder)
+
+save_stat_for_spin(ogdq_sp_tables_regional, "sa", "r2_full_vs_none", "full_p_adj",
+                    region_type = "sa", atlas = "dk", output_folder = spin_folder)
+
+save_stat_for_spin(ogdq_sp_tables_regional, "th", "r2_full_vs_none", "full_p_adj",
+                    region_type = "th", atlas = "dk", output_folder = spin_folder)
+
+save_stat_for_spin(ogdq_sp_tables_regional, "vol", "signed_partial_r2", "full_p_adj",
+                    region_type = "vol", atlas = "dk", output_folder = spin_folder)
+
+save_stat_for_spin(ogdq_sp_tables_regional, "sa", "signed_partial_r2", "full_p_adj",
+                    region_type = "sa", atlas = "dk", output_folder = spin_folder)
+
+save_stat_for_spin(ogdq_sp_tables_regional, "th", "signed_partial_r2", "full_p_adj",
+                    region_type = "th", atlas = "dk", output_folder = spin_folder)
 ```
 
 # Test Mediation
